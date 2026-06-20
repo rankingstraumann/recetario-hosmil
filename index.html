@@ -1,0 +1,225 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Tu cotización — Hospital Militar | Straumann Group Chile</title>
+<style>
+  :root {
+    --red: #991b1b;
+    --red-dark: #7f1d1d;
+    --ink: #18181b;
+    --muted: #71717a;
+    --border: #e4e4e7;
+    --bg: #f8fafc;
+    --amber-bg: #fffbeb;
+    --amber-border: #fde68a;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    background: var(--bg);
+    color: var(--ink);
+  }
+  header {
+    background: #fff;
+    border-bottom: 1px solid var(--border);
+    padding: 12px 20px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+  .brand-name { color: var(--red); font-weight: 800; font-size: 18px; letter-spacing: -0.02em; line-height: 1; }
+  .brand-sub { color: #a1a1aa; font-size: 10px; letter-spacing: 0.2em; font-weight: 600; margin-top: 2px; }
+  main { max-width: 720px; margin: 0 auto; padding: 24px 16px 60px; }
+  .card { background: #fff; border: 1px solid var(--border); border-radius: 14px; padding: 28px; box-shadow: 0 1px 2px rgba(0,0,0,0.04); margin-bottom: 20px; }
+  .card-head { display:flex; justify-content: space-between; align-items: flex-start; border-bottom: 1px solid var(--border); padding-bottom: 16px; margin-bottom: 20px; flex-wrap: wrap; gap: 12px; }
+  .qnum-label { font-size:11px; color:#a1a1aa; }
+  .qnum { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-weight:700; font-size:14px; }
+  .qdate { font-size:11px; color:#a1a1aa; margin-top:2px; }
+  .grid2 { display:grid; grid-template-columns: 1fr 1fr; gap:16px; font-size:14px; margin-bottom: 22px; }
+  .field-label { font-size:11px; text-transform:uppercase; letter-spacing:0.04em; color:#a1a1aa; }
+  .field-value { font-weight:600; margin-top:2px; }
+  table { width:100%; border-collapse: collapse; font-size:14px; margin-bottom: 16px; }
+  thead th { text-align:left; font-size:11px; text-transform:uppercase; color:#a1a1aa; border-bottom:1px solid var(--border); padding-bottom:8px; font-weight:500; }
+  tbody td { padding: 8px 0; border-bottom: 1px solid #f4f4f5; vertical-align: top; }
+  .code { font-family: ui-monospace, monospace; font-size:10px; color:#a1a1aa; }
+  .right { text-align:right; }
+  .center { text-align:center; }
+  .total-row { display:flex; justify-content:flex-end; margin-bottom:8px; }
+  .total-box { width: 230px; }
+  .total-line { display:flex; justify-content:space-between; border-top:2px solid var(--ink); padding-top:8px; }
+  .total-line .label { font-weight:700; }
+  .total-line .value { font-weight:800; color: var(--red); }
+  .total-note { font-size:10px; color:#a1a1aa; text-align:right; margin-top:2px; }
+  .disclaimer { font-size:10px; color:#a1a1aa; line-height:1.5; border-top:1px solid #f4f4f5; padding-top:12px; margin-top:20px; }
+
+  .pay-card { background: var(--amber-bg); border:2px solid var(--amber-border); border-radius:14px; padding:24px; }
+  .pay-title { font-size:16px; font-weight:700; display:flex; align-items:center; gap:8px; margin-bottom:4px; }
+  .pay-sub { font-size:12px; color:#71717a; margin-bottom:18px; }
+  .pay-grid { display:grid; grid-template-columns: 1fr 1fr; gap:24px; }
+  @media (max-width: 640px) { .pay-grid, .grid2 { grid-template-columns: 1fr; } }
+  .opt-title { font-weight:700; font-size:14px; margin-bottom:8px; }
+  .opt-desc { font-size:12px; color:#71717a; margin-bottom:8px; }
+  .copy-field { display:flex; align-items:center; justify-content:space-between; gap:8px; background:#fff; border:1px solid #fde68a; border-radius:10px; padding:8px 12px; margin-bottom:6px; }
+  .copy-field .cf-label { font-size:10px; text-transform:uppercase; color:#a1a1aa; }
+  .copy-field .cf-value { font-weight:700; font-size:14px; }
+  .copy-btn { flex-shrink:0; display:flex; align-items:center; gap:4px; font-size:12px; font-weight:600; padding:7px 11px; border-radius:8px; border:none; background:#f4f4f5; color:#52525b; cursor:pointer; }
+  .copy-btn.copied { background:#d1fae5; color:#047857; }
+  .bank-extra { font-size:12px; color:#52525b; margin-top:8px; background:#fff; border:1px solid #fde68a; border-radius:8px; padding:8px 10px; }
+  .webpay-btn { margin-top:auto; display:flex; align-items:center; justify-content:center; gap:8px; background: var(--red); color:#fff; font-weight:700; font-size:14px; padding:14px 20px; border-radius:10px; text-decoration:none; text-align:center; }
+  .webpay-btn:hover { background: var(--red-dark); }
+  .opt2 { display:flex; flex-direction:column; }
+
+  .state-msg { text-align:center; padding: 60px 20px; color:#71717a; font-size:14px; line-height:1.6; }
+  .print-btn { display:flex; align-items:center; gap:6px; font-size:12px; color:#71717a; background:none; border:none; cursor:pointer; }
+  @media print { .no-print { display:none !important; } }
+</style>
+</head>
+<body>
+  <header class="no-print">
+    <div>
+      <div class="brand-name">STRAUMANN</div>
+      <div class="brand-sub">GROUP CHILE · NEODENT</div>
+    </div>
+    <button class="print-btn" onclick="window.print()" id="printBtn" style="display:none;">🖨️ Imprimir</button>
+  </header>
+  <main id="main">
+    <div class="state-msg" id="loading">Cargando tu cotización…</div>
+  </main>
+
+<script>
+function fmt(n) {
+  return '$' + Math.round(n || 0).toLocaleString('es-CL');
+}
+function fechaCorta(iso) {
+  try {
+    var d = new Date(iso);
+    return d.toLocaleDateString('es-CL', { day: '2-digit', month: '2-digit', year: 'numeric' });
+  } catch (e) { return '-'; }
+}
+function b64UrlDecode(str) {
+  str = str.replace(/-/g, '+').replace(/_/g, '/');
+  while (str.length % 4) str += '=';
+  var binary = atob(str);
+  var bytes = new Uint8Array(binary.length);
+  for (var i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+  return new TextDecoder('utf-8').decode(bytes);
+}
+function esc(s) {
+  if (s === undefined || s === null) return '';
+  return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+function copiar(value, btn) {
+  function done(ok) {
+    if (!ok) return;
+    var original = btn.innerHTML;
+    btn.classList.add('copied');
+    btn.innerHTML = '✓ Copiado';
+    setTimeout(function () { btn.classList.remove('copied'); btn.innerHTML = original; }, 1500);
+  }
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(value).then(function () { done(true); }).catch(function () { fallbackCopy(value, done); });
+  } else {
+    fallbackCopy(value, done);
+  }
+}
+function fallbackCopy(value, cb) {
+  try {
+    var ta = document.createElement('textarea');
+    ta.value = value;
+    ta.style.position = 'fixed';
+    ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.focus();
+    ta.select();
+    document.execCommand('copy');
+    document.body.removeChild(ta);
+    cb(true);
+  } catch (e) { cb(false); }
+}
+
+function render(q) {
+  document.getElementById('printBtn').style.display = 'flex';
+
+  var itemsHtml = q.items.map(function (it) {
+    return '<tr><td><div class="code">' + esc(it.codigo) + '</div>' + esc(it.descripcion) + '</td>' +
+      '<td class="center">' + it.cantidad + '</td>' +
+      '<td class="right" style="font-weight:600;">' + fmt(it.subtotal) + '</td></tr>';
+  }).join('');
+
+  var obsHtml = q.observaciones ? (
+    '<div style="margin-top:16px;font-size:14px;">' +
+    '<div class="field-label" style="margin-bottom:4px;">Observaciones</div>' +
+    '<p style="margin:0;color:#3f3f46;">' + esc(q.observaciones) + '</p></div>'
+  ) : '';
+
+  document.getElementById('main').innerHTML =
+    '<div class="card">' +
+    '<div class="card-head">' +
+    '<div><div class="brand-name" style="font-size:20px;">STRAUMANN</div>' +
+    '<div class="brand-sub">GROUP CHILE · MANOHAY CHILE SPA · NEODENT</div></div>' +
+    '<div style="text-align:right;">' +
+    '<div class="qnum-label">N° Cotización</div>' +
+    '<div class="qnum">' + esc(q.numero) + '</div>' +
+    '<div class="qdate">' + fechaCorta(q.fecha) + '</div>' +
+    '</div>' +
+    '</div>' +
+    '<div class="grid2">' +
+    '<div><div class="field-label">Institución</div><div class="field-value">' + esc(q.institucion) + '</div></div>' +
+    '<div><div class="field-label">Paciente</div><div class="field-value">' + esc(q.paciente) + (q.rut ? ' · ' + esc(q.rut) : '') + '</div></div>' +
+    '<div style="grid-column:1/-1;"><div class="field-label">Doctor tratante</div><div class="field-value">' + esc(q.doctor) + '</div></div>' +
+    '</div>' +
+    '<table><thead><tr><th>Producto</th><th class="center">Cant.</th><th class="right">Subtotal</th></tr></thead>' +
+    '<tbody>' + itemsHtml + '</tbody></table>' +
+    '<div class="total-row"><div class="total-box">' +
+    '<div class="total-line"><span class="label">Total</span><span class="value">' + fmt(q.total) + '</span></div>' +
+    '<div class="total-note">Precio final con descuento institucional e IVA incluido</div>' +
+    '</div></div>' +
+    obsHtml +
+    '<p class="disclaimer">Esta herramienta no entrega diagnóstico clínico ni indicación terapéutica. La selección de productos es responsabilidad del profesional tratante. La disponibilidad, precio final y despacho están sujetos a validación comercial y logística por Straumann Group Chile / Manohay Chile SpA.</p>' +
+    '</div>' +
+
+    '<div class="pay-card">' +
+    '<div class="pay-title">💳 Confirmación de formas de pago</div>' +
+    '<div class="pay-sub">Elige la opción que te resulte más fácil.</div>' +
+    '<div class="pay-grid">' +
+    '<div>' +
+    '<div class="opt-title">Opción 1 — Transferencia</div>' +
+    '<div class="opt-desc">Toca "Copiar" en cada dato y pégalo en la app de tu banco.</div>' +
+    '<div class="copy-field"><div><div class="cf-label">Nombre / Destinatario</div><div class="cf-value">Manohay Chile SpA</div></div><button class="copy-btn" onclick="copiar(\'Manohay Chile SpA\', this)">📋 Copiar</button></div>' +
+    '<div style="font-size:12px;color:#71717a;padding:0 4px;margin-bottom:6px;">Banco: <strong>BICE</strong> · Tipo de cuenta: <strong>Cuenta Corriente</strong></div>' +
+    '<div class="copy-field"><div><div class="cf-label">N° de Cuenta</div><div class="cf-value">21002704</div></div><button class="copy-btn" onclick="copiar(\'21002704\', this)">📋 Copiar</button></div>' +
+    '<div class="copy-field"><div><div class="cf-label">RUT</div><div class="cf-value">76.598.913-2</div></div><button class="copy-btn" onclick="copiar(\'76.598.913-2\', this)">📋 Copiar</button></div>' +
+    '<div class="bank-extra">Cuando pagues, envía tu comprobante a <strong>cobranza.cl@straumann.com</strong><br>con copia a <strong>nicole.navarrete@straumann.com</strong></div>' +
+    '</div>' +
+    '<div class="opt2">' +
+    '<div class="opt-title">Opción 2 — Pagar en línea</div>' +
+    '<div class="opt-desc">Más simple: paga directo con tarjeta o cuenta RUT.</div>' +
+    '<a class="webpay-btn" target="_blank" rel="noopener noreferrer" href="https://www.webpay.cl/form-pay/33930">💳 Pagar ahora con Webpay</a>' +
+    '</div>' +
+    '</div>' +
+    '</div>';
+}
+
+function init() {
+  var params = new URLSearchParams(window.location.search);
+  var d = params.get('d');
+  if (!d) {
+    document.getElementById('main').innerHTML = '<div class="state-msg">No encontramos datos de cotización en este enlace.<br>Pídele al doctor que te reenvíe el link.</div>';
+    return;
+  }
+  try {
+    var json = b64UrlDecode(d);
+    var q = JSON.parse(json);
+    render(q);
+  } catch (e) {
+    document.getElementById('main').innerHTML = '<div class="state-msg">No pudimos leer los datos de esta cotización.<br>Pídele al doctor que te reenvíe el link.</div>';
+  }
+}
+init();
+</script>
+</body>
+</html>
