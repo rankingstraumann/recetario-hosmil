@@ -83,11 +83,11 @@ let channel = null;
 
 function institucionInfo(inst) {
   const s = (inst || '').toUpperCase();
-  if (s.indexOf('UNAB') !== -1) return { label: 'UNAB Stgo', color: '#eff6ff;color:#1d4ed8', despacho: 'UNAB Santiago — Echaurren 237' };
-  if (s.indexOf('UDP') !== -1) return { label: 'UDP Stgo', color: '#f5f3ff;color:#6d28d9', despacho: 'UDP Santiago — Av. Ejército Libertador 219' };
-  if (s.indexOf('MAYOR') !== -1) return { label: 'U Mayor Stgo', color: '#fdf4ff;color:#a21caf', despacho: 'U. Mayor Santiago — Av. Libertador Bernardo O\'Higgins 2013' };
-  if (s.indexOf('HOSMIL') !== -1) return { label: 'HOSMIL', color: '#fef2f2;color:#991b1b', despacho: 'Hospital Militar (HOSMIL)' };
-  return { label: inst || '-', color: '#f4f4f5;color:#3f3f46', despacho: inst || '-' };
+  if (s.indexOf('UNAB') !== -1) return { label: 'UNAB Stgo', color: '#eff6ff;color:#1d4ed8', despacho: 'UNAB Santiago — Echaurren 237', responsable: 'Nicole' };
+  if (s.indexOf('UDP') !== -1) return { label: 'UDP Stgo', color: '#f5f3ff;color:#6d28d9', despacho: 'UDP Santiago — Av. Ejército Libertador 219', responsable: 'Carla' };
+  if (s.indexOf('MAYOR') !== -1) return { label: 'U Mayor Stgo', color: '#fdf4ff;color:#a21caf', despacho: 'U. Mayor Santiago — Av. Libertador Bernardo O\'Higgins 2013', responsable: 'Nicole' };
+  if (s.indexOf('HOSMIL') !== -1) return { label: 'HOSMIL', color: '#fef2f2;color:#991b1b', despacho: 'Hospital Militar (HOSMIL)', responsable: 'Nicole' };
+  return { label: inst || '-', color: '#f4f4f5;color:#3f3f46', despacho: inst || '-', responsable: '-' };
 }
 
 function fmt(n) { return '$' + Math.round(n || 0).toLocaleString('es-CL'); }
@@ -176,6 +176,7 @@ function exportarExcel(rows) {
     const inst = institucionInfo(c.institucion);
     return {
       'Institución': inst.label,
+      'Responsable': inst.responsable,
       'N° Cotización': c.numero,
       'Paciente': c.paciente,
       'RUT': c.rut || '',
@@ -209,7 +210,7 @@ function exportarExcel(rows) {
 
   const wb = XLSX.utils.book_new();
   const ws1 = XLSX.utils.json_to_sheet(hojaCotizaciones);
-  ws1['!cols'] = [{wch:12},{wch:24},{wch:20},{wch:14},{wch:16},{wch:18},{wch:26},{wch:16},{wch:30},{wch:30},{wch:10},{wch:12},{wch:18},{wch:42}];
+  ws1['!cols'] = [{wch:12},{wch:12},{wch:24},{wch:20},{wch:14},{wch:16},{wch:18},{wch:26},{wch:16},{wch:30},{wch:30},{wch:10},{wch:12},{wch:18},{wch:42}];
   XLSX.utils.book_append_sheet(wb, ws1, 'Cotizaciones');
 
   const ws2 = XLSX.utils.json_to_sheet(hojaItems);
@@ -246,7 +247,7 @@ function renderDashboard() {
       ESTADOS.forEach(function (e) { estadoOpts += '<option value="' + esc(e) + '"' + (c.estado === e ? ' selected' : '') + '>' + esc(e) + '</option>'; });
 
       filasHtml += '<tr onclick="toggleFila(\'' + c.id + '\')">' +
-        '<td><span style="font-size:10px;font-weight:700;border-radius:6px;padding:3px 7px;background:' + inst.color + '">' + esc(inst.label) + '</span></td>' +
+        '<td><span style="font-size:10px;font-weight:700;border-radius:6px;padding:3px 7px;background:' + inst.color + '">' + esc(inst.label) + '</span><br><span style="font-size:10px;color:#a1a1aa;margin-top:2px;display:inline-block;">' + esc(inst.responsable) + '</span></td>' +
         '<td class="mono">' + esc(c.numero) + '</td>' +
         '<td>' + esc(c.paciente) + (c.rut ? '<br><span style="color:#a1a1aa;">' + esc(c.rut) + '</span>' : '') + '</td>' +
         '<td>' + esc(c.doctor) + '</td>' +
@@ -264,6 +265,7 @@ function renderDashboard() {
         filasHtml += '<tr class="detail-row"><td colspan="7">' +
           '<div class="detail-grid">' +
             '<div><strong>Institución:</strong> ' + esc(c.institucion) + '</div>' +
+            '<div><strong>Ejecutiva responsable:</strong> ' + esc(inst.responsable) + '</div>' +
             '<div><strong>Correo paciente:</strong> ' + esc(c.paciente_email || '-') + '</div>' +
             '<div><strong>WhatsApp paciente:</strong> ' + (c.paciente_whatsapp ? '+56 9 ' + esc(c.paciente_whatsapp) : '-') + '</div>' +
             '<div><strong>Dirección (facturación):</strong> ' + esc(c.paciente_direccion || '-') + '</div>' +
