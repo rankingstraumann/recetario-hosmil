@@ -93,6 +93,11 @@
   .btn-primary:hover { background:var(--red-dark); }
   .btn-primary:disabled { opacity:0.6; cursor:default; }
   .msg-error { display:flex; gap:6px; background:#fef2f2; color:#b91c1c; font-size:12px; border-radius:8px; padding:8px 10px; margin-bottom:10px; }
+  .privacy-box { background:#f4f4f5; border-radius:8px; padding:9px 10px; margin-bottom:10px; }
+  .privacy-box p { font-size:10.5px; color:#71717a; line-height:1.4; margin:0 0 7px; }
+  .privacy-box label { display:flex; align-items:flex-start; gap:7px; font-size:11px; color:#3f3f46; cursor:pointer; line-height:1.4; }
+  .privacy-box input[type=checkbox] { margin-top:2px; width:15px; height:15px; flex-shrink:0; accent-color: var(--red); }
+
   .msg-success { display:flex; gap:6px; background:var(--emerald-bg); color:var(--emerald-text); font-size:12px; border-radius:8px; padding:8px 10px; margin-bottom:10px; }
 
   .floating-cart-btn { display:none; position:fixed; left:16px; right:16px; bottom:calc(16px + env(safe-area-inset-bottom)); z-index:30; background:var(--red); color:#fff; border:none; border-radius:12px; padding:14px 16px; align-items:center; justify-content:space-between; font-size:14px; font-weight:600; box-shadow:0 8px 20px rgba(127,29,29,0.25); cursor:pointer; }
@@ -180,6 +185,10 @@
             <span class="cart-total-label">Total (IVA y dscto. incl.)</span>
             <span class="cart-total-value" id="cart-total">$0</span>
           </div>
+          <div class="privacy-box">
+            <p>🔒 Los datos del paciente se usan solo para generar y gestionar esta cotización institucional, coordinar el pago y hacer seguimiento de la entrega. Tratados por Manohay Chile SpA (Straumann Group Chile) y almacenados de forma segura.</p>
+            <label><input type="checkbox" id="f-consentimiento"><span>Confirmo que cuento con autorización del paciente para ingresar sus datos y generar esta cotización.</span></label>
+          </div>
           <button class="btn-primary" id="btn-generar">Generar cotización</button>
         </div>
       </div>
@@ -219,7 +228,7 @@ const state = {
   cart: {},
   paciente: '', rut: '', pacienteEmail: '', pacienteWhatsapp: '', pacienteDireccion: '',
   doctorSel: '', doctorOtro: '', obs: '',
-  search: '', familiaFiltro: 'Todas',
+  search: '', familiaFiltro: 'Todas', consentimiento: false,
   view: 'recetario',
   activeQuote: null,
   errorMsg: '', sendError: '', notifMsg: '', savingQuote: false,
@@ -533,6 +542,9 @@ async function generarCotizacion() {
   if (!state.pacienteEmail.trim()) {
     state.errorMsg = 'Ingresa el correo del paciente para poder enviarle la cotización.'; renderCart(); return;
   }
+  if (!state.consentimiento) {
+    state.errorMsg = 'Marca la casilla de autorización del paciente para continuar.'; renderCart(); return;
+  }
   state.errorMsg = ''; state.savingQuote = true; renderCart();
 
   const ahora = new Date();
@@ -643,7 +655,7 @@ async function avisarPagoRecibido(canal) {
 function limpiarFormulario() {
   state.paciente = ''; state.rut = ''; state.pacienteEmail = ''; state.pacienteWhatsapp = '';
   state.pacienteDireccion = ''; state.obs = ''; state.doctorSel = ''; state.doctorOtro = '';
-  state.cart = {}; state.errorMsg = ''; state.search = ''; state.familiaFiltro = 'Todas';
+  state.cart = {}; state.errorMsg = ''; state.search = ''; state.familiaFiltro = 'Todas'; state.consentimiento = false;
 
   document.getElementById('f-paciente').value = '';
   document.getElementById('f-rut').value = '';
@@ -651,6 +663,7 @@ function limpiarFormulario() {
   document.getElementById('f-wsp').value = '';
   document.getElementById('f-direccion').value = '';
   document.getElementById('f-obs').value = '';
+  document.getElementById('f-consentimiento').checked = false;
   document.getElementById('f-search').value = '';
   document.getElementById('f-familia').value = 'Todas';
 
@@ -744,6 +757,7 @@ document.getElementById('f-obs').addEventListener('input', function(e){ state.ob
 document.getElementById('f-search').addEventListener('input', function(e){ state.search = e.target.value; renderProductList(); });
 document.getElementById('btn-vaciar').addEventListener('click', vaciarCarrito);
 document.getElementById('btn-limpiar-form').addEventListener('click', limpiarFormulario);
+document.getElementById('f-consentimiento').addEventListener('change', function (e) { state.consentimiento = e.target.checked; });
 document.getElementById('btn-generar').addEventListener('click', generarCotizacion);
 document.getElementById('floating-btn').addEventListener('click', function(){
   document.getElementById('cotizacion-cart').scrollIntoView({ behavior:'smooth', block:'start' });
