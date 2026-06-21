@@ -70,6 +70,11 @@
   .bank-extra { font-size:12px; color:#52525b; margin-top:8px; background:#fff; border:1px solid #fde68a; border-radius:8px; padding:8px 10px; }
   .webpay-btn { margin-top:auto; display:flex; align-items:center; justify-content:center; gap:8px; background: var(--red); color:#fff; font-weight:700; font-size:14px; padding:14px 20px; border-radius:10px; text-decoration:none; text-align:center; }
   .webpay-btn:hover { background: var(--red-dark); }
+  .send-buttons { display:flex; gap:8px; flex-wrap:wrap; }
+  .btn-outline { flex:1; min-width:150px; display:flex; align-items:center; justify-content:center; gap:6px; font-size:13px; font-weight:600; padding:11px 14px; border-radius:10px; border:1px solid var(--border); background:#fff; color:var(--ink); cursor:pointer; }
+  .btn-outline:hover { background:#fafafa; }
+  .hint { font-size:11px; color:#a1a1aa; margin:8px 0 0; }
+  .msg-success { font-size:12px; color:#047857; background:#d1fae5; border-radius:8px; padding:8px 10px; margin-top:8px; }
   .opt2 { display:flex; flex-direction:column; }
 
   .state-msg { text-align:center; padding: 60px 20px; color:#71717a; font-size:14px; line-height:1.6; }
@@ -148,11 +153,34 @@ function fallbackCopy(value, cb) {
 
 function responsableDeInstitucion(inst) {
   var s = (inst || '').toUpperCase();
-  if (s.indexOf('UDP') !== -1) return { nombre: 'Carla', email: 'carla.monares.ext@straumann.com' };
-  return { nombre: 'Nicole', email: 'nicole.navarrete@straumann.com' };
+  if (s.indexOf('UDP') !== -1) return { nombre: 'Carla', email: 'carla.monares.ext@straumann.com', whatsapp: '56968611907' };
+  return { nombre: 'Nicole', email: 'nicole.navarrete@straumann.com', whatsapp: '56947943058' };
+}
+
+var currentQuote = null;
+var currentToken = null;
+
+async function avisarPagoRecibido(canal) {
+  var q = currentQuote; if (!q) return;
+  var resp = responsableDeInstitucion(q.institucion);
+  var resumen = q.items.map(function (it) { return '• ' + it.codigo + ' x' + it.cantidad; }).join('\n');
+  var cuerpo = 'Hola ' + resp.nombre + ', el paciente ' + q.paciente + ' (cotización ' + q.numero + ', ' + q.institucion + ') ya realizó el pago.\n\n' +
+    'Doctor: ' + q.doctor + '\nTotal: ' + fmt(q.total) + '\n\nProductos:\n' + resumen + '\n\nAdjunto/reenvío el comprobante de pago para que puedas ingresar el pedido. Saludos.';
+
+  if (currentToken) {
+    try { await sb.rpc('marcar_pago_informado_publico', { p_token: currentToken }); } catch (e) {}
+  }
+
+  if (canal === 'correo') {
+    window.open('mailto:' + resp.email + '?subject=' + encodeURIComponent('Pago recibido - Cotización ' + q.numero) + '&body=' + encodeURIComponent(cuerpo), '_blank');
+  } else {
+    window.open('https://wa.me/' + resp.whatsapp + '?text=' + encodeURIComponent(cuerpo), '_blank');
+  }
+  document.getElementById('pago-msg').innerHTML = '<div class="msg-success">✅ Aviso enviado a ' + resp.nombre + '.</div>';
 }
 
 function render(q) {
+  currentQuote = q;
   document.getElementById('printBtn').style.display = 'flex';
   var resp = responsableDeInstitucion(q.institucion);
 
@@ -213,6 +241,16 @@ function render(q) {
     '<a class="webpay-btn" target="_blank" rel="noopener noreferrer" href="https://www.webpay.cl/form-pay/33930">💳 Pagar ahora con Webpay</a>' +
     '</div>' +
     '</div>' +
+    '</div>' +
+
+    '<div class="card" style="text-align:left;">' +
+    '<h2 style="font-size:15px;font-weight:700;margin:0 0 4px;">✅ ¿Ya pagaste?</h2>' +
+    '<p style="font-size:12px;color:#71717a;margin:0 0 14px;">Avísanos directo además del correo, así te atendemos más rápido.</p>' +
+    '<div class="send-buttons">' +
+    '<button class="btn-outline" onclick="avisarPagoRecibido(\'correo\')">✉️ Avisar por correo</button>' +
+    '<button class="btn-outline" onclick="avisarPagoRecibido(\'whatsapp\')">💬 Avisar por WhatsApp</button>' +
+    '</div>' +
+    '<div id="pago-msg"></div>' +
     '</div>';
 }
 
@@ -230,6 +268,7 @@ async function init() {
         document.getElementById('main').innerHTML = '<div class="state-msg">No encontramos datos de cotización en este enlace.<br>Pídele al doctor que te reenvíe el link.</div>';
         return;
       }
+      currentToken = t || null;
       render(data[0]);
     } catch (e) {
       document.getElementById('main').innerHTML = '<div class="state-msg">No pudimos cargar esta cotización. Revisa tu conexión e intenta de nuevo.<br>Si el problema sigue, pídele al doctor que te reenvíe el link.</div>';
