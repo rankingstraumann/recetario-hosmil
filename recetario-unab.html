@@ -301,12 +301,18 @@ function fallbackCopy(value, cb) {
   } catch (e) { cb(false); }
 }
 
+const FAMILIAS_COMPARTIDAS = ['LINEA DE BIOMATERIALES']; // productos complementarios, visibles en ambas marcas
 function marcaDeFamilia(familia) { return familia.indexOf('STRAUMANN') === 0 ? 'Straumann' : 'Neodent'; }
-function familiasDisponibles() { return FAMILIA_ORDEN.filter(f => marcaDeFamilia(f) === state.marcaFiltro && PRODUCTS.some(p => p.familia === f)); }
+function familiaVisibleEnMarca(familia, marca) {
+  if (FAMILIAS_COMPARTIDAS.indexOf(familia) !== -1) return true;
+  return marcaDeFamilia(familia) === marca;
+}
+function familiaLabel(familia) { return familia.indexOf('STRAUMANN — ') === 0 ? familia.slice('STRAUMANN — '.length) : familia; }
+function familiasDisponibles() { return FAMILIA_ORDEN.filter(f => familiaVisibleEnMarca(f, state.marcaFiltro) && PRODUCTS.some(p => p.familia === f)); }
 function productosFiltrados() {
   const q = state.search.trim().toLowerCase();
   return PRODUCTS.filter(p => {
-    const matchMarca = marcaDeFamilia(p.familia) === state.marcaFiltro;
+    const matchMarca = familiaVisibleEnMarca(p.familia, state.marcaFiltro);
     const matchFam = state.familiaFiltro === 'Todas' || p.familia === state.familiaFiltro;
     const matchSearch = !q || p.codigo.toLowerCase().includes(q) || p.descripcion.toLowerCase().includes(q);
     return matchMarca && matchFam && matchSearch;
@@ -402,7 +408,7 @@ function renderProductList() {
   let html = '';
   Object.keys(grouped).forEach(function (fam) {
     const items = grouped[fam];
-    html += '<div class="fam-title">' + esc(fam) + ' <span style="color:#d4d4d8;font-weight:400;">· ' + items.length + ' ítems</span></div>';
+    html += '<div class="fam-title">' + esc(familiaLabel(fam)) + ' <span style="color:#d4d4d8;font-weight:400;">· ' + items.length + ' ítems</span></div>';
     items.forEach(function (p) {
       html += '<div class="prod-row">' +
         '<div>' +
@@ -742,7 +748,7 @@ document.getElementById('floating-btn').addEventListener('click', function(){
 function renderFamiliaSelect(){
   const sel = document.getElementById('f-familia');
   let opts = '<option value="Todas">Todas</option>';
-  familiasDisponibles().forEach(function(f){ opts += '<option value="' + esc(f) + '"' + (state.familiaFiltro===f?' selected':'') + '>' + esc(f) + '</option>'; });
+  familiasDisponibles().forEach(function(f){ opts += '<option value="' + esc(f) + '"' + (state.familiaFiltro===f?' selected':'') + '>' + esc(familiaLabel(f)) + '</option>'; });
   sel.innerHTML = opts;
 }
 document.getElementById('f-familia').addEventListener('change', function(e){ state.familiaFiltro = e.target.value; renderProductList(); });
