@@ -83,11 +83,25 @@ let channel = null;
 
 function institucionInfo(inst) {
   const s = (inst || '').toUpperCase();
-  if (s.indexOf('UNAB') !== -1) return { label: 'UNAB Stgo', color: '#eff6ff;color:#1d4ed8', despacho: 'UNAB Santiago — Echaurren 237', responsable: 'Nicole' };
-  if (s.indexOf('UDP') !== -1) return { label: 'UDP Stgo', color: '#f5f3ff;color:#6d28d9', despacho: 'UDP Santiago — Av. Ejército Libertador 219', responsable: 'Carla' };
-  if (s.indexOf('MAYOR') !== -1) return { label: 'U Mayor Stgo', color: '#fdf4ff;color:#a21caf', despacho: 'U. Mayor Santiago — Av. Libertador Bernardo O\'Higgins 2013', responsable: 'Nicole' };
-  if (s.indexOf('HOSMIL') !== -1) return { label: 'HOSMIL', color: '#fef2f2;color:#991b1b', despacho: 'Hospital Militar (HOSMIL)', responsable: 'Nicole' };
-  return { label: inst || '-', color: '#f4f4f5;color:#3f3f46', despacho: inst || '-', responsable: '-' };
+  if (s.indexOf('UNAB') !== -1) return { label: 'UNAB Stgo', color: '#eff6ff;color:#1d4ed8', despacho: 'UNAB Santiago — Echaurren 237', responsable: 'Nicole', codigo: 'UNAB' };
+  if (s.indexOf('UDP') !== -1) return { label: 'UDP Stgo', color: '#f5f3ff;color:#6d28d9', despacho: 'UDP Santiago — Av. Ejército Libertador 219', responsable: 'Carla', codigo: 'UDP' };
+  if (s.indexOf('MAYOR') !== -1) return { label: 'U Mayor Stgo', color: '#fdf4ff;color:#a21caf', despacho: 'U. Mayor Santiago — Av. Libertador Bernardo O\'Higgins 2013', responsable: 'Nicole', codigo: 'UMAYOR' };
+  if (s.indexOf('HOSMIL') !== -1) return { label: 'HOSMIL', color: '#fef2f2;color:#991b1b', despacho: 'Hospital Militar (HOSMIL)', responsable: 'Nicole', codigo: 'HOSMIL' };
+  return { label: inst || '-', color: '#f4f4f5;color:#3f3f46', despacho: inst || '-', responsable: '-', codigo: '' };
+}
+
+const DOMINIO_POR_CODIGO = {
+  HOSMIL: 'https://recetario-hosmil.vercel.app/',
+  UNAB: 'https://recetario-unab.vercel.app/',
+  UDP: 'https://recetario-udp.vercel.app/',
+  UMAYOR: 'https://recetario-umayor.vercel.app/',
+};
+function linkPublicoDe(c) {
+  const inst = institucionInfo(c.institucion);
+  const dominio = DOMINIO_POR_CODIGO[inst.codigo];
+  // Cotizaciones nuevas: link seguro con token. Cotizaciones antiguas (antes del token): usan el link guardado en su momento.
+  if (c.token && dominio) return dominio + '?t=' + encodeURIComponent(c.token);
+  return c.link || '';
 }
 
 function fmt(n) { return '$' + Math.round(n || 0).toLocaleString('es-CL'); }
@@ -189,7 +203,7 @@ function exportarExcel(rows) {
       'Cant. ítems': (c.items || []).reduce(function (s, it) { return s + (Number(it.cantidad) || 0); }, 0),
       'Total': Number(c.total) || 0,
       'Estado': c.estado,
-      'Link cotización': c.link || ''
+      'Link cotización': linkPublicoDe(c)
     };
   });
 
@@ -272,7 +286,7 @@ function renderDashboard() {
             '<div style="grid-column:1/-1;"><strong>Observaciones:</strong> ' + esc(c.observaciones || '-') + '</div>' +
           '</div>' +
           '<div style="font-size:11px;color:#92400e;background:#fffbeb;border:1px solid #fde68a;border-radius:6px;padding:6px 10px;margin-bottom:10px;display:inline-block;">📦 Despacho siempre a ' + esc(inst.despacho) + ', independiente de la dirección de facturación.</div>' +
-          (c.link ? '<div class="detail-link"><span>' + esc(c.link) + '</span><button class="btn-logout" onclick="copiarTexto(\'' + c.link.replace(/'/g,"\\'") + '\', this)">Copiar link</button></div>' : '') +
+          (function () { const lp = linkPublicoDe(c); return lp ? '<div class="detail-link"><span>' + esc(lp) + '</span><button class="btn-logout" onclick="copiarTexto(\'' + lp.replace(/'/g,"\\'") + '\', this)">Copiar link</button></div>' : ''; })() +
           '<div class="detail-items">' + itemsHtml + '</div>' +
         '</td></tr>';
       }

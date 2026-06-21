@@ -218,12 +218,14 @@ function render(q) {
 
 async function init() {
   var params = new URLSearchParams(window.location.search);
+  var t = params.get('t');
   var n = params.get('n');
   var d = params.get('d');
 
-  if (n) {
+  if (t || n) {
     try {
-      var { data, error } = await sb.rpc('obtener_cotizacion_publica', { p_numero: n });
+      var rpcParams = t ? { p_token: t } : { p_numero: n };
+      var { data, error } = await sb.rpc('obtener_cotizacion_publica', rpcParams);
       if (error || !data || !data.length) {
         document.getElementById('main').innerHTML = '<div class="state-msg">No encontramos datos de cotización en este enlace.<br>Pídele al doctor que te reenvíe el link.</div>';
         return;

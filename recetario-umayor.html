@@ -275,11 +275,10 @@ function toBase64Url(str) {
   const b64 = btoa(utf8);
   return b64.replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
 }
-function construirLinkPaciente(quote) {
-  // La cotización ya está guardada en la base de datos (crear_cotizacion);
-  // el link del paciente solo pasa el número y la página la busca ahí.
-  // Esto mantiene el link corto en vez de ir codificando todo el detalle en la URL.
-  return PATIENT_LINK_BASE + '?n=' + encodeURIComponent(quote.numero);
+function construirLinkPaciente(quote, token) {
+  // El token lo genera la base de datos al guardar (aleatorio e impredecible),
+  // mucho más seguro que armar el link solo con el número, que sigue un patrón de fecha/hora adivinable.
+  return PATIENT_LINK_BASE + '?t=' + encodeURIComponent(token);
 }
 // Respaldo: si por algún motivo no se pudo guardar en la base de datos, el link
 // lleva los datos codificados directamente (más largo, pero funciona igual sin depender del guardado).
@@ -610,9 +609,8 @@ async function generarCotizacion() {
     estado: 'Cotización generada',
     historial: [{ estado: 'Cotización generada', fecha: ahora.toISOString() }]
   };
-  quote.link = construirLinkPaciente(quote);
-
   let dbId = null;
+  let dbToken = null;
   let dbError = '';
   try {
     const { data, error } = await sb.rpc('crear_cotizacion', {
@@ -620,18 +618,21 @@ async function generarCotizacion() {
         numero: quote.numero, institucion: quote.institucion, paciente: quote.paciente, rut: quote.rut,
         paciente_email: quote.pacienteEmail, paciente_whatsapp: quote.pacienteWhatsapp, paciente_direccion: quote.pacienteDireccion, doctor: quote.doctor,
         fecha: quote.fecha, observaciones: quote.observaciones, items: quote.items, total: quote.total,
-        estado: quote.estado, historial: quote.historial, link: quote.link
+        estado: quote.estado, historial: quote.historial
       }
     });
-    if (!error) { dbId = data; }
+    if (!error && data && data.token) { dbId = data.id; dbToken = data.token; }
+    else if (!error) { dbError = 'La base de datos no devolvió un token válido.'; }
     else { dbError = (error.message || '') + ' | code: ' + (error.code || '-') + ' | details: ' + (error.details || '-') + ' | hint: ' + (error.hint || '-'); }
   } catch (e) { dbError = 'Excepción JS: ' + (e && e.message ? e.message : String(e)); }
   quote.dbId = dbId;
   quote.dbError = dbError;
   if (dbError) {
-    // No se pudo guardar: el link corto no serviría (no hay fila que buscar), así que
-    // se usa el link con los datos embebidos como respaldo para no dejar al doctor sin link.
+    // No se pudo guardar: no hay fila ni token que buscar, así que se usa el link
+    // con los datos embebidos como respaldo para no dejar al doctor sin link.
     quote.link = construirLinkPacienteEmbebido(quote);
+  } else {
+    quote.link = construirLinkPaciente(quote, dbToken);
   }
 
   state.savingQuote = false;
