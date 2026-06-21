@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Panel Inside Sales — Hospital Militar | Straumann Group Chile</title>
+<title>Panel Inside Sales — HOSMIL & UNAB Santiago | Straumann Group Chile</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <style>
   :root {
@@ -74,8 +74,16 @@ const ESTADO_COLOR = {
 
 let cotizaciones = [];
 let estadoFiltro = 'Todos';
+let institucionFiltro = 'Todas';
 let filaAbierta = null;
 let channel = null;
+
+function institucionInfo(inst) {
+  const s = inst || '';
+  if (s.indexOf('UNAB') !== -1) return { label: 'UNAB Stgo', color: '#eff6ff;color:#1d4ed8', despacho: 'UNAB Santiago — Echaurren 237' };
+  if (s.indexOf('HOSMIL') !== -1) return { label: 'HOSMIL', color: '#fef2f2;color:#991b1b', despacho: 'Hospital Militar (HOSMIL)' };
+  return { label: s || '-', color: '#f4f4f5;color:#3f3f46', despacho: s || '-' };
+}
 
 function fmt(n) { return '$' + Math.round(n || 0).toLocaleString('es-CL'); }
 function fechaCorta(iso) {
@@ -95,7 +103,7 @@ function renderLogin(errMsg) {
     '<header class="topbar"><div><div class="brand-name">STRAUMANN</div><div class="brand-sub">GROUP CHILE · NEODENT</div></div></header>' +
     '<div class="login-wrap">' +
       '<h1>Panel Inside Sales</h1>' +
-      '<p>Hospital Militar (HOSMIL) · acceso restringido</p>' +
+      '<p>HOSMIL · UNAB Santiago · acceso restringido</p>' +
       (errMsg ? '<div class="login-err">⚠️ ' + esc(errMsg) + '</div>' : '') +
       '<input type="email" id="li-email" placeholder="Correo">' +
       '<input type="password" id="li-pass" placeholder="Contraseña">' +
@@ -161,18 +169,24 @@ function renderDashboard() {
   const v = document.getElementById('dashboard-view');
   v.style.display = 'block';
 
-  const visibles = estadoFiltro === 'Todos' ? cotizaciones : cotizaciones.filter(function (c) { return c.estado === estadoFiltro; });
+  const visibles = cotizaciones.filter(function (c) {
+    const matchEstado = estadoFiltro === 'Todos' || c.estado === estadoFiltro;
+    const matchInst = institucionFiltro === 'Todas' || institucionInfo(c.institucion).label === institucionFiltro;
+    return matchEstado && matchInst;
+  });
 
   let filasHtml = '';
   if (visibles.length === 0) {
-    filasHtml = '<tr><td colspan="6"><div class="empty-msg">No hay cotizaciones' + (estadoFiltro !== 'Todos' ? ' con estado "' + esc(estadoFiltro) + '"' : ' todavía') + '.</div></td></tr>';
+    filasHtml = '<tr><td colspan="7"><div class="empty-msg">No hay cotizaciones' + (estadoFiltro !== 'Todos' ? ' con estado "' + esc(estadoFiltro) + '"' : ' todavía') + '.</div></td></tr>';
   } else {
     visibles.forEach(function (c) {
       const colorStyle = ESTADO_COLOR[c.estado] || '#f4f4f5;color:#3f3f46';
+      const inst = institucionInfo(c.institucion);
       let estadoOpts = '';
       ESTADOS.forEach(function (e) { estadoOpts += '<option value="' + esc(e) + '"' + (c.estado === e ? ' selected' : '') + '>' + esc(e) + '</option>'; });
 
       filasHtml += '<tr onclick="toggleFila(\'' + c.id + '\')">' +
+        '<td><span style="font-size:10px;font-weight:700;border-radius:6px;padding:3px 7px;background:' + inst.color + '">' + esc(inst.label) + '</span></td>' +
         '<td class="mono">' + esc(c.numero) + '</td>' +
         '<td>' + esc(c.paciente) + (c.rut ? '<br><span style="color:#a1a1aa;">' + esc(c.rut) + '</span>' : '') + '</td>' +
         '<td>' + esc(c.doctor) + '</td>' +
@@ -187,7 +201,7 @@ function renderDashboard() {
         const itemsHtml = (c.items || []).map(function (it) {
           return '<div><span class="mono">' + esc(it.codigo) + '</span> — ' + esc(it.descripcion) + ' · x' + it.cantidad + ' · ' + fmt(it.subtotal) + '</div>';
         }).join('');
-        filasHtml += '<tr class="detail-row"><td colspan="6">' +
+        filasHtml += '<tr class="detail-row"><td colspan="7">' +
           '<div class="detail-grid">' +
             '<div><strong>Institución:</strong> ' + esc(c.institucion) + '</div>' +
             '<div><strong>Correo paciente:</strong> ' + esc(c.paciente_email || '-') + '</div>' +
@@ -195,7 +209,7 @@ function renderDashboard() {
             '<div><strong>Dirección (facturación):</strong> ' + esc(c.paciente_direccion || '-') + '</div>' +
             '<div style="grid-column:1/-1;"><strong>Observaciones:</strong> ' + esc(c.observaciones || '-') + '</div>' +
           '</div>' +
-          '<div style="font-size:11px;color:#92400e;background:#fffbeb;border:1px solid #fde68a;border-radius:6px;padding:6px 10px;margin-bottom:10px;display:inline-block;">📦 Despacho siempre a Hospital Militar (HOSMIL), independiente de la dirección de facturación.</div>' +
+          '<div style="font-size:11px;color:#92400e;background:#fffbeb;border:1px solid #fde68a;border-radius:6px;padding:6px 10px;margin-bottom:10px;display:inline-block;">📦 Despacho siempre a ' + esc(inst.despacho) + ', independiente de la dirección de facturación.</div>' +
           (c.link ? '<div class="detail-link"><span>' + esc(c.link) + '</span><button class="btn-logout" onclick="copiarTexto(\'' + c.link.replace(/'/g,"\\'") + '\', this)">Copiar link</button></div>' : '') +
           '<div class="detail-items">' + itemsHtml + '</div>' +
         '</td></tr>';
@@ -207,17 +221,27 @@ function renderDashboard() {
     '<header class="topbar"><div><div class="brand-name">STRAUMANN</div><div class="brand-sub">GROUP CHILE · NEODENT</div></div>' +
     '<div style="display:flex;align-items:center;gap:12px;"><span style="font-size:10px;color:#a1a1aa;">by Daniel Jordán</span><button class="btn-logout" id="btn-logout">Cerrar sesión</button></div></header>' +
     '<main>' +
-      '<h2 style="margin:0 0 4px;">Cotizaciones — Hospital Militar</h2>' +
-      '<p style="font-size:12px;color:#a1a1aa;margin:0 0 18px;">Se actualiza en vivo a medida que los doctores generan cotizaciones.</p>' +
+      '<h2 style="margin:0 0 4px;">Cotizaciones — HOSMIL & UNAB Santiago</h2>' +
+      '<p style="font-size:12px;color:#a1a1aa;margin:0 0 18px;">Se actualiza en vivo a medida que se generan cotizaciones.</p>' +
       '<div class="toolbar">' +
-        '<span class="stat-pill">' + cotizaciones.length + ' cotizaciones en total</span>' +
-        '<select id="filtro-estado"><option value="Todos">Todos los estados</option></select>' +
+        '<span class="stat-pill">' + visibles.length + ' de ' + cotizaciones.length + ' cotizaciones</span>' +
+        '<div style="display:flex;gap:8px;">' +
+          '<select id="filtro-institucion"></select>' +
+          '<select id="filtro-estado"></select>' +
+        '</div>' +
       '</div>' +
       '<div style="overflow-x:auto;">' +
-        '<table><thead><tr><th>N° Cotización</th><th>Paciente</th><th>Doctor</th><th>Fecha</th><th style="text-align:right;">Total</th><th>Estado</th></tr></thead>' +
+        '<table><thead><tr><th>Institución</th><th>N° Cotización</th><th>Paciente</th><th>Doctor</th><th>Fecha</th><th style="text-align:right;">Total</th><th>Estado</th></tr></thead>' +
         '<tbody>' + filasHtml + '</tbody></table>' +
       '</div>' +
     '</main>';
+
+  const selInst = document.getElementById('filtro-institucion');
+  let optsInst = '<option value="Todas">Todas las instituciones</option>' +
+    '<option value="HOSMIL"' + (institucionFiltro === 'HOSMIL' ? ' selected' : '') + '>HOSMIL</option>' +
+    '<option value="UNAB Stgo"' + (institucionFiltro === 'UNAB Stgo' ? ' selected' : '') + '>UNAB Santiago</option>';
+  selInst.innerHTML = optsInst;
+  selInst.addEventListener('change', function (e) { institucionFiltro = e.target.value; renderDashboard(); });
 
   const sel = document.getElementById('filtro-estado');
   let opts = '<option value="Todos">Todos los estados</option>';
