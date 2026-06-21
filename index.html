@@ -146,8 +146,15 @@ function fallbackCopy(value, cb) {
   } catch (e) { cb(false); }
 }
 
+function responsableDeInstitucion(inst) {
+  var s = (inst || '').toUpperCase();
+  if (s.indexOf('UDP') !== -1) return { nombre: 'Carla', email: 'carla.monares.ext@straumann.com' };
+  return { nombre: 'Nicole', email: 'nicole.navarrete@straumann.com' };
+}
+
 function render(q) {
   document.getElementById('printBtn').style.display = 'flex';
+  var resp = responsableDeInstitucion(q.institucion);
 
   var itemsHtml = q.items.map(function (it) {
     return '<tr><td><div class="code">' + esc(it.codigo) + '</div>' + esc(it.descripcion) + '</td>' +
@@ -198,7 +205,7 @@ function render(q) {
     '<div style="font-size:12px;color:#71717a;padding:0 4px;margin-bottom:6px;">Banco: <strong>BICE</strong> · Tipo de cuenta: <strong>Cuenta Corriente</strong></div>' +
     '<div class="copy-field"><div><div class="cf-label">N° de Cuenta</div><div class="cf-value">21002704</div></div><button class="copy-btn" onclick="copiar(\'21002704\', this)">📋 Copiar</button></div>' +
     '<div class="copy-field"><div><div class="cf-label">RUT</div><div class="cf-value">76.598.913-2</div></div><button class="copy-btn" onclick="copiar(\'76.598.913-2\', this)">📋 Copiar</button></div>' +
-    '<div class="bank-extra">Cuando pagues, envía tu comprobante a <strong>cobranza.cl@straumann.com</strong><br>con copia a <strong>nicole.navarrete@straumann.com</strong></div>' +
+    '<div class="bank-extra">Cuando pagues, envía tu comprobante a <strong>cobranza.cl@straumann.com</strong><br>con copia a <strong>' + esc(resp.email) + '</strong></div>' +
     '</div>' +
     '<div class="opt2">' +
     '<div class="opt-title">Opción 2 — Pagar en línea</div>' +
