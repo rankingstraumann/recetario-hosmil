@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Panel Inside Sales — HOSMIL & UNAB Santiago | Straumann Group Chile</title>
+<title>Panel Inside Sales | Straumann Group Chile</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <style>
   :root {
@@ -81,6 +81,7 @@ let channel = null;
 function institucionInfo(inst) {
   const s = inst || '';
   if (s.indexOf('UNAB') !== -1) return { label: 'UNAB Stgo', color: '#eff6ff;color:#1d4ed8', despacho: 'UNAB Santiago — Echaurren 237' };
+  if (s.indexOf('UDP') !== -1) return { label: 'UDP Stgo', color: '#f5f3ff;color:#6d28d9', despacho: 'UDP Santiago — Av. Ejército Libertador 219' };
   if (s.indexOf('HOSMIL') !== -1) return { label: 'HOSMIL', color: '#fef2f2;color:#991b1b', despacho: 'Hospital Militar (HOSMIL)' };
   return { label: s || '-', color: '#f4f4f5;color:#3f3f46', despacho: s || '-' };
 }
@@ -103,7 +104,7 @@ function renderLogin(errMsg) {
     '<header class="topbar"><div><div class="brand-name">STRAUMANN</div><div class="brand-sub">GROUP CHILE · NEODENT</div></div></header>' +
     '<div class="login-wrap">' +
       '<h1>Panel Inside Sales</h1>' +
-      '<p>HOSMIL · UNAB Santiago · acceso restringido</p>' +
+      '<p>Acceso restringido según institución asignada</p>' +
       (errMsg ? '<div class="login-err">⚠️ ' + esc(errMsg) + '</div>' : '') +
       '<input type="email" id="li-email" placeholder="Correo">' +
       '<input type="password" id="li-pass" placeholder="Contraseña">' +
@@ -221,7 +222,7 @@ function renderDashboard() {
     '<header class="topbar"><div><div class="brand-name">STRAUMANN</div><div class="brand-sub">GROUP CHILE · NEODENT</div></div>' +
     '<div style="display:flex;align-items:center;gap:12px;"><span style="font-size:10px;color:#a1a1aa;">by Daniel Jordán</span><button class="btn-logout" id="btn-logout">Cerrar sesión</button></div></header>' +
     '<main>' +
-      '<h2 style="margin:0 0 4px;">Cotizaciones — HOSMIL & UNAB Santiago</h2>' +
+      '<h2 style="margin:0 0 4px;">Cotizaciones</h2>' +
       '<p style="font-size:12px;color:#a1a1aa;margin:0 0 18px;">Se actualiza en vivo a medida que se generan cotizaciones.</p>' +
       '<div class="toolbar">' +
         '<span class="stat-pill">' + visibles.length + ' de ' + cotizaciones.length + ' cotizaciones</span>' +
@@ -237,9 +238,11 @@ function renderDashboard() {
     '</main>';
 
   const selInst = document.getElementById('filtro-institucion');
-  let optsInst = '<option value="Todas">Todas las instituciones</option>' +
-    '<option value="HOSMIL"' + (institucionFiltro === 'HOSMIL' ? ' selected' : '') + '>HOSMIL</option>' +
-    '<option value="UNAB Stgo"' + (institucionFiltro === 'UNAB Stgo' ? ' selected' : '') + '>UNAB Santiago</option>';
+  const labelsPresentes = Array.from(new Set(cotizaciones.map(function (c) { return institucionInfo(c.institucion).label; }))).sort();
+  let optsInst = '<option value="Todas">Todas las instituciones</option>';
+  labelsPresentes.forEach(function (label) {
+    optsInst += '<option value="' + esc(label) + '"' + (institucionFiltro === label ? ' selected' : '') + '>' + esc(label) + '</option>';
+  });
   selInst.innerHTML = optsInst;
   selInst.addEventListener('change', function (e) { institucionFiltro = e.target.value; renderDashboard(); });
 
