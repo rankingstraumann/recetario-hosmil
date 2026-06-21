@@ -89,7 +89,12 @@
     <div class="state-msg" id="loading">Cargando tu cotización…</div>
   </main>
 
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <script>
+const SUPABASE_URL = 'https://gzimllusbxjorbsbtsse.supabase.co';
+const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imd6aW1sbHVzYnhqb3Jic2J0c3NlIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE5NDQ4NDcsImV4cCI6MjA5NzUyMDg0N30.DFq-_PY10hyr2QmMUXk-v8VW2LKYz3bAW37VCutwmzY';
+const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
 function fmt(n) {
   return '$' + Math.round(n || 0).toLocaleString('es-CL');
 }
@@ -204,9 +209,25 @@ function render(q) {
     '</div>';
 }
 
-function init() {
+async function init() {
   var params = new URLSearchParams(window.location.search);
+  var n = params.get('n');
   var d = params.get('d');
+
+  if (n) {
+    try {
+      var { data, error } = await sb.rpc('obtener_cotizacion_publica', { p_numero: n });
+      if (error || !data || !data.length) {
+        document.getElementById('main').innerHTML = '<div class="state-msg">No encontramos datos de cotización en este enlace.<br>Pídele al doctor que te reenvíe el link.</div>';
+        return;
+      }
+      render(data[0]);
+    } catch (e) {
+      document.getElementById('main').innerHTML = '<div class="state-msg">No pudimos cargar esta cotización. Revisa tu conexión e intenta de nuevo.<br>Si el problema sigue, pídele al doctor que te reenvíe el link.</div>';
+    }
+    return;
+  }
+
   if (!d) {
     document.getElementById('main').innerHTML = '<div class="state-msg">No encontramos datos de cotización en este enlace.<br>Pídele al doctor que te reenvíe el link.</div>';
     return;

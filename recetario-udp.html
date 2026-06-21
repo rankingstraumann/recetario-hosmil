@@ -214,7 +214,7 @@ const NICOLE_EMAIL = 'carla.monares.ext@straumann.com';
 const NICOLE_WSP = '56968611907';
 const COBRANZA_EMAIL = 'cobranza.cl@straumann.com';
 const WEBPAY_LINK = 'https://www.webpay.cl/form-pay/33930';
-const PATIENT_LINK_BASE = 'https://recetario-hosmil.vercel.app/';
+const PATIENT_LINK_BASE = 'https://recetario-udp.vercel.app/';
 
 // Regla de negocio: por cada implante (ACQUA o NEOPOROS) debe ir 1 tapa de cierre o
 // pilar de cicatrización al 99% de descuento (sobre precio de lista). Si faltan, se
@@ -267,6 +267,14 @@ function toBase64Url(str) {
   return b64.replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
 }
 function construirLinkPaciente(quote) {
+  // La cotización ya está guardada en la base de datos (crear_cotizacion);
+  // el link del paciente solo pasa el número y la página la busca ahí.
+  // Esto mantiene el link corto en vez de ir codificando todo el detalle en la URL.
+  return PATIENT_LINK_BASE + '?n=' + encodeURIComponent(quote.numero);
+}
+// Respaldo: si por algún motivo no se pudo guardar en la base de datos, el link
+// lleva los datos codificados directamente (más largo, pero funciona igual sin depender del guardado).
+function construirLinkPacienteEmbebido(quote) {
   const data = {
     numero: quote.numero, fecha: quote.fecha, institucion: quote.institucion,
     paciente: quote.paciente, rut: quote.rut, doctor: quote.doctor,
@@ -608,6 +616,11 @@ async function generarCotizacion() {
   } catch (e) { dbError = 'Excepción JS: ' + (e && e.message ? e.message : String(e)); }
   quote.dbId = dbId;
   quote.dbError = dbError;
+  if (dbError) {
+    // No se pudo guardar: el link corto no serviría (no hay fila que buscar), así que
+    // se usa el link con los datos embebidos como respaldo para no dejar al doctor sin link.
+    quote.link = construirLinkPacienteEmbebido(quote);
+  }
 
   state.savingQuote = false;
   state.activeQuote = quote;
