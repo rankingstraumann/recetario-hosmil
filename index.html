@@ -75,6 +75,12 @@
   .btn-outline:hover { background:#fafafa; }
   .hint { font-size:11px; color:#a1a1aa; margin:8px 0 0; }
   .msg-success { font-size:12px; color:#047857; background:#d1fae5; border-radius:8px; padding:8px 10px; margin-top:8px; }
+  .upload-label { display:flex; align-items:center; justify-content:center; gap:6px; width:100%; font-size:13px; font-weight:600; padding:14px; border-radius:10px; border:2px dashed var(--border); background:#fafafa; color:var(--ink); cursor:pointer; text-align:center; }
+  .upload-label:hover { background:#f4f4f5; }
+  .upload-filename { font-size:12px; color:#3f3f46; margin-top:8px; word-break:break-all; }
+  .btn-solid { width:100%; display:flex; align-items:center; justify-content:center; gap:6px; background:var(--red); color:#fff; font-weight:700; font-size:13px; padding:11px 14px; border-radius:10px; border:none; cursor:pointer; margin-top:8px; }
+  .btn-solid:hover { background:var(--red-dark); }
+  .btn-solid:disabled { opacity:0.6; cursor:default; }
   .opt2 { display:flex; flex-direction:column; }
 
   .state-msg { text-align:center; padding: 60px 20px; color:#71717a; font-size:14px; line-height:1.6; }
@@ -151,6 +157,14 @@ function fallbackCopy(value, cb) {
   } catch (e) { cb(false); }
 }
 
+function institucionCodigo(inst) {
+  var s = (inst || '').toUpperCase();
+  if (s.indexOf('UNAB') !== -1) return 'UNAB';
+  if (s.indexOf('UDP') !== -1) return 'UDP';
+  if (s.indexOf('MAYOR') !== -1) return 'UMAYOR';
+  return 'HOSMIL';
+}
+
 function responsableDeInstitucion(inst) {
   var s = (inst || '').toUpperCase();
   if (s.indexOf('UDP') !== -1) return { nombre: 'Carla', email: 'carla.monares.ext@straumann.com', whatsapp: '56968611907' };
@@ -159,6 +173,37 @@ function responsableDeInstitucion(inst) {
 
 var currentQuote = null;
 var currentToken = null;
+
+async function subirComprobante() {
+  var q = currentQuote; if (!q || !currentToken) return;
+  var input = document.getElementById('f-comprobante');
+  var file = input.files[0];
+  if (!file) return;
+
+  var btn = document.getElementById('btn-subir-comprobante');
+  var msgEl = document.getElementById('upload-msg');
+  btn.disabled = true;
+  btn.textContent = 'Subiendo\u2026';
+  msgEl.innerHTML = '';
+
+  try {
+    var ext = file.name.split('.').pop();
+    var path = institucionCodigo(q.institucion) + '/' + currentToken + '-' + Date.now() + '.' + ext;
+    var { error: upErr } = await sb.storage.from('comprobantes').upload(path, file, { contentType: file.type });
+    if (upErr) throw upErr;
+
+    var { error: rpcErr } = await sb.rpc('marcar_pago_informado_publico', { p_token: currentToken, p_comprobante_path: path });
+    if (rpcErr) throw rpcErr;
+
+    msgEl.innerHTML = '<div class="msg-success">✅ Comprobante recibido. Ya avisamos a ' + responsableDeInstitucion(q.institucion).nombre + '.</div>';
+    btn.style.display = 'none';
+    document.getElementById('upload-label').style.display = 'none';
+  } catch (e) {
+    msgEl.innerHTML = '<div class="hint" style="color:#b91c1c;">No pudimos subir el archivo. Intenta de nuevo o usa los botones de abajo.</div>';
+    btn.disabled = false;
+    btn.textContent = 'Subir comprobante';
+  }
+}
 
 async function avisarPagoRecibido(canal) {
   var q = currentQuote; if (!q) return;
@@ -245,13 +290,36 @@ function render(q) {
 
     '<div class="card" style="text-align:left;">' +
     '<h2 style="font-size:15px;font-weight:700;margin:0 0 4px;">✅ ¿Ya pagaste?</h2>' +
-    '<p style="font-size:12px;color:#71717a;margin:0 0 14px;">Avísanos directo además del correo, así te atendemos más rápido.</p>' +
+    '<p style="font-size:12px;color:#71717a;margin:0 0 14px;">Sube tu comprobante y te atendemos m\u00e1s r\u00e1pido.</p>' +
+    (currentToken ?
+      '<input type="file" id="f-comprobante" accept="image/*,.pdf" style="display:none;">' +
+      '<label for="f-comprobante" class="upload-label" id="upload-label">📎 Elegir foto o PDF del comprobante</label>' +
+      '<div class="upload-filename" id="upload-filename"></div>' +
+      '<button class="btn-solid" id="btn-subir-comprobante" style="display:none;" onclick="subirComprobante()">Subir comprobante</button>' +
+      '<div id="upload-msg"></div>' +
+      '<p class="hint" style="margin:14px 0 6px;">\u00bfPrefieres avisar sin subir archivo?</p>'
+    : '') +
     '<div class="send-buttons">' +
     '<button class="btn-outline" onclick="avisarPagoRecibido(\'correo\')">✉️ Avisar por correo</button>' +
     '<button class="btn-outline" onclick="avisarPagoRecibido(\'whatsapp\')">💬 Avisar por WhatsApp</button>' +
     '</div>' +
     '<div id="pago-msg"></div>' +
     '</div>';
+
+  if (currentToken) {
+    document.getElementById('f-comprobante').addEventListener('change', function (e) {
+      var file = e.target.files[0];
+      var btn = document.getElementById('btn-subir-comprobante');
+      var nameEl = document.getElementById('upload-filename');
+      if (file) {
+        nameEl.textContent = file.name + ' (' + Math.round(file.size / 1024) + ' KB)';
+        btn.style.display = 'flex';
+      } else {
+        nameEl.textContent = '';
+        btn.style.display = 'none';
+      }
+    });
+  }
 }
 
 async function init() {
