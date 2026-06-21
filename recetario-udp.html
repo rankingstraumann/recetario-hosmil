@@ -589,7 +589,7 @@ async function generarCotizacion() {
   const numero = 'UDP-' + ahora.getFullYear() + pad2(ahora.getMonth()+1) + pad2(ahora.getDate()) + '-' + pad2(ahora.getHours()) + pad2(ahora.getMinutes()) + pad2(ahora.getSeconds());
 
   const items = construirLineasCotizacion().map(function (l) {
-    return { codigo: l.codigo, descripcion: l.descripcion, cantidad: l.cantidad, precioFinal: l.precioUnitario, subtotal: l.subtotal };
+    return { codigo: l.codigo, descripcion: l.descripcion, cantidad: l.cantidad, precioFinal: l.precioUnitario, subtotal: l.subtotal, precioLista: l.precioLista, descuento: l.descuento };
   });
   const total = items.reduce(function (s, it) { return s + it.subtotal; }, 0);
 
