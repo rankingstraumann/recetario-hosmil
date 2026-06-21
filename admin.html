@@ -289,9 +289,25 @@ function renderDashboard() {
       '</tr>';
 
       if (filaAbierta === c.id) {
-        const itemsHtml = (c.items || []).map(function (it) {
-          return '<div><span class="mono">' + esc(it.codigo) + '</span> — ' + esc(it.descripcion) + ' · x' + it.cantidad + ' · ' + fmt(it.subtotal) + '</div>';
+        const itemsRows = (c.items || []).map(function (it) {
+          const dto = (typeof it.descuento === 'number') ? Math.round(it.descuento * 100) + '%' : '-';
+          return '<tr>' +
+            '<td style="padding:6px 10px 6px 0;font-weight:700;font-family:ui-monospace,monospace;white-space:nowrap;">' + esc(it.codigo) + '</td>' +
+            '<td style="padding:6px 10px;font-weight:700;">' + esc(it.descripcion) + '</td>' +
+            '<td style="padding:6px 10px;text-align:center;">x' + it.cantidad + '</td>' +
+            '<td style="padding:6px 10px;text-align:center;">' + dto + '</td>' +
+            '<td style="padding:6px 0 6px 10px;text-align:right;white-space:nowrap;">' + fmt(it.subtotal) + '</td>' +
+          '</tr>';
         }).join('');
+        const itemsHtml = '<table style="width:100%;border-collapse:collapse;font-size:12px;">' +
+          '<thead><tr style="color:#a1a1aa;font-size:10px;text-transform:uppercase;text-align:left;">' +
+            '<th style="padding:2px 10px 6px 0;">Código</th><th style="padding:2px 10px 6px;">Descripción</th>' +
+            '<th style="padding:2px 10px 6px;text-align:center;">Cant.</th><th style="padding:2px 10px 6px;text-align:center;">Dscto.</th>' +
+            '<th style="padding:2px 0 6px 10px;text-align:right;">Subtotal</th>' +
+          '</tr></thead>' +
+          '<tbody style="border-top:1px solid #e4e4e7;">' + itemsRows + '</tbody>' +
+        '</table>';
+        const codigosParaCopiar = (c.items || []).map(function (it) { return it.codigo; }).join('\n');
         filasHtml += '<tr class="detail-row"><td colspan="7">' +
           '<div class="detail-grid">' +
             '<div><strong>Institución:</strong> ' + esc(c.institucion) + '</div>' +
@@ -304,6 +320,10 @@ function renderDashboard() {
           '<div style="font-size:11px;color:#92400e;background:#fffbeb;border:1px solid #fde68a;border-radius:6px;padding:6px 10px;margin-bottom:10px;display:inline-block;">📦 Despacho siempre a ' + esc(inst.despacho) + ', independiente de la dirección de facturación.</div>' +
           (c.comprobante_path ? '<div style="margin-bottom:10px;"><button class="btn-logout" onclick="verComprobante(\'' + c.comprobante_path.replace(/'/g,"\\'") + '\', this)">📎 Ver comprobante de pago</button></div>' : '') +
           (function () { const lp = linkPublicoDe(c); return lp ? '<div class="detail-link"><span>' + esc(lp) + '</span><button class="btn-logout" onclick="copiarTexto(\'' + lp.replace(/'/g,"\\'") + '\', this)">Copiar link</button></div>' : ''; })() +
+          '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;">' +
+            '<span style="font-size:11px;font-weight:700;color:#a1a1aa;text-transform:uppercase;">Productos (para ingresar el pedido)</span>' +
+            '<button class="btn-logout" onclick="copiarTexto(\'' + codigosParaCopiar.replace(/'/g,"\\'").replace(/\n/g,'\\n') + '\', this)">📋 Copiar solo los códigos</button>' +
+          '</div>' +
           '<div class="detail-items">' + itemsHtml + '</div>' +
         '</td></tr>';
       }

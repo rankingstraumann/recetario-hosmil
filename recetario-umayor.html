@@ -376,10 +376,10 @@ function construirLineasCotizacion() {
       creditoRestante -= conDescuento;
       if (conDescuento > 0) {
         const precioEspecial = Math.round(it.precioLista * (1 - DESCUENTO_CIERRE));
-        lineas.push({ codigo: it.codigo, descripcion: it.descripcion + ' (precio especial por implante)', cantidad: conDescuento, precioUnitario: precioEspecial, subtotal: precioEspecial * conDescuento, especial: true });
+        lineas.push({ codigo: it.codigo, descripcion: it.descripcion + ' (precio especial por implante)', cantidad: conDescuento, precioUnitario: precioEspecial, subtotal: precioEspecial * conDescuento, especial: true, precioLista: it.precioLista, descuento: DESCUENTO_CIERRE });
       }
       if (sinDescuento > 0) {
-        lineas.push({ codigo: it.codigo, descripcion: it.descripcion, cantidad: sinDescuento, precioUnitario: it.precioFinal, subtotal: it.precioFinal * sinDescuento, especial: false });
+        lineas.push({ codigo: it.codigo, descripcion: it.descripcion, cantidad: sinDescuento, precioUnitario: it.precioFinal, subtotal: it.precioFinal * sinDescuento, especial: false, precioLista: it.precioLista, descuento: it.descuento });
       }
     });
 
@@ -387,14 +387,14 @@ function construirLineasCotizacion() {
       const def = PRODUCTS.find(function (p) { return p.codigo === grupo.defaultCode; });
       if (def) {
         const precioEspecial = Math.round(def.precioLista * (1 - DESCUENTO_CIERRE));
-        lineas.push({ codigo: def.codigo, descripcion: def.descripcion + ' (agregado automático por implante)', cantidad: creditoRestante, precioUnitario: precioEspecial, subtotal: precioEspecial * creditoRestante, especial: true, auto: true });
+        lineas.push({ codigo: def.codigo, descripcion: def.descripcion + ' (agregado automático por implante)', cantidad: creditoRestante, precioUnitario: precioEspecial, subtotal: precioEspecial * creditoRestante, especial: true, auto: true, precioLista: def.precioLista, descuento: DESCUENTO_CIERRE });
       }
     }
   });
 
   rawItems.forEach(function (it) {
     if (CIERRE_CODES.indexOf(it.codigo) !== -1) return; // ya procesado arriba por su grupo
-    lineas.push({ codigo: it.codigo, descripcion: it.descripcion, cantidad: it.cantidad, precioUnitario: it.precioFinal, subtotal: it.precioFinal * it.cantidad, especial: false });
+    lineas.push({ codigo: it.codigo, descripcion: it.descripcion, cantidad: it.cantidad, precioUnitario: it.precioFinal, subtotal: it.precioFinal * it.cantidad, especial: false, precioLista: it.precioLista, descuento: it.descuento });
   });
 
   return lineas;
