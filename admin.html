@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Panel Inside Sales | Straumann Group Chile</title>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
 <style>
   :root {
     --red: #991b1b; --red-dark: #7f1d1d; --ink: #18181b; --muted: #71717a;
@@ -31,6 +32,8 @@
   .toolbar { display:flex; flex-wrap:wrap; gap:10px; align-items:center; justify-content:space-between; margin-bottom:16px; }
   select { border:1px solid #d4d4d8; border-radius:8px; padding:8px 10px; font-size:13px; }
   .stat-pill { font-size:12px; color:#71717a; }
+  .btn-export { display:flex; align-items:center; gap:6px; font-size:13px; font-weight:600; color:#fff; background:#047857; border:none; border-radius:8px; padding:8px 14px; cursor:pointer; }
+  .btn-export:hover { background:#065f46; }
 
   table { width:100%; border-collapse:collapse; background:#fff; border:1px solid var(--border); border-radius:12px; overflow:hidden; }
   thead th { text-align:left; font-size:11px; text-transform:uppercase; color:#a1a1aa; background:#fafafa; padding:10px 12px; font-weight:600; }
@@ -165,6 +168,61 @@ function copiarTexto(value, btn) {
   else { done(); }
 }
 
+function exportarExcel(rows) {
+  if (!rows.length) { alert('No hay cotizaciones para exportar con los filtros actuales.'); return; }
+
+  const hojaCotizaciones = rows.map(function (c) {
+    const inst = institucionInfo(c.institucion);
+    return {
+      'Institución': inst.label,
+      'N° Cotización': c.numero,
+      'Paciente': c.paciente,
+      'RUT': c.rut || '',
+      'Doctor': c.doctor,
+      'Fecha': fechaCorta(c.fecha),
+      'Correo paciente': c.paciente_email || '',
+      'WhatsApp paciente': c.paciente_whatsapp ? '+56 9 ' + c.paciente_whatsapp : '',
+      'Dirección facturación': c.paciente_direccion || '',
+      'Observaciones': c.observaciones || '',
+      'Cant. ítems': (c.items || []).reduce(function (s, it) { return s + (Number(it.cantidad) || 0); }, 0),
+      'Total': Number(c.total) || 0,
+      'Estado': c.estado,
+      'Link cotización': c.link || ''
+    };
+  });
+
+  const hojaItems = [];
+  rows.forEach(function (c) {
+    const inst = institucionInfo(c.institucion);
+    (c.items || []).forEach(function (it) {
+      hojaItems.push({
+        'N° Cotización': c.numero,
+        'Institución': inst.label,
+        'Código': it.codigo,
+        'Descripción': it.descripcion,
+        'Cantidad': Number(it.cantidad) || 0,
+        'Subtotal': Number(it.subtotal) || 0
+      });
+    });
+  });
+
+  const wb = XLSX.utils.book_new();
+  const ws1 = XLSX.utils.json_to_sheet(hojaCotizaciones);
+  ws1['!cols'] = [{wch:12},{wch:24},{wch:20},{wch:14},{wch:16},{wch:18},{wch:26},{wch:16},{wch:30},{wch:30},{wch:10},{wch:12},{wch:18},{wch:42}];
+  XLSX.utils.book_append_sheet(wb, ws1, 'Cotizaciones');
+
+  const ws2 = XLSX.utils.json_to_sheet(hojaItems);
+  ws2['!cols'] = [{wch:24},{wch:12},{wch:16},{wch:42},{wch:10},{wch:12}];
+  XLSX.utils.book_append_sheet(wb, ws2, 'Detalle Items');
+
+  const ahora = new Date();
+  const pad2 = function (n) { return String(n).padStart(2, '0'); };
+  const fechaArchivo = ahora.getFullYear() + pad2(ahora.getMonth()+1) + pad2(ahora.getDate());
+  const sufijoInst = institucionFiltro !== 'Todas' ? '_' + institucionFiltro.replace(/\s+/g,'') : '';
+  const sufijoEstado = estadoFiltro !== 'Todos' ? '_' + estadoFiltro.replace(/\s+/g,'') : '';
+  XLSX.writeFile(wb, 'Reporte_Cotizaciones_' + fechaArchivo + sufijoInst + sufijoEstado + '.xlsx');
+}
+
 function renderDashboard() {
   document.getElementById('login-view').style.display = 'none';
   const v = document.getElementById('dashboard-view');
@@ -226,9 +284,10 @@ function renderDashboard() {
       '<p style="font-size:12px;color:#a1a1aa;margin:0 0 18px;">Se actualiza en vivo a medida que se generan cotizaciones.</p>' +
       '<div class="toolbar">' +
         '<span class="stat-pill">' + visibles.length + ' de ' + cotizaciones.length + ' cotizaciones</span>' +
-        '<div style="display:flex;gap:8px;">' +
+        '<div style="display:flex;gap:8px;flex-wrap:wrap;">' +
           '<select id="filtro-institucion"></select>' +
           '<select id="filtro-estado"></select>' +
+          '<button class="btn-export" id="btn-exportar">📊 Exportar a Excel</button>' +
         '</div>' +
       '</div>' +
       '<div style="overflow-x:auto;">' +
@@ -252,6 +311,7 @@ function renderDashboard() {
   sel.innerHTML = opts;
   sel.addEventListener('change', function (e) { estadoFiltro = e.target.value; renderDashboard(); });
   document.getElementById('btn-logout').addEventListener('click', doLogout);
+  document.getElementById('btn-exportar').addEventListener('click', function () { exportarExcel(visibles); });
 }
 
 sb.auth.onAuthStateChange(function (event, session) {
