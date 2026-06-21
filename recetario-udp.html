@@ -139,7 +139,7 @@
   <main class="layout">
     <section>
       <div class="card">
-        <h2>📋 Datos de la cotización</h2>
+        <h2 style="display:flex;align-items:center;justify-content:space-between;"><span>📋 Datos de la cotización</span><button type="button" id="btn-limpiar-form" class="cart-clear">🧹 Limpiar</button></h2>
         <div class="form-grid">
           <input type="text" id="f-paciente" placeholder="Nombre del paciente">
           <input type="text" id="f-rut" placeholder="RUT del paciente">
@@ -678,12 +678,33 @@ async function avisarPagoRecibido(canal) {
   renderCompartir();
 }
 
+function limpiarFormulario() {
+  state.paciente = ''; state.rut = ''; state.pacienteEmail = ''; state.pacienteWhatsapp = '';
+  state.pacienteDireccion = ''; state.obs = ''; state.doctorSel = ''; state.doctorOtro = '';
+  state.cart = {}; state.errorMsg = ''; state.search = ''; state.familiaFiltro = 'Todas'; state.marcaFiltro = 'Straumann';
+
+  document.getElementById('f-paciente').value = '';
+  document.getElementById('f-rut').value = '';
+  document.getElementById('f-email').value = '';
+  document.getElementById('f-wsp').value = '';
+  document.getElementById('f-direccion').value = '';
+  document.getElementById('f-obs').value = '';
+  document.getElementById('f-search').value = '';
+
+  renderDoctorField();
+  renderMarcaToggle();
+  renderFamiliaSelect();
+  renderProductList();
+  renderCart();
+  renderFloating();
+}
+
 function volverAlRecetario() {
-  state.view = 'recetario'; state.activeQuote = null; state.cart = {};
+  state.view = 'recetario'; state.activeQuote = null;
   document.getElementById('view-compartir').style.display = 'none';
   document.getElementById('view-recetario').style.display = 'block';
   window.scrollTo({ top: 0, behavior: 'auto' });
-  renderCart(); renderFloating();
+  limpiarFormulario();
 }
 
 function campoCopiableHtml(label, value, key) {
@@ -761,6 +782,7 @@ document.getElementById('f-direccion').addEventListener('input', function(e){ st
 document.getElementById('f-obs').addEventListener('input', function(e){ state.obs = e.target.value; });
 document.getElementById('f-search').addEventListener('input', function(e){ state.search = e.target.value; renderProductList(); });
 document.getElementById('btn-vaciar').addEventListener('click', vaciarCarrito);
+document.getElementById('btn-limpiar-form').addEventListener('click', limpiarFormulario);
 document.getElementById('btn-generar').addEventListener('click', generarCotizacion);
 document.getElementById('floating-btn').addEventListener('click', function(){
   document.getElementById('cotizacion-cart').scrollIntoView({ behavior:'smooth', block:'start' });
