@@ -155,6 +155,10 @@
             <p style="font-size:11px;color:#a1a1aa;margin:4px 0 0;">📦 El despacho siempre es a Hospital Militar — esta dirección es solo para la factura.</p>
           </div>
           <input type="text" id="f-obs" class="span2" placeholder="Observaciones (opcional)">
+          <div class="span2" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
+            <label for="f-fecha-cirugia" style="font-size:12px;color:#71717a;white-space:nowrap;">📅 Fecha de cirugía (opcional):</label>
+            <input type="date" id="f-fecha-cirugia" style="border:1px solid var(--border);border-radius:8px;padding:6px 10px;font-size:12px;color:var(--ink);background:#fff;">
+          </div>
         </div>
       </div>
 
@@ -227,7 +231,7 @@ const DESCUENTO_CIERRE = 0.99;
 const state = {
   cart: {},
   paciente: '', rut: '', pacienteEmail: '', pacienteWhatsapp: '', pacienteDireccion: '',
-  doctorSel: '', doctorOtro: '', obs: '',
+  doctorSel: '', doctorOtro: '', obs: '', fechaCirugia: '',
   search: '', familiaFiltro: 'Todas', consentimiento: false,
   view: 'recetario',
   activeQuote: null,
@@ -359,6 +363,17 @@ function construirLineasCotizacion() {
     }
   }
 
+
+  // Orden cotización: implantes → tapas/cicatrizadores → resto alfabético
+  const FAMILIAS_IMPLANTE = ['ACQUA','NEOPOROS'];
+  const FAMILIAS_CIERRE_ORD = ['TAPAS - CICATRIZADORES'];
+  lineas.sort(function(a,b){
+    function ord(l){ var p=PRODUCTS.find(function(x){return x.codigo===l.codigo;}); var f=p?p.familia:'';
+      if(FAMILIAS_IMPLANTE.indexOf(f)!==-1) return 0;
+      if(FAMILIAS_CIERRE_ORD.indexOf(f)!==-1||l.especial) return 1; return 2; }
+    var oa=ord(a),ob=ord(b); if(oa!==ob) return oa-ob;
+    return a.descripcion.localeCompare(b.descripcion,'es');
+  });
   return lineas;
 }
 
@@ -566,6 +581,7 @@ async function generarCotizacion() {
     doctor: doctorFinal,
     fecha: ahora.toISOString(),
     observaciones: state.obs.trim(),
+    fechaCirugia: state.fechaCirugia || null,
     items: items,
     total: total,
     estado: 'Cotización generada',
@@ -577,7 +593,7 @@ async function generarCotizacion() {
   try {
     const { data, error } = await sb.rpc('crear_cotizacion', {
       payload: {
-        numero: quote.numero, institucion: quote.institucion, paciente: quote.paciente, rut: quote.rut,
+        numero: quote.numero, institucion: quote.institucion, paciente: quote.paciente, rut: quote.rut, fecha_cirugia: quote.fechaCirugia || null,
         paciente_email: quote.pacienteEmail, paciente_whatsapp: quote.pacienteWhatsapp, paciente_direccion: quote.pacienteDireccion, doctor: quote.doctor,
         fecha: quote.fecha, observaciones: quote.observaciones, items: quote.items, total: quote.total,
         estado: quote.estado, historial: quote.historial
@@ -648,6 +664,7 @@ function limpiarFormulario() {
   document.getElementById('f-wsp').value = '';
   document.getElementById('f-direccion').value = '';
   document.getElementById('f-obs').value = '';
+  state.fechaCirugia = ''; document.getElementById('f-fecha-cirugia').value = '';
   document.getElementById('f-consentimiento').checked = false;
   document.getElementById('f-search').value = '';
   document.getElementById('f-familia').value = 'Todas';
@@ -729,6 +746,7 @@ document.getElementById('f-wsp').addEventListener('input', function(e){
 });
 document.getElementById('f-direccion').addEventListener('input', function(e){ state.pacienteDireccion = e.target.value; });
 document.getElementById('f-obs').addEventListener('input', function(e){ state.obs = e.target.value; });
+document.getElementById('f-fecha-cirugia').addEventListener('change', function(e){ state.fechaCirugia = e.target.value; });
 document.getElementById('f-search').addEventListener('input', function(e){ state.search = e.target.value; renderProductList(); });
 document.getElementById('btn-vaciar').addEventListener('click', vaciarCarrito);
 document.getElementById('btn-limpiar-form').addEventListener('click', limpiarFormulario);
