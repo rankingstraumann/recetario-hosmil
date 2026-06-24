@@ -361,11 +361,17 @@ function familiaLabel(familia) { if (familia.indexOf('STRAUMANN — ') === 0) re
 function familiasDisponibles() { return FAMILIA_ORDEN.filter(f => familiaVisibleEnMarca(f, state.marcaFiltro) && PRODUCTS.some(p => p.familia === f)); }
 function productosFiltrados() {
   const q = state.search.trim().toLowerCase();
-  return PRODUCTS.filter(p => {
-    const matchMarca = familiaVisibleEnMarca(p.familia, state.marcaFiltro);
+  if (!q) {
+    // Sin búsqueda: filtrar por marca activa (comportamiento normal)
+    return PRODUCTS.filter(function(p) {
+      return familiaVisibleEnMarca(p.familia, state.marcaFiltro) &&
+             (state.familiaFiltro === 'Todas' || p.familia === state.familiaFiltro);
+    });
+  }
+  // Con búsqueda: recorrer todo el catálogo independiente de la marca activa
+  return PRODUCTS.filter(function(p) {
     const matchFam = state.familiaFiltro === 'Todas' || p.familia === state.familiaFiltro;
-    const matchSearch = !q || p.codigo.toLowerCase().includes(q) || p.descripcion.toLowerCase().includes(q);
-    return matchMarca && matchFam && matchSearch;
+    return matchFam && (p.codigo.toLowerCase().includes(q) || p.descripcion.toLowerCase().includes(q));
   });
 }
 function agruparPorFamilia(items) {
@@ -468,7 +474,8 @@ function renderProductList() {
   const grouped = agruparPorFamilia(filtered);
   const el = document.getElementById('product-list');
   if (Object.keys(grouped).length === 0) {
-    el.innerHTML = '<div class="empty-msg">No encontramos productos con ese criterio. Prueba con otro código o descripción.</div>';
+    const q3 = state.search.trim();
+    el.innerHTML = '<div class="empty-msg">No encontramos productos con ese criterio' + (q3 ? ' en ninguna marca' : '') + '. Prueba con otro código o descripción.</div>';
     return;
   }
   let html = '';
@@ -856,7 +863,31 @@ document.getElementById('f-wsp').addEventListener('input', function(e){
 });
 document.getElementById('f-direccion').addEventListener('input', function(e){ state.pacienteDireccion = e.target.value; });
 document.getElementById('f-obs').addEventListener('input', function(e){ state.obs = e.target.value; });
-document.getElementById('f-search').addEventListener('input', function(e){ state.search = e.target.value; renderProductList(); });
+document.getElementById('f-search').addEventListener('input', function(e) {
+  state.search = e.target.value;
+  const q = state.search.trim().toLowerCase();
+  if (q) {
+    // Auto-switch de marca: si NINGÚN resultado es visible en la marca actual
+    // y TODOS los resultados son de UNA sola marca distinta → cambia el toggle automáticamente
+    const resultados = PRODUCTS.filter(function(p) {
+      return p.codigo.toLowerCase().includes(q) || p.descripcion.toLowerCase().includes(q);
+    });
+    const algunoVisible = resultados.some(function(p) { return familiaVisibleEnMarca(p.familia, state.marcaFiltro); });
+    if (resultados.length > 0 && !algunoVisible) {
+      const marcas = resultados.reduce(function(acc, p) {
+        var m = marcaDeFamilia(p.familia); if (acc.indexOf(m) === -1) acc.push(m); return acc;
+      }, []);
+      if (marcas.length === 1) {
+        // Solo hay resultados de una marca diferente → cambiar a esa marca
+        state.marcaFiltro = marcas[0];
+        state.familiaFiltro = 'Todas';
+        renderMarcaToggle();
+        renderFamiliaSelect();
+      }
+    }
+  }
+  renderProductList();
+});
 document.getElementById('btn-vaciar').addEventListener('click', vaciarCarrito);
 document.getElementById('btn-limpiar-form').addEventListener('click', limpiarFormulario);
 document.getElementById('f-consentimiento').addEventListener('change', function (e) { state.consentimiento = e.target.checked; });
