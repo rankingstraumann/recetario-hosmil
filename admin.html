@@ -142,10 +142,25 @@ async function doLogin() {
   try {
     const { error } = await sb.auth.signInWithPassword({ email: email, password: pass });
     if (error) {
-      renderLogin('No pudimos iniciar sesión. Revisa tu correo y contraseña.');
+      console.warn('[Admin] Error en signInWithPassword:', error.message, error);
+      const msg = (error.message || '').toLowerCase();
+      const esRed = msg.includes('failed to fetch') || msg.includes('networkerror') ||
+                    msg.includes('load failed') || msg.includes('fetch') ||
+                    msg.includes('timeout') || msg.includes('err_failed') ||
+                    msg.includes('network') || msg.includes('connect');
+      if (esRed) {
+        errorConexion = true;
+        renderLogin('⚠️ No se pudo conectar con el servidor. Puede deberse a firewall, VPN o red corporativa. Intenta desde otra red o con datos móviles.');
+      } else {
+        // Credenciales inválidas u otro error de auth
+        renderLogin('Correo o contraseña incorrectos.');
+      }
     }
   } catch (e) {
-    renderLogin('⚠️ No se pudo conectar con el servidor. Verifica tu conexión o intenta desde otra red (puede estar bloqueado por firewall o VPN corporativa).');
+    // Error de red que no llegó como { error } sino como excepción JS
+    console.warn('[Admin] Excepción en signInWithPassword:', e);
+    errorConexion = true;
+    renderLogin('⚠️ No se pudo conectar con el servidor. Puede deberse a firewall, VPN o red corporativa. Intenta desde otra red o con datos móviles.');
   }
 }
 
