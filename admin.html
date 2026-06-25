@@ -81,6 +81,7 @@ let institucionFiltro = 'Todas';
 let filaAbierta = null;
 let channel = null;
 let errorConexion = false;
+let errorConexionMsg = '';
 
 function institucionInfo(inst) {
   const s = (inst || '').toUpperCase();
@@ -121,7 +122,7 @@ function renderLogin(errMsg) {
   v.style.display = 'block';
   v.innerHTML =
     '<header class="topbar"><div><div class="brand-name">STRAUMANN</div><div class="brand-sub">GROUP CHILE · NEODENT</div></div></header>' +
-    (errorConexion ? '<div style="background:#fff3cd;border:1px solid #fde68a;border-radius:10px;padding:14px 18px;margin:16px;text-align:center;font-size:13px;">⚠️ <strong>Sin conexión con el servidor.</strong> Puede deberse a firewall, VPN o red corporativa.<br><button onclick="location.reload()" style="margin-top:8px;padding:7px 18px;background:#1a1a1a;color:#fff;border:none;border-radius:7px;cursor:pointer;font-size:13px;">🔄 Reintentar</button></div>' : '') +
+    (errorConexion ? '<div style="background:#fff3cd;border:1px solid #fde68a;border-radius:10px;padding:14px 18px;margin:16px;text-align:center;font-size:13px;">⚠️ ' + (errorConexionMsg || 'No se pudo conectar. Puede deberse a firewall, VPN o red corporativa.') + '<br><button onclick="location.reload()" style="margin-top:8px;padding:7px 18px;background:#1a1a1a;color:#fff;border:none;border-radius:7px;cursor:pointer;font-size:13px;">🔄 Reintentar</button></div>' : '') +
     '<div class="login-wrap">' +
       '<h1>Panel Inside Sales</h1>' +
       '<p>Acceso restringido según institución asignada</p>' +
@@ -172,9 +173,34 @@ async function doLogout() {
 async function cargarCotizaciones() {
   try {
     const { data, error } = await sb.from('cotizaciones').select('*').order('created_at', { ascending: false });
-    if (!error && data) { cotizaciones = data; errorConexion = false; }
-    else if (error) { errorConexion = true; }
-  } catch (e) { errorConexion = true; }
+    if (!error && data) {
+      cotizaciones = data;
+      errorConexion = false;
+      errorConexionMsg = '';
+    } else if (error) {
+      console.warn('[Admin] Error en cargarCotizaciones:', error.message, error);
+      const msg = (error.message || '').toLowerCase();
+      const code = String(error.code || error.status || '');
+      if (msg.includes('failed to fetch') || msg.includes('networkerror') ||
+          msg.includes('load failed') || msg.includes('fetch') ||
+          msg.includes('network') || msg.includes('timeout') || msg.includes('connect')) {
+        errorConexionMsg = 'Error de red o firewall. La consulta no llegó al servidor. Intenta desde otra red o con datos móviles.';
+      } else if (code === '401' || code === '403' || msg.includes('permission') ||
+                 msg.includes('unauthorized') || msg.includes('rls') || msg.includes('policy')) {
+        errorConexionMsg = 'Error de permisos (RLS/Auth). Tu sesión puede haber expirado. Cierra sesión y vuelve a ingresar.';
+      } else {
+        errorConexionMsg = 'Error al cargar cotizaciones: ' + (error.message || 'error desconocido') + ' (código: ' + (code || '-') + ')';
+      }
+      // NO limpiar cotizaciones — mantener los datos ya cargados visibles
+      errorConexion = true;
+    }
+  } catch (e) {
+    // Excepción JS: red completamente bloqueada
+    console.warn('[Admin] Excepción en cargarCotizaciones:', e);
+    errorConexionMsg = 'No se pudo conectar con el servidor. Puede deberse a firewall, VPN o red corporativa.';
+    // NO limpiar cotizaciones
+    errorConexion = true;
+  }
   renderDashboard();
 }
 
@@ -380,7 +406,7 @@ function renderDashboard() {
   v.innerHTML =
     '<header class="topbar"><div><div class="brand-name">STRAUMANN</div><div class="brand-sub">GROUP CHILE · NEODENT</div></div>' +
     '<div style="display:flex;align-items:center;gap:12px;"><span style="font-size:10px;color:#a1a1aa;">by Daniel Jordán</span><button class="btn-logout" id="btn-logout">Cerrar sesión</button></div></header>' +
-    (errorConexion ? '<div style="background:#fff3cd;border:1px solid #fde68a;border-radius:10px;padding:14px 18px;margin:16px;text-align:center;font-size:13px;">⚠️ <strong>Sin conexión con el servidor.</strong> Los datos pueden no estar actualizados.<br><button onclick="errorConexion=false;cargarCotizaciones();" style="margin-top:8px;padding:7px 18px;background:#1a1a1a;color:#fff;border:none;border-radius:7px;cursor:pointer;font-size:13px;">🔄 Reintentar</button></div>' : '') +
+    (errorConexion ? '<div style="background:#fff3cd;border:1px solid #fde68a;border-radius:10px;padding:14px 18px;margin:16px;text-align:center;font-size:13px;">⚠️ ' + (errorConexionMsg || 'Sin conexión con el servidor.') + ' Los datos mostrados pueden no estar actualizados.<br><button onclick="errorConexion=false;errorConexionMsg=\'\';cargarCotizaciones();" style="margin-top:8px;padding:7px 18px;background:#1a1a1a;color:#fff;border:none;border-radius:7px;cursor:pointer;font-size:13px;">🔄 Reintentar</button></div>' : '') +
     '<main>' +
       '<h2 style="margin:0 0 4px;">Cotizaciones</h2>' +
       '<p style="font-size:12px;color:#a1a1aa;margin:0 0 18px;">Se actualiza en vivo a medida que se generan cotizaciones.</p>' +
