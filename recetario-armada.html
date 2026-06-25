@@ -674,6 +674,7 @@ async function generarCotizacion() {
   const quote = {
     numero: numero,
     institucion: 'Central Odontológica de la Armada',
+    institucionCodigo: state.institucionCodigo,
     paciente: state.paciente.trim(),
     rut: state.rut.trim(),
     pacienteEmail: state.pacienteEmail.trim(),
@@ -693,7 +694,7 @@ async function generarCotizacion() {
   try {
     const { data, error } = await sb.rpc('crear_cotizacion', {
       payload: {
-        numero: quote.numero, institucion: quote.institucion, paciente: quote.paciente, rut: quote.rut,
+        numero: quote.numero, institucion: quote.institucion, institucion_codigo: quote.institucionCodigo, paciente: quote.paciente, rut: quote.rut,
         paciente_email: quote.pacienteEmail, paciente_whatsapp: quote.pacienteWhatsapp, paciente_direccion: quote.pacienteDireccion, doctor: quote.doctor,
         fecha: quote.fecha, observaciones: quote.observaciones, items: quote.items, total: quote.total,
         estado: quote.estado, historial: quote.historial
@@ -931,7 +932,6 @@ if ('serviceWorker' in navigator) {
   window.addEventListener('load', function () {
     navigator.serviceWorker.register('/sw.js').catch(function () {});
   });
-  
 }
 </script>
 </body>
