@@ -80,6 +80,7 @@ let estadoFiltro = 'Todos';
 let institucionFiltro = 'Todas';
 let filaAbierta = null;
 let channel = null;
+let errorConexion = false;
 
 function institucionInfo(inst) {
   const s = (inst || '').toUpperCase();
@@ -120,6 +121,7 @@ function renderLogin(errMsg) {
   v.style.display = 'block';
   v.innerHTML =
     '<header class="topbar"><div><div class="brand-name">STRAUMANN</div><div class="brand-sub">GROUP CHILE · NEODENT</div></div></header>' +
+    (errorConexion ? '<div style="background:#fff3cd;border:1px solid #fde68a;border-radius:10px;padding:14px 18px;margin:16px;text-align:center;font-size:13px;">⚠️ <strong>Sin conexión con el servidor.</strong> Puede deberse a firewall, VPN o red corporativa.<br><button onclick="location.reload()" style="margin-top:8px;padding:7px 18px;background:#1a1a1a;color:#fff;border:none;border-radius:7px;cursor:pointer;font-size:13px;">🔄 Reintentar</button></div>' : '') +
     '<div class="login-wrap">' +
       '<h1>Panel Inside Sales</h1>' +
       '<p>Acceso restringido según institución asignada</p>' +
@@ -137,9 +139,13 @@ async function doLogin() {
   const pass = document.getElementById('li-pass').value;
   const btn = document.getElementById('li-btn');
   btn.disabled = true; btn.textContent = 'Ingresando...';
-  const { error } = await sb.auth.signInWithPassword({ email: email, password: pass });
-  if (error) {
-    renderLogin('No pudimos iniciar sesión. Revisa tu correo y contraseña.');
+  try {
+    const { error } = await sb.auth.signInWithPassword({ email: email, password: pass });
+    if (error) {
+      renderLogin('No pudimos iniciar sesión. Revisa tu correo y contraseña.');
+    }
+  } catch (e) {
+    renderLogin('⚠️ No se pudo conectar con el servidor. Verifica tu conexión o intenta desde otra red (puede estar bloqueado por firewall o VPN corporativa).');
   }
 }
 
@@ -149,23 +155,47 @@ async function doLogout() {
 }
 
 async function cargarCotizaciones() {
-  const { data, error } = await sb.from('cotizaciones').select('*').order('created_at', { ascending: false });
-  if (!error && data) cotizaciones = data;
+  try {
+    const { data, error } = await sb.from('cotizaciones').select('*').order('created_at', { ascending: false });
+    if (!error && data) { cotizaciones = data; errorConexion = false; }
+    else if (error) { errorConexion = true; }
+  } catch (e) { errorConexion = true; }
   renderDashboard();
 }
 
 function suscribirRealtime() {
   if (channel) return;
-  channel = sb.channel('cotizaciones-cambios')
-    .on('postgres_changes', { event: '*', schema: 'public', table: 'cotizaciones' }, function () { cargarCotizaciones(); })
-    .subscribe();
+  try {
+    channel = sb.channel('cotizaciones-cambios')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'cotizaciones' }, function () { cargarCotizaciones(); })
+      .subscribe(function (status) {
+        if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') { channel = null; }
+      });
+  } catch (e) { channel = null; }
 }
 
 async function cambiarEstado(id, nuevoEstado) {
   const row = cotizaciones.find(function (c) { return c.id === id; });
   const historial = (row && row.historial) ? row.historial.slice() : [];
   historial.push({ estado: nuevoEstado, fecha: new Date().toISOString() });
-  await sb.rpc('actualizar_estado_cotizacion', { p_id: id, p_estado: nuevoEstado, p_historial: historial });
+  try {
+    const { error } = await sb.rpc('actualizar_estado_cotizacion', { p_id: id, p_estado: nuevoEstado, p_historial: historial });
+    if (error) {
+      // Error de Supabase (respuesta válida pero con error)
+      alert('No se pudo cambiar el estado: ' + (error.message || 'error desconocido') + '\nRecarga la página para verificar el estado actual.');
+      errorConexion = true;
+      renderDashboard();
+    } else {
+      // Actualizar localmente y re-renderizar para que color/UI queden consistentes
+      if (row) { row.estado = nuevoEstado; }
+      renderDashboard();
+    }
+  } catch (e) {
+    // Error de red: Supabase no alcanzable
+    alert('⚠️ No se pudo cambiar el estado por un problema de red o firewall.\nEl cambio NO fue guardado. Verifica tu conexión e intenta nuevamente.');
+    errorConexion = true;
+    renderDashboard();
+  }
 }
 
 function toggleFila(id) {
@@ -335,6 +365,7 @@ function renderDashboard() {
   v.innerHTML =
     '<header class="topbar"><div><div class="brand-name">STRAUMANN</div><div class="brand-sub">GROUP CHILE · NEODENT</div></div>' +
     '<div style="display:flex;align-items:center;gap:12px;"><span style="font-size:10px;color:#a1a1aa;">by Daniel Jordán</span><button class="btn-logout" id="btn-logout">Cerrar sesión</button></div></header>' +
+    (errorConexion ? '<div style="background:#fff3cd;border:1px solid #fde68a;border-radius:10px;padding:14px 18px;margin:16px;text-align:center;font-size:13px;">⚠️ <strong>Sin conexión con el servidor.</strong> Los datos pueden no estar actualizados.<br><button onclick="errorConexion=false;cargarCotizaciones();" style="margin-top:8px;padding:7px 18px;background:#1a1a1a;color:#fff;border:none;border-radius:7px;cursor:pointer;font-size:13px;">🔄 Reintentar</button></div>' : '') +
     '<main>' +
       '<h2 style="margin:0 0 4px;">Cotizaciones</h2>' +
       '<p style="font-size:12px;color:#a1a1aa;margin:0 0 18px;">Se actualiza en vivo a medida que se generan cotizaciones.</p>' +
