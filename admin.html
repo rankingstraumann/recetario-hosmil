@@ -438,11 +438,11 @@ async function copiarGestionCompleta(id, btn) {
   }).join('');
 
   const html = '<div style="font-family:Arial,sans-serif;font-size:13px;">' +
-    datosHtml +
-    '<div>Link comprobante de pago: ' + comprobanteHtml + '</div>' +
-    '<div style="margin-top:10px;margin-bottom:6px;font-weight:bold;">PEDIDO / PRODUCTOS</div>' +
-    tablaHtml +
-    '<div style="margin-top:8px;font-weight:bold;">Total: ' + esc(fmt(c.total)) + '</div>' +
+    '<div style="margin-bottom:12px;">' + datosHtml + '</div>' +
+    '<div style="margin-bottom:12px;">Link comprobante de pago: ' + comprobanteHtml + '</div>' +
+    '<div style="margin-top:12px;margin-bottom:8px;font-weight:bold;">PEDIDO / PRODUCTOS</div>' +
+    '<div style="margin-bottom:12px;">' + tablaHtml + '</div>' +
+    '<div style="font-weight:bold;">Total: ' + esc(fmt(c.total)) + '</div>' +
   '</div>';
 
   // ── Copiar: HTML real (tabla) + texto plano como fallback dentro del mismo portapapeles ──
