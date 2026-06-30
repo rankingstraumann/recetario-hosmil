@@ -82,6 +82,8 @@ let filaAbierta = null;
 let channel = null;
 let errorConexion = false;
 let errorConexionMsg = '';
+let miPerfil = null; // { es_super_admin, es_observador } del usuario logueado
+function esObservador() { return !!(miPerfil && miPerfil.es_observador); }
 
 function institucionInfo(inst) {
   const s = (inst || '').toUpperCase();
@@ -216,6 +218,10 @@ function suscribirRealtime() {
 }
 
 async function cambiarEstado(id, nuevoEstado) {
+  if (esObservador()) {
+    alert('Tu rol es de solo lectura. No puedes cambiar estados.');
+    return;
+  }
   const row = cotizaciones.find(function (c) { return c.id === id; });
   const historial = (row && row.historial) ? row.historial.slice() : [];
   historial.push({ estado: nuevoEstado, fecha: new Date().toISOString() });
@@ -377,7 +383,9 @@ function renderDashboard() {
         '<td>' + fechaCorta(c.fecha) + '</td>' +
         '<td style="text-align:right;font-weight:600;">' + fmt(c.total) + '</td>' +
         '<td onclick="event.stopPropagation()">' +
-          '<select class="estado-select" style="background:' + colorStyle + '" onchange="cambiarEstado(\'' + c.id + '\', this.value)">' + estadoOpts + '</select>' +
+          (esObservador()
+            ? '<span class="estado-select" style="background:' + colorStyle + ';display:inline-block;" title="Solo lectura">' + esc(c.estado) + '</span>'
+            : '<select class="estado-select" style="background:' + colorStyle + '" onchange="cambiarEstado(\'' + c.id + '\', this.value)">' + estadoOpts + '</select>') +
         '</td>' +
       '</tr>';
 
@@ -472,16 +480,32 @@ function renderDashboard() {
 sb.auth.onAuthStateChange(function (event, session) {
   if (session) {
     suscribirRealtime();
-    cargarCotizaciones();
+    cargarMiPerfil().then(cargarCotizaciones);
   } else {
+    miPerfil = null;
     if (channel) { sb.removeChannel(channel); channel = null; }
     renderLogin();
   }
 });
 
+async function cargarMiPerfil() {
+  try {
+    const { data: userData } = await sb.auth.getUser();
+    if (!userData || !userData.user) { miPerfil = null; return; }
+    const { data, error } = await sb.from('admin_perfiles')
+      .select('es_super_admin, es_observador')
+      .eq('user_id', userData.user.id)
+      .maybeSingle();
+    miPerfil = (!error && data) ? data : null;
+  } catch (e) {
+    miPerfil = null;
+  }
+}
+
 (async function init() {
   const { data } = await sb.auth.getSession();
   if (data && data.session) {
+    await cargarMiPerfil();
     suscribirRealtime();
     cargarCotizaciones();
   } else {
