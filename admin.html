@@ -437,11 +437,18 @@ async function copiarGestionCompleta(id, btn) {
     return '<div>' + esc(label) + ' ' + esc(valor) + '</div>';
   }).join('');
 
+  // Se usan <br> reales (contenido) en vez de depender solo de margin/padding,
+  // porque Gmail/Outlook suelen "limpiar" el HTML pegado y descartan márgenes
+  // en divs vacíos — un salto de línea real sobrevive ese proceso.
   const html = '<div style="font-family:Arial,sans-serif;font-size:13px;">' +
-    '<div style="margin-bottom:12px;">' + datosHtml + '</div>' +
-    '<div style="margin-bottom:12px;">Link comprobante de pago: ' + comprobanteHtml + '</div>' +
-    '<div style="margin-top:12px;margin-bottom:8px;font-weight:bold;">PEDIDO / PRODUCTOS</div>' +
-    '<div style="margin-bottom:12px;">' + tablaHtml + '</div>' +
+    datosHtml +
+    '<br><br>' +
+    '<div>Link comprobante de pago: ' + comprobanteHtml + '</div>' +
+    '<br><br>' +
+    '<div style="font-weight:bold;">PEDIDO / PRODUCTOS</div>' +
+    '<br>' +
+    tablaHtml +
+    '<br><br>' +
     '<div style="font-weight:bold;">Total: ' + esc(fmt(c.total)) + '</div>' +
   '</div>';
 
