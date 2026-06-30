@@ -109,6 +109,22 @@ function linkPublicoDe(c) {
 }
 
 function fmt(n) { return '$' + Math.round(n || 0).toLocaleString('es-CL'); }
+
+function valorSeguro(v) {
+  return (v === null || v === undefined || v === '') ? '-' : v;
+}
+
+function descuentoEfectivo(it) {
+  // Misma lógica usada en la tabla del detalle — fuente única, evita inconsistencias
+  if (typeof it.descuento === 'number') {
+    return (it.descuento > 1 ? Math.round(it.descuento) : Math.round(it.descuento * 100)) + '%';
+  }
+  if (typeof it.precioLista === 'number' && it.precioLista > 0 && typeof it.precioFinal === 'number') {
+    const pct = Math.round((1 - it.precioFinal / it.precioLista) * 100);
+    return pct <= 0 ? '0%' : '≈' + pct + '%';
+  }
+  return '-';
+}
 function fechaCorta(iso) {
   try { return new Date(iso).toLocaleString('es-CL', { day:'2-digit', month:'2-digit', year:'numeric', hour:'2-digit', minute:'2-digit' }); }
   catch (e) { return '-'; }
@@ -319,6 +335,66 @@ function copiarDatosGestion(id, btn) {
   copiarTexto(datosGestionTexto(c), btn);
 }
 
+async function copiarGestionCompleta(id, btn) {
+  const c = cotizaciones.find(function (x) { return x.id === id; });
+  if (!c) { alert('No se encontró la cotización.'); return; }
+
+  const original = btn.textContent;
+  btn.textContent = 'Copiando…';
+  btn.disabled = true;
+
+  // Sección comprobante: si falla, no rompe el resto del bloque (degradación controlada)
+  let comprobanteTxt = '-';
+  if (c.comprobante_path) {
+    try {
+      const { data, error } = await sb.storage.from('comprobantes').createSignedUrl(c.comprobante_path, 3600);
+      if (error || !data || !data.signedUrl) throw error || new Error('sin url');
+      comprobanteTxt = data.signedUrl;
+    } catch (e) {
+      console.warn('[Admin] No se pudo generar link de comprobante para gestión completa:', e);
+      comprobanteTxt = 'No se pudo generar link';
+    }
+  }
+
+  // Tabla de productos en formato texto, usando los mismos datos y la misma
+  // lógica de descuento que el detalle visual (descuentoEfectivo / fmt)
+  const items = c.items || [];
+  const filasProductos = items.map(function (it) {
+    return [
+      valorSeguro(it.codigo),
+      valorSeguro(it.descripcion),
+      'x' + valorSeguro(it.cantidad),
+      descuentoEfectivo(it),
+      fmt(it.subtotal)
+    ].join(' | ');
+  });
+
+  const bloque = [
+    datosGestionTexto(c),
+    '',
+    'Link comprobante de pago: ' + comprobanteTxt,
+    '',
+    'PEDIDO / PRODUCTOS',
+    'Código | Descripción | Cant. | Dscto. | Subtotal',
+    filasProductos.join('\n'),
+    '',
+    'Total: ' + fmt(c.total)
+  ].join('\n');
+
+  if (navigator.clipboard) {
+    navigator.clipboard.writeText(bloque).then(function () {
+      btn.textContent = '✓ Copiado';
+      setTimeout(function () { btn.textContent = original; btn.disabled = false; }, 1200);
+    }).catch(function () {
+      btn.textContent = '✓ Copiado';
+      setTimeout(function () { btn.textContent = original; btn.disabled = false; }, 1200);
+    });
+  } else {
+    btn.textContent = '✓ Copiado';
+    setTimeout(function () { btn.textContent = original; btn.disabled = false; }, 1200);
+  }
+}
+
 function exportarExcel(rows) {
   if (!rows.length) { alert('No hay cotizaciones para exportar con los filtros actuales.'); return; }
 
@@ -414,13 +490,7 @@ function renderDashboard() {
 
       if (filaAbierta === c.id) {
         const itemsRows = (c.items || []).map(function (it) {
-          let dto = '-';
-          if (typeof it.descuento === 'number') {
-            dto = (it.descuento > 1 ? Math.round(it.descuento) : Math.round(it.descuento * 100)) + '%';
-          } else if (typeof it.precioLista === 'number' && it.precioLista > 0 && typeof it.precioFinal === 'number') {
-            const pct = Math.round((1 - it.precioFinal / it.precioLista) * 100);
-            dto = (pct <= 0 ? '0%' : '≈' + pct + '%');
-          }
+          const dto = descuentoEfectivo(it);
           return '<tr>' +
             '<td style="padding:6px 10px 6px 0;font-weight:700;font-family:ui-monospace,monospace;white-space:nowrap;">' + esc(it.codigo) + '</td>' +
             '<td style="padding:6px 10px;font-weight:700;">' + esc(it.descripcion) + '</td>' +
@@ -448,7 +518,7 @@ function renderDashboard() {
             '<div style="grid-column:1/-1;"><strong>Observaciones:</strong> ' + esc(c.observaciones || '-') + '</div>' +
           (c.fecha_cirugia ? '<div><strong>Fecha de cirugía:</strong> ' + esc(c.fecha_cirugia) + '</div>' : '') +
           '</div>' +
-          '<div style="margin-bottom:10px;"><button class="btn-logout" onclick="copiarDatosGestion(\'' + c.id + '\', this)">📋 Copiar datos de gestión</button></div>' +
+          '<div style="margin-bottom:10px;display:flex;gap:8px;flex-wrap:wrap;"><button class="btn-logout" onclick="copiarDatosGestion(\'' + c.id + '\', this)">📋 Copiar datos de gestión</button><button class="btn-logout" onclick="copiarGestionCompleta(\'' + c.id + '\', this)">📋 Copiar gestión completa</button></div>' +
           '<div style="font-size:11px;color:#92400e;background:#fffbeb;border:1px solid #fde68a;border-radius:6px;padding:6px 10px;margin-bottom:10px;display:inline-block;">📦 Despacho siempre a ' + esc(inst.despacho) + ', independiente de la dirección de facturación.</div>' +
           (c.comprobante_path ? '<div style="margin-bottom:10px;display:flex;gap:8px;flex-wrap:wrap;"><button class="btn-logout" onclick="verComprobante(\'' + c.comprobante_path.replace(/'/g,"\\'") + '\', this)">📎 Ver comprobante de pago</button><button class="btn-logout" onclick="copiarLinkComprobante(\'' + c.comprobante_path.replace(/'/g,"\\'") + '\', this)">🔗 Copiar link comprobante</button></div>' : '') +
           (function () { const lp = linkPublicoDe(c); return lp ? '<div class="detail-link"><span>' + esc(lp) + '</span><button class="btn-logout" onclick="copiarTexto(\'' + lp.replace(/'/g,"\\'") + '\', this)">Copiar link</button></div>' : ''; })() +
