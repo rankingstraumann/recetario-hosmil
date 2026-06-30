@@ -343,23 +343,45 @@ async function copiarGestionCompleta(id, btn) {
   btn.textContent = 'Copiando…';
   btn.disabled = true;
 
+  function finalizar() {
+    btn.textContent = '✓ Copiado';
+    setTimeout(function () { btn.textContent = original; btn.disabled = false; }, 1200);
+  }
+
   // Sección comprobante: si falla, no rompe el resto del bloque (degradación controlada)
   let comprobanteTxt = '-';
+  let comprobanteEsLink = false;
   if (c.comprobante_path) {
     try {
       const { data, error } = await sb.storage.from('comprobantes').createSignedUrl(c.comprobante_path, 3600);
       if (error || !data || !data.signedUrl) throw error || new Error('sin url');
       comprobanteTxt = data.signedUrl;
+      comprobanteEsLink = true;
     } catch (e) {
       console.warn('[Admin] No se pudo generar link de comprobante para gestión completa:', e);
       comprobanteTxt = 'No se pudo generar link';
     }
   }
 
-  // Tabla de productos en formato texto, usando los mismos datos y la misma
-  // lógica de descuento que el detalle visual (descuentoEfectivo / fmt)
+  // Datos paciente — mismos campos que "Copiar datos de gestión", SIN "Link de pago"
+  // (no se modifica datosGestionTexto() para no afectar ese otro botón)
+  const inst = institucionInfo(c.institucion);
+  const tel = c.paciente_whatsapp ? ('+56 9 ' + c.paciente_whatsapp) : '-';
+  const datosLineas = [
+    'Institución: ' + (c.institucion || inst.label || '-'),
+    'N° Cotización: ' + valorSeguro(c.numero),
+    'Nombre paciente: ' + valorSeguro(c.paciente),
+    'RUT paciente: ' + valorSeguro(c.rut),
+    'Correo paciente: ' + valorSeguro(c.paciente_email),
+    'Dirección paciente: ' + valorSeguro(c.paciente_direccion),
+    'Teléfono paciente: ' + tel,
+    'Dr. tratante: ' + valorSeguro(c.doctor)
+  ];
+
+  // Productos: misma data y misma lógica de descuento que el detalle visual
+  // (descuentoEfectivo / fmt), reutilizadas sin modificar
   const items = c.items || [];
-  const filasProductos = items.map(function (it) {
+  const filasProductosTxt = items.map(function (it) {
     return [
       valorSeguro(it.codigo),
       valorSeguro(it.descripcion),
@@ -369,29 +391,86 @@ async function copiarGestionCompleta(id, btn) {
     ].join(' | ');
   });
 
-  const bloque = [
-    datosGestionTexto(c),
+  // ── Texto plano (fallback si el navegador no soporta ClipboardItem) ──────────
+  const textoPlano = [
+    datosLineas.join('\n'),
     '',
     'Link comprobante de pago: ' + comprobanteTxt,
     '',
     'PEDIDO / PRODUCTOS',
     'Código | Descripción | Cant. | Dscto. | Subtotal',
-    filasProductos.join('\n'),
+    filasProductosTxt.join('\n'),
     '',
     'Total: ' + fmt(c.total)
   ].join('\n');
 
-  if (navigator.clipboard) {
-    navigator.clipboard.writeText(bloque).then(function () {
-      btn.textContent = '✓ Copiado';
-      setTimeout(function () { btn.textContent = original; btn.disabled = false; }, 1200);
-    }).catch(function () {
-      btn.textContent = '✓ Copiado';
-      setTimeout(function () { btn.textContent = original; btn.disabled = false; }, 1200);
-    });
-  } else {
-    btn.textContent = '✓ Copiado';
-    setTimeout(function () { btn.textContent = original; btn.disabled = false; }, 1200);
+  // ── HTML — tabla real para que no se descuadre al pegar en correo ───────────
+  const filasProductosHtml = items.map(function (it) {
+    return '<tr>' +
+      '<td style="border:1px solid #ddd;padding:6px;text-align:left;">' + esc(it.codigo) + '</td>' +
+      '<td style="border:1px solid #ddd;padding:6px;text-align:left;">' + esc(it.descripcion) + '</td>' +
+      '<td style="border:1px solid #ddd;padding:6px;text-align:right;">x' + esc(it.cantidad) + '</td>' +
+      '<td style="border:1px solid #ddd;padding:6px;text-align:right;">' + esc(descuentoEfectivo(it)) + '</td>' +
+      '<td style="border:1px solid #ddd;padding:6px;text-align:right;">' + esc(fmt(it.subtotal)) + '</td>' +
+    '</tr>';
+  }).join('');
+
+  const tablaHtml = '<table style="border-collapse:collapse;width:100%;font-family:Arial,sans-serif;font-size:13px;">' +
+    '<thead><tr>' +
+      '<th style="border:1px solid #ddd;padding:6px;text-align:left;background:#f5f5f5;">Código</th>' +
+      '<th style="border:1px solid #ddd;padding:6px;text-align:left;background:#f5f5f5;">Descripción</th>' +
+      '<th style="border:1px solid #ddd;padding:6px;text-align:right;background:#f5f5f5;">Cant.</th>' +
+      '<th style="border:1px solid #ddd;padding:6px;text-align:right;background:#f5f5f5;">Dscto.</th>' +
+      '<th style="border:1px solid #ddd;padding:6px;text-align:right;background:#f5f5f5;">Subtotal</th>' +
+    '</tr></thead>' +
+    '<tbody>' + filasProductosHtml + '</tbody>' +
+  '</table>';
+
+  const comprobanteHtml = comprobanteEsLink
+    ? '<a href="' + esc(comprobanteTxt) + '">' + esc(comprobanteTxt) + '</a>'
+    : esc(comprobanteTxt);
+
+  const datosHtml = datosLineas.map(function (linea) {
+    const idx = linea.indexOf(': ');
+    const label = idx >= 0 ? linea.slice(0, idx + 1) : linea;
+    const valor = idx >= 0 ? linea.slice(idx + 2) : '';
+    return '<div>' + esc(label) + ' ' + esc(valor) + '</div>';
+  }).join('');
+
+  const html = '<div style="font-family:Arial,sans-serif;font-size:13px;">' +
+    datosHtml +
+    '<div>Link comprobante de pago: ' + comprobanteHtml + '</div>' +
+    '<div style="margin-top:10px;margin-bottom:6px;font-weight:bold;">PEDIDO / PRODUCTOS</div>' +
+    tablaHtml +
+    '<div style="margin-top:8px;font-weight:bold;">Total: ' + esc(fmt(c.total)) + '</div>' +
+  '</div>';
+
+  // ── Copiar: HTML real (tabla) + texto plano como fallback dentro del mismo portapapeles ──
+  try {
+    if (navigator.clipboard && window.ClipboardItem) {
+      await navigator.clipboard.write([
+        new ClipboardItem({
+          'text/html': new Blob([html], { type: 'text/html' }),
+          'text/plain': new Blob([textoPlano], { type: 'text/plain' })
+        })
+      ]);
+      finalizar();
+    } else if (navigator.clipboard) {
+      await navigator.clipboard.writeText(textoPlano);
+      finalizar();
+    } else {
+      copiarTexto(textoPlano, btn);
+    }
+  } catch (e) {
+    console.warn('[Admin] Falló copia con formato HTML, reintentando solo texto plano:', e);
+    try {
+      await navigator.clipboard.writeText(textoPlano);
+      finalizar();
+    } catch (e2) {
+      alert('No se pudo copiar al portapapeles.');
+      btn.textContent = original;
+      btn.disabled = false;
+    }
   }
 }
 
