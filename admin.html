@@ -40,6 +40,33 @@
   tbody td { padding:10px 12px; border-top:1px solid #f4f4f5; font-size:13px; vertical-align:top; }
   tbody tr:hover { background:#fafafa; cursor:pointer; }
   .mono { font-family:ui-monospace,monospace; font-size:12px; color:#52525b; }
+
+  /* Dashboard Piloto */
+  .view-tabs { display:flex; gap:4px; margin-bottom:20px; border-bottom:2px solid var(--border); padding-bottom:0; }
+  .view-tab { padding:9px 18px; font-size:13px; font-weight:600; cursor:pointer; border:none; background:none; color:var(--muted); border-bottom:3px solid transparent; margin-bottom:-2px; border-radius:0; transition:color 0.15s; }
+  .view-tab:hover { color:var(--ink); }
+  .view-tab.active { color:var(--red); border-bottom-color:var(--red); }
+  .dash-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(170px,1fr)); gap:14px; margin-bottom:24px; }
+  .dash-card { background:#fff; border:1px solid var(--border); border-radius:12px; padding:16px 18px; }
+  .dash-card .dc-label { font-size:11px; font-weight:600; color:var(--muted); letter-spacing:0.05em; text-transform:uppercase; margin-bottom:6px; }
+  .dash-card .dc-value { font-size:26px; font-weight:800; color:var(--ink); line-height:1; }
+  .dash-card .dc-sub { font-size:11px; color:var(--muted); margin-top:4px; }
+  .dash-card.highlight .dc-value { color:var(--red); }
+  .dash-section { background:#fff; border:1px solid var(--border); border-radius:12px; padding:18px; margin-bottom:18px; }
+  .dash-section h3 { margin:0 0 14px; font-size:13px; font-weight:700; color:var(--ink); }
+  .dash-table { width:100%; border-collapse:collapse; font-size:13px; }
+  .dash-table th { text-align:left; padding:7px 10px; font-size:11px; font-weight:700; color:var(--muted); border-bottom:1px solid var(--border); text-transform:uppercase; letter-spacing:0.04em; }
+  .dash-table td { padding:8px 10px; border-bottom:1px solid #f4f4f5; color:var(--ink); }
+  .dash-table tr:last-child td { border-bottom:none; }
+  .dash-table td.num { text-align:right; font-variant-numeric:tabular-nums; }
+  .dash-table th.num { text-align:right; }
+  .dash-filters { display:flex; gap:6px; margin-bottom:20px; flex-wrap:wrap; align-items:center; }
+  .dash-filter-btn { padding:6px 14px; font-size:12px; font-weight:600; border:1px solid var(--border); border-radius:8px; background:#fff; cursor:pointer; color:var(--muted); transition:all 0.12s; }
+  .dash-filter-btn:hover { border-color:#d4d4d8; color:var(--ink); }
+  .dash-filter-btn.active { background:var(--red); color:#fff; border-color:var(--red); }
+  .dash-row2 { display:grid; grid-template-columns:1fr 1fr; gap:18px; margin-bottom:18px; }
+  .dash-badge { display:inline-block; font-size:11px; font-weight:700; background:var(--bg); border:1px solid var(--border); border-radius:6px; padding:2px 8px; color:var(--muted); }
+  .dash-fuera { font-size:28px; font-weight:800; color:var(--red); }
   .estado-select { font-size:11px; font-weight:600; border:none; border-radius:6px; padding:4px 8px; cursor:pointer; }
   .empty-msg { text-align:center; padding:50px 20px; color:#a1a1aa; font-size:14px; }
 
@@ -83,6 +110,8 @@ let channel = null;
 let errorConexion = false;
 let errorConexionMsg = '';
 let miPerfil = null; // { es_super_admin, es_observador } del usuario logueado
+let vistaActiva = 'cotizaciones'; // 'cotizaciones' | 'dashboard'
+let dashFiltro = 'todo'; // 'hoy' | '7d' | '30d' | 'todo'
 function esObservador() { return !!(miPerfil && miPerfil.es_observador); }
 
 function institucionInfo(inst) {
@@ -515,6 +544,189 @@ function exportarExcel(rows) {
   XLSX.writeFile(wb, 'Reporte_Cotizaciones_' + fechaArchivo + sufijoInst + sufijoEstado + '.xlsx');
 }
 
+function esSuperAdmin() { return !!(miPerfil && miPerfil.es_super_admin); }
+
+function calcDash(datos) {
+  // Usar hora local del navegador para clasificar correctamente con DST de Chile
+  // new Date(iso) + getHours/getDay usan la zona horaria configurada en el SO del admin
+  function esFueraHorario(iso) {
+    var d = new Date(iso);
+    var dia = d.getDay(); // 0=dom, 6=sab, en hora local del navegador
+    if (dia === 0 || dia === 6) return true;
+    var minutos = d.getHours() * 60 + d.getMinutes();
+    return minutos < 8 * 60 + 30 || minutos >= 18 * 60 + 30;
+  }
+  function fmtFecha(iso) {
+    var d = new Date(iso);
+    return d.getFullYear() + '-' +
+      String(d.getMonth()+1).padStart(2,'0') + '-' +
+      String(d.getDate()).padStart(2,'0');
+  }
+
+  var total = datos.length;
+  var montoTotal = datos.reduce(function(s,c){ return s + (Number(c.total)||0); }, 0);
+  var pedidos = datos.filter(function(c){ return c.estado === 'Pedido ingresado al sistema'; });
+  var montoPedidos = pedidos.reduce(function(s,c){ return s + (Number(c.total)||0); }, 0);
+  var anuladas = datos.filter(function(c){ return c.estado === 'Anulado'; });
+  var pendientes = datos.filter(function(c){
+    return c.estado !== 'Pedido ingresado al sistema' && c.estado !== 'Anulado';
+  });
+
+  // Por institución
+  var porInst = {};
+  datos.forEach(function(c) {
+    var label = institucionInfo(c.institucion).label;
+    if (!porInst[label]) porInst[label] = { n: 0, monto: 0 };
+    porInst[label].n++;
+    porInst[label].monto += Number(c.total) || 0;
+  });
+
+  // Por estado
+  var porEstado = {};
+  datos.forEach(function(c) {
+    var e = c.estado || '(sin estado)';
+    if (!porEstado[e]) porEstado[e] = { n: 0, monto: 0 };
+    porEstado[e].n++;
+    porEstado[e].monto += Number(c.total) || 0;
+  });
+
+  // Por día
+  var porDia = {};
+  datos.forEach(function(c) {
+    if (!c.created_at) return;
+    var fecha = fmtFecha(c.created_at);
+    if (!porDia[fecha]) porDia[fecha] = { n: 0, monto: 0 };
+    porDia[fecha].n++;
+    porDia[fecha].monto += Number(c.total) || 0;
+  });
+
+  // Fuera de horario
+  var fuera = datos.filter(function(c){ return c.created_at && esFueraHorario(c.created_at); });
+
+  return {
+    total: total, montoTotal: montoTotal,
+    pedidos: pedidos.length, montoPedidos: montoPedidos,
+    anuladas: anuladas.length, pendientes: pendientes.length,
+    porInst: porInst, porEstado: porEstado,
+    porDia: porDia, fuera: fuera.length
+  };
+}
+
+function filtrarPorPeriodo(datos, periodo) {
+  var ahora = new Date();
+  var limite = null;
+  if (periodo === 'hoy') {
+    limite = new Date(ahora.getFullYear(), ahora.getMonth(), ahora.getDate());
+  } else if (periodo === '7d') {
+    limite = new Date(ahora.getTime() - 7 * 24 * 60 * 60 * 1000);
+  } else if (periodo === '30d') {
+    limite = new Date(ahora.getTime() - 30 * 24 * 60 * 60 * 1000);
+  }
+  if (!limite) return datos;
+  return datos.filter(function(c) {
+    return c.created_at && new Date(c.created_at) >= limite;
+  });
+}
+
+function renderDashboardPiloto() {
+  var v = document.getElementById('dashboard-view');
+  var datos = filtrarPorPeriodo(cotizaciones, dashFiltro);
+  var d = calcDash(datos);
+
+  var tabsHtml =
+    '<div class="view-tabs">' +
+    '<button class="view-tab" onclick="vistaActiva=&quot;cotizaciones&quot;;renderDashboard()">📋 Cotizaciones</button>' +
+    '<button class="view-tab active">📊 Dashboard Piloto</button>' +
+    '</div>';
+
+  var filtrosHtml =
+    '<div class="dash-filters">' +
+    '<span style="font-size:12px;font-weight:600;color:var(--muted);margin-right:4px;">Período:</span>' +
+    ['hoy','7d','30d','todo'].map(function(p) {
+      var label = {hoy:'Hoy', '7d':'Últimos 7 días', '30d':'Últimos 30 días', todo:'Todo'}[p];
+      return '<button class="dash-filter-btn' + (dashFiltro===p?' active':'') +
+        '" onclick="dashFiltro=&quot;' + p + '&quot;;renderDashboardPiloto()">'  + label + '</button>';
+    }).join('') +
+    '</div>';
+
+  // KPI cards
+  var pct = d.total > 0 ? Math.round(d.fuera / d.total * 100) : 0;
+  var cardsHtml =
+    '<div class="dash-grid">' +
+    card('Cotizaciones totales', d.total, datos.length > 0 ? d.total + ' registros' : 'Sin datos', false) +
+    card('Monto total cotizado', fmt(d.montoTotal), d.total + ' cotizaciones', false) +
+    card('Pedidos ingresados', d.pedidos, fmt(d.montoPedidos), true) +
+    card('Pendientes', d.pendientes, 'No ingresados ni anulados', false) +
+    card('Anuladas', d.anuladas, '', false) +
+    card('Fuera de horario', d.fuera, pct + '% del total · antes 08:30, después 18:30 o finde', false) +
+    '</div>';
+
+  function card(label, value, sub, highlight) {
+    return '<div class="dash-card' + (highlight?' highlight':'') + '">' +
+      '<div class="dc-label">' + label + '</div>' +
+      '<div class="dc-value">' + value + '</div>' +
+      (sub ? '<div class="dc-sub">' + sub + '</div>' : '') +
+      '</div>';
+  }
+
+  // Tabla por institución
+  var instRows = Object.keys(d.porInst).sort(function(a,b){
+    return d.porInst[b].n - d.porInst[a].n;
+  }).map(function(k) {
+    var r = d.porInst[k];
+    return '<tr><td>' + esc(k) + '</td><td class="num">' + r.n + '</td><td class="num">' + fmt(r.monto) + '</td></tr>';
+  }).join('');
+  var tablaInst =
+    '<div class="dash-section"><h3>Por institución</h3>' +
+    '<table class="dash-table"><thead><tr><th>Institución</th><th class="num">Cotizaciones</th><th class="num">Monto cotizado</th></tr></thead>' +
+    '<tbody>' + (instRows || '<tr><td colspan="3" style="color:var(--muted);padding:16px 10px">Sin datos</td></tr>') + '</tbody></table></div>';
+
+  // Tabla por estado
+  var estadoRows = Object.keys(d.porEstado).sort(function(a,b){
+    return d.porEstado[b].n - d.porEstado[a].n;
+  }).map(function(k) {
+    var r = d.porEstado[k];
+    var bg = ESTADO_COLOR[k] || '#f4f4f5;color:#3f3f46';
+    return '<tr><td><span style="font-size:11px;font-weight:600;border-radius:5px;padding:2px 8px;background:' + bg + '">' + esc(k) + '</span></td>' +
+      '<td class="num">' + r.n + '</td><td class="num">' + fmt(r.monto) + '</td></tr>';
+  }).join('');
+  var tablaEstado =
+    '<div class="dash-section"><h3>Por estado</h3>' +
+    '<table class="dash-table"><thead><tr><th>Estado</th><th class="num">Cantidad</th><th class="num">Monto</th></tr></thead>' +
+    '<tbody>' + (estadoRows || '<tr><td colspan="3" style="color:var(--muted);padding:16px 10px">Sin datos</td></tr>') + '</tbody></table></div>';
+
+  // Tabla por día
+  var diaRows = Object.keys(d.porDia).sort().reverse().slice(0,30).map(function(fecha) {
+    var r = d.porDia[fecha];
+    return '<tr><td>' + esc(fecha) + '</td><td class="num">' + r.n + '</td><td class="num">' + fmt(r.monto) + '</td></tr>';
+  }).join('');
+  var tablaDia =
+    '<div class="dash-section"><h3>Por día <span class="dash-badge">últimos 30 días mostrados</span></h3>' +
+    '<table class="dash-table"><thead><tr><th>Fecha</th><th class="num">Cotizaciones</th><th class="num">Monto</th></tr></thead>' +
+    '<tbody>' + (diaRows || '<tr><td colspan="3" style="color:var(--muted);padding:16px 10px">Sin datos</td></tr>') + '</tbody></table></div>';
+
+  v.innerHTML =
+    (errorConexion ? '<div style="background:#fff3cd;border:1px solid #fde68a;border-radius:10px;padding:14px 18px;margin:16px;text-align:center;font-size:13px;">⚠️ ' +
+      (errorConexionMsg || 'Sin conexión con el servidor.') +
+      ' Los datos mostrados pueden no estar actualizados.<br>' +
+      '<button onclick="errorConexion=false;errorConexionMsg=\'\';cargarCotizaciones();" style="margin-top:8px;padding:7px 18px;background:#1a1a1a;color:#fff;border:none;border-radius:7px;cursor:pointer;font-size:13px;">🔄 Reintentar</button></div>' : '') +
+    '<header class="topbar"><div><div class="brand-name">STRAUMANN</div><div class="brand-sub">GROUP CHILE · NEODENT</div></div>' +
+    '<div style="display:flex;align-items:center;gap:12px;"><span style="font-size:10px;color:#a1a1aa;">by Daniel Jordán</span><button class="btn-logout" id="btn-logout">Cerrar sesión</button></div></header>' +
+    '<main>' +
+    tabsHtml +
+    '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;">' +
+    '<h2 style="margin:0;font-size:18px;">Dashboard Piloto</h2>' +
+    '<span style="font-size:11px;color:var(--muted);">Solo visible para super admin</span></div>' +
+    '<p style="margin:0 0 18px;font-size:12px;color:var(--muted);">Métricas basadas en cotizaciones cargadas. Zona horaria: Chile (UTC-3 aprox.)</p>' +
+    filtrosHtml +
+    cardsHtml +
+    '<div class="dash-row2">' + tablaInst + tablaEstado + '</div>' +
+    tablaDia +
+    '</main>';
+
+  document.getElementById('btn-logout').addEventListener('click', doLogout);
+}
+
 function renderDashboard() {
   document.getElementById('login-view').style.display = 'none';
   const v = document.getElementById('dashboard-view');
@@ -599,6 +811,7 @@ function renderDashboard() {
     '<div style="display:flex;align-items:center;gap:12px;"><span style="font-size:10px;color:#a1a1aa;">by Daniel Jordán</span><button class="btn-logout" id="btn-logout">Cerrar sesión</button></div></header>' +
     (errorConexion ? '<div style="background:#fff3cd;border:1px solid #fde68a;border-radius:10px;padding:14px 18px;margin:16px;text-align:center;font-size:13px;">⚠️ ' + (errorConexionMsg || 'Sin conexión con el servidor.') + ' Los datos mostrados pueden no estar actualizados.<br><button onclick="errorConexion=false;errorConexionMsg=\'\';cargarCotizaciones();" style="margin-top:8px;padding:7px 18px;background:#1a1a1a;color:#fff;border:none;border-radius:7px;cursor:pointer;font-size:13px;">🔄 Reintentar</button></div>' : '') +
     '<main>' +
+      (esSuperAdmin() ? '<div class="view-tabs"><button class="view-tab active">📋 Cotizaciones</button><button class="view-tab" onclick="vistaActiva=\'dashboard\';renderDashboardPiloto()">📊 Dashboard Piloto</button></div>' : '') +
       '<h2 style="margin:0 0 4px;">Cotizaciones</h2>' +
       '<p style="font-size:12px;color:#a1a1aa;margin:0 0 18px;">Se actualiza en vivo a medida que se generan cotizaciones.</p>' +
       '<div class="toolbar">' +
