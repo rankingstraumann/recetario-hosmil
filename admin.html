@@ -616,6 +616,27 @@ function calcDash(datos) {
   var acum = 0;
   serieEvolucion.forEach(function(s) { acum += s.n; s.acum = acum; });
 
+  // Implantes cotizados: clasificar por descripción del ítem
+  // Regla: descripción empieza con "implante" (case-insensitive) y NO contiene "por implante"
+  // (los autos-agregados usan frases como "agregado automático por implante" / "precio especial por implante")
+  // Straumann: descripción además contiene "straumann" — cubre BLT, BLC, BLX
+  // Neodent: cumple la regla de implante pero no contiene "straumann"
+  var implantesNeodent = 0, implantesStraumann = 0;
+  datos.forEach(function(cot) {
+    (cot.items || []).forEach(function(it) {
+      var desc = (it.descripcion || '').toLowerCase().trimStart();
+      if (!desc.startsWith('implante')) return;
+      if (desc.includes('por implante')) return;       // excluir autos-agregados y precios especiales
+      var cant = parseInt(it.cantidad, 10) || 1;
+      if (desc.includes('straumann')) {
+        implantesStraumann += cant;
+      } else {
+        implantesNeodent += cant;
+      }
+    });
+  });
+  var implantesTotal = implantesNeodent + implantesStraumann;
+
   return {
     total: total, montoTotal: montoTotal,
     pedidos: pedidos.length, montoPedidos: montoPedidos,
@@ -626,7 +647,12 @@ function calcDash(datos) {
     pctPendientes: pct(pendientes.length, total),
     pctAnuladas: pct(anuladas.length, total),
     pctFuera: pct(fuera.length, total),
-    serieEvolucion: serieEvolucion
+    serieEvolucion: serieEvolucion,
+    implantesNeodent: implantesNeodent,
+    implantesStraumann: implantesStraumann,
+    implantesTotal: implantesTotal,
+    pctImplantesNeodent: pct(implantesNeodent, implantesTotal),
+    pctImplantesStraumann: pct(implantesStraumann, implantesTotal)
   };
 }
 
@@ -812,6 +838,26 @@ function renderDashboardPiloto() {
     '<p style="margin:0 0 18px;font-size:12px;color:var(--muted);">Métricas basadas en cotizaciones cargadas. Zona horaria: Chile (UTC-3 aprox.)</p>' +
     filtrosHtml +
     cardsHtml +
+    '<div class="dash-section" style="margin-bottom:18px;">' +
+      '<h3>Implantes cotizados</h3>' +
+      '<div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;">' +
+        '<div style="text-align:center;padding:14px 8px;background:var(--bg);border-radius:10px;">' +
+          '<div style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px;">Total implantes</div>' +
+          '<div style="font-size:30px;font-weight:800;color:var(--ink);">' + d.implantesTotal + '</div>' +
+        '</div>' +
+        '<div style="text-align:center;padding:14px 8px;background:#fff8f8;border:1px solid #fee2e2;border-radius:10px;">' +
+          '<div style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px;">Neodent</div>' +
+          '<div style="font-size:30px;font-weight:800;color:var(--red);">' + d.implantesNeodent + '</div>' +
+          '<div style="font-size:13px;font-weight:600;color:#b91c1c;margin-top:2px;">' + d.pctImplantesNeodent + '</div>' +
+        '</div>' +
+        '<div style="text-align:center;padding:14px 8px;background:var(--bg);border-radius:10px;">' +
+          '<div style="font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:4px;">Straumann (BLT / BLC / BLX)</div>' +
+          '<div style="font-size:30px;font-weight:800;color:var(--ink);">' + d.implantesStraumann + '</div>' +
+          '<div style="font-size:13px;font-weight:600;color:var(--muted);margin-top:2px;">' + d.pctImplantesStraumann + '</div>' +
+        '</div>' +
+      '</div>' +
+      (d.implantesTotal === 0 ? '<div style="font-size:12px;color:var(--muted);margin-top:10px;">Sin implantes en el período seleccionado.</div>' : '') +
+    '</div>' +
     renderGraficoEvolucion(d.serieEvolucion) +
     '<div class="dash-row2">' + tablaInst + tablaEstado + '</div>' +
     tablaDia +
