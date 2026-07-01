@@ -637,11 +637,34 @@ function calcDash(datos) {
   });
   var implantesTotal = implantesNeodent + implantesStraumann;
 
+  // Monto pendiente por convertir
+  var montoPendiente = pendientes.reduce(function(s,c){ return s + (Number(c.total)||0); }, 0);
+
+  // Pendientes con más de 48 horas desde su creación
+  var ahora48 = Date.now();
+  var MS_48H = 48 * 60 * 60 * 1000;
+  var pendientes48h = pendientes.filter(function(c) {
+    if (!c.created_at) return false;
+    return (ahora48 - new Date(c.created_at).getTime()) > MS_48H;
+  }).length;
+
+  // Por institución enriquecida
+  var porInstEnriq = {};
+  datos.forEach(function(c) {
+    var label = institucionInfo(c.institucion).label;
+    if (!porInstEnriq[label]) porInstEnriq[label] = { n: 0, pedidos: 0, montoCot: 0, montoIng: 0 };
+    var r = porInstEnriq[label];
+    r.n++;
+    r.montoCot += Number(c.total) || 0;
+    if (c.estado === 'Pedido ingresado al sistema') { r.pedidos++; r.montoIng += Number(c.total) || 0; }
+  });
+
   return {
     total: total, montoTotal: montoTotal,
     pedidos: pedidos.length, montoPedidos: montoPedidos,
     anuladas: anuladas.length, pendientes: pendientes.length,
-    porInst: porInst, porEstado: porEstado,
+    montoPendiente: montoPendiente, pendientes48h: pendientes48h,
+    porInst: porInst, porInstEnriq: porInstEnriq, porEstado: porEstado,
     porDia: porDia, fuera: fuera.length,
     pctPedidos: pct(pedidos.length, total),
     pctPendientes: pct(pendientes.length, total),
@@ -768,6 +791,8 @@ function renderDashboardPiloto() {
     cardPct('Pedidos ingresados', d.pedidos, fmt(d.montoPedidos), 'Conversión: ' + d.pctPedidos, true) +
     cardPct('Pendientes', d.pendientes, 'No ingresados ni anulados', d.pctPendientes, false) +
     cardPct('Anuladas', d.anuladas, '', d.pctAnuladas, false) +
+    card('Monto pendiente por convertir', fmt(d.montoPendiente), 'Cotizaciones aún no ingresadas ni anuladas', false) +
+    card('Pendientes +48h', d.pendientes48h, d.pendientes48h > 0 ? 'Requieren seguimiento' : 'Sin casos urgentes', d.pendientes48h > 0) +
     cardPct('Fuera de horario', d.fuera, 'Antes 08:30, después 18:30 o fin de semana', d.pctFuera, false) +
     '</div>';
 
@@ -787,17 +812,34 @@ function renderDashboardPiloto() {
       '</div>';
   }
 
-  // Tabla por institución
-  var instRows = Object.keys(d.porInst).sort(function(a,b){
-    return d.porInst[b].n - d.porInst[a].n;
+  // Tabla institución enriquecida con conversión y montos
+  var instRows = Object.keys(d.porInstEnriq).sort(function(a,b){
+    return d.porInstEnriq[b].n - d.porInstEnriq[a].n;
   }).map(function(k) {
-    var r = d.porInst[k];
-    return '<tr><td>' + esc(k) + '</td><td class="num">' + r.n + '</td><td class="num">' + fmt(r.monto) + '</td></tr>';
+    var r = d.porInstEnriq[k];
+    var conv = r.n > 0 ? (r.pedidos / r.n * 100) : 0;
+    var convStr = (Number.isInteger(conv) ? conv : conv.toFixed(1)) + '%';
+    var convColor = conv >= 50 ? 'var(--red)' : 'var(--ink)';
+    return '<tr>' +
+      '<td>' + esc(k) + '</td>' +
+      '<td class="num">' + r.n + '</td>' +
+      '<td class="num">' + r.pedidos + '</td>' +
+      '<td class="num" style="font-weight:700;color:' + convColor + '">' + convStr + '</td>' +
+      '<td class="num">' + fmt(r.montoCot) + '</td>' +
+      '<td class="num">' + fmt(r.montoIng) + '</td>' +
+    '</tr>';
   }).join('');
   var tablaInst =
     '<div class="dash-section"><h3>Por institución</h3>' +
-    '<table class="dash-table"><thead><tr><th>Institución</th><th class="num">Cotizaciones</th><th class="num">Monto cotizado</th></tr></thead>' +
-    '<tbody>' + (instRows || '<tr><td colspan="3" style="color:var(--muted);padding:16px 10px">Sin datos</td></tr>') + '</tbody></table></div>';
+    '<table class="dash-table"><thead><tr>' +
+      '<th>Institución</th>' +
+      '<th class="num">Cotizaciones</th>' +
+      '<th class="num">Pedidos</th>' +
+      '<th class="num">Conversión</th>' +
+      '<th class="num">Monto cotizado</th>' +
+      '<th class="num">Monto ingresado</th>' +
+    '</tr></thead>' +
+    '<tbody>' + (instRows || '<tr><td colspan="6" style="color:var(--muted);padding:16px 10px">Sin datos</td></tr>') + '</tbody></table></div>';
 
   // Tabla por estado
   var estadoRows = Object.keys(d.porEstado).sort(function(a,b){
