@@ -603,12 +603,30 @@ function calcDash(datos) {
   // Fuera de horario
   var fuera = datos.filter(function(c){ return c.created_at && esFueraHorario(c.created_at); });
 
+  function pct(val, tot) {
+    if (!tot) return '0%';
+    var p = (val / tot * 100);
+    return (Number.isInteger(p) ? p : p.toFixed(1)) + '%';
+  }
+
+  // Serie de evolución ordenada para el gráfico
+  var serieEvolucion = Object.keys(porDia).sort().map(function(fecha, i, arr) {
+    return { fecha: fecha, n: porDia[fecha].n };
+  });
+  var acum = 0;
+  serieEvolucion.forEach(function(s) { acum += s.n; s.acum = acum; });
+
   return {
     total: total, montoTotal: montoTotal,
     pedidos: pedidos.length, montoPedidos: montoPedidos,
     anuladas: anuladas.length, pendientes: pendientes.length,
     porInst: porInst, porEstado: porEstado,
-    porDia: porDia, fuera: fuera.length
+    porDia: porDia, fuera: fuera.length,
+    pctPedidos: pct(pedidos.length, total),
+    pctPendientes: pct(pendientes.length, total),
+    pctAnuladas: pct(anuladas.length, total),
+    pctFuera: pct(fuera.length, total),
+    serieEvolucion: serieEvolucion
   };
 }
 
@@ -626,6 +644,73 @@ function filtrarPorPeriodo(datos, periodo) {
   return datos.filter(function(c) {
     return c.created_at && new Date(c.created_at) >= limite;
   });
+}
+
+function renderGraficoEvolucion(serie) {
+  if (!serie || serie.length === 0) {
+    return '<div class="dash-section"><h3>Evolución de cotizaciones</h3>' +
+      '<div style="color:var(--muted);font-size:13px;padding:24px 0;text-align:center;">Sin datos para el período seleccionado.</div></div>';
+  }
+
+  var W = 680, H = 200, PL = 38, PR = 16, PT = 18, PB = 36;
+  var iW = W - PL - PR, iH = H - PT - PB;
+
+  var maxN = Math.max.apply(null, serie.map(function(s){ return s.n; }));
+  var maxA = Math.max.apply(null, serie.map(function(s){ return s.acum; }));
+  // Escalar la línea diaria sobre eje izquierdo (max = max diario * 1.2 para aire)
+  var scaleY_n = maxN > 0 ? iH / (maxN * 1.2) : iH;
+  // Escalar acumulado sobre eje derecho (independiente)
+  var scaleY_a = maxA > 0 ? iH / (maxA * 1.1) : iH;
+
+  var n = serie.length;
+  function xPos(i) { return PL + (n === 1 ? iW / 2 : i * iW / (n - 1)); }
+  function yN(val)  { return PT + iH - val * scaleY_n; }
+  function yA(val)  { return PT + iH - val * scaleY_a; }
+
+  // Polylines
+  var ptsN = serie.map(function(s, i){ return xPos(i).toFixed(1) + ',' + yN(s.n).toFixed(1); }).join(' ');
+  var ptsA = serie.map(function(s, i){ return xPos(i).toFixed(1) + ',' + yA(s.acum).toFixed(1); }).join(' ');
+
+  // Etiquetas eje X (mostrar máx 8 labels para no amontonar)
+  var step = Math.max(1, Math.ceil(n / 8));
+  var xLabels = '';
+  serie.forEach(function(s, i) {
+    if (i % step !== 0 && i !== n - 1) return;
+    var label = s.fecha.slice(5); // MM-DD
+    xLabels += '<text x="' + xPos(i).toFixed(1) + '" y="' + (H - 6) + '" text-anchor="middle" font-size="10" fill="#a1a1aa">' + label + '</text>';
+  });
+
+  // Etiquetas eje Y izquierdo (4 niveles)
+  var yLabels = '';
+  for (var l = 0; l <= 4; l++) {
+    var val = Math.round(maxN * 1.2 * l / 4);
+    var y = PT + iH - (val * scaleY_n);
+    yLabels += '<text x="' + (PL - 4) + '" y="' + (y + 3).toFixed(1) + '" text-anchor="end" font-size="9" fill="#a1a1aa">' + val + '</text>';
+    yLabels += '<line x1="' + PL + '" y1="' + y.toFixed(1) + '" x2="' + (W - PR) + '" y2="' + y.toFixed(1) + '" stroke="#f0f0f0" stroke-width="1"/>';
+  }
+
+  // Puntos en línea diaria (visibles si pocos datos)
+  var dots = n <= 14 ? serie.map(function(s, i) {
+    return '<circle cx="' + xPos(i).toFixed(1) + '" cy="' + yN(s.n).toFixed(1) + '" r="3" fill="#991b1b"/>';
+  }).join('') : '';
+
+  var svg =
+    '<svg viewBox="0 0 ' + W + ' ' + H + '" xmlns="http://www.w3.org/2000/svg" style="width:100%;max-width:' + W + 'px;display:block;">' +
+    yLabels +
+    '<polyline points="' + ptsA + '" fill="none" stroke="#d4d4d8" stroke-width="1.5" stroke-dasharray="4 3"/>' +
+    '<polyline points="' + ptsN + '" fill="none" stroke="#991b1b" stroke-width="2"/>' +
+    dots +
+    xLabels +
+    '</svg>';
+
+  // Leyenda
+  var leyenda =
+    '<div style="display:flex;gap:20px;font-size:11px;color:var(--muted);margin-top:6px;">' +
+    '<span style="display:flex;align-items:center;gap:5px;"><svg width="20" height="3"><line x1="0" y1="1.5" x2="20" y2="1.5" stroke="#991b1b" stroke-width="2"/></svg> Cotizaciones / día</span>' +
+    '<span style="display:flex;align-items:center;gap:5px;"><svg width="20" height="3"><line x1="0" y1="1.5" x2="20" y2="1.5" stroke="#d4d4d8" stroke-width="1.5" stroke-dasharray="4 3"/></svg> Acumulado</span>' +
+    '</div>';
+
+  return '<div class="dash-section"><h3>Evolución de cotizaciones</h3>' + svg + leyenda + '</div>';
 }
 
 function renderDashboardPiloto() {
@@ -650,21 +735,28 @@ function renderDashboardPiloto() {
     '</div>';
 
   // KPI cards
-  var pct = d.total > 0 ? Math.round(d.fuera / d.total * 100) : 0;
   var cardsHtml =
     '<div class="dash-grid">' +
-    card('Cotizaciones totales', d.total, datos.length > 0 ? d.total + ' registros' : 'Sin datos', false) +
+    card('Cotizaciones totales', d.total, d.total > 0 ? d.total + ' registros' : 'Sin datos', false) +
     card('Monto total cotizado', fmt(d.montoTotal), d.total + ' cotizaciones', false) +
-    card('Pedidos ingresados', d.pedidos, fmt(d.montoPedidos), true) +
-    card('Pendientes', d.pendientes, 'No ingresados ni anulados', false) +
-    card('Anuladas', d.anuladas, '', false) +
-    card('Fuera de horario', d.fuera, pct + '% del total · antes 08:30, después 18:30 o finde', false) +
+    cardPct('Pedidos ingresados', d.pedidos, fmt(d.montoPedidos), 'Conversión: ' + d.pctPedidos, true) +
+    cardPct('Pendientes', d.pendientes, 'No ingresados ni anulados', d.pctPendientes, false) +
+    cardPct('Anuladas', d.anuladas, '', d.pctAnuladas, false) +
+    cardPct('Fuera de horario', d.fuera, 'Antes 08:30, después 18:30 o fin de semana', d.pctFuera, false) +
     '</div>';
 
   function card(label, value, sub, highlight) {
     return '<div class="dash-card' + (highlight?' highlight':'') + '">' +
       '<div class="dc-label">' + label + '</div>' +
       '<div class="dc-value">' + value + '</div>' +
+      (sub ? '<div class="dc-sub">' + sub + '</div>' : '') +
+      '</div>';
+  }
+  function cardPct(label, value, sub, pctVal, highlight) {
+    return '<div class="dash-card' + (highlight?' highlight':'') + '">' +
+      '<div class="dc-label">' + label + '</div>' +
+      '<div class="dc-value">' + value + '</div>' +
+      (pctVal ? '<div style="font-size:13px;font-weight:700;color:' + (highlight?'var(--red)':'#52525b') + ';margin-top:3px;">' + pctVal + '</div>' : '') +
       (sub ? '<div class="dc-sub">' + sub + '</div>' : '') +
       '</div>';
   }
@@ -720,6 +812,7 @@ function renderDashboardPiloto() {
     '<p style="margin:0 0 18px;font-size:12px;color:var(--muted);">Métricas basadas en cotizaciones cargadas. Zona horaria: Chile (UTC-3 aprox.)</p>' +
     filtrosHtml +
     cardsHtml +
+    renderGraficoEvolucion(d.serieEvolucion) +
     '<div class="dash-row2">' + tablaInst + tablaEstado + '</div>' +
     tablaDia +
     '</main>';
