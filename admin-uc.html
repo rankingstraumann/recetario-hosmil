@@ -250,9 +250,18 @@ const PRODUCTS = [
   {"codigo":"106.278","descripcion":"Cilindro Proteccion Mini Pilar Con Ancho","precioLista":18000},
   {"codigo":"105.137","descripcion":"Conexion Protesica Hex, StSt","precioLista":22000},
   {"codigo":"101.092","descripcion":"Analogo reposic. hibr. Mini Pilar,Ti 4.1","precioLista":21000},
-  {"codigo":"118.382","descripcion":"CIL TITA MINI PIL CONI 4.1 AJUS PAS. NEO","precioLista":22000}
+  {"codigo":"118.382","descripcion":"CIL TITA MINI PIL CONI 4.1 AJUS PAS. NEO","precioLista":22000},
+  {"codigo":"109.899","descripcion":"Implante Titamax GM,Ti, 3.75X7","precioLista":103530},
+  {"codigo":"106.207","descripcion":"Cicatrizador GM,Ti, 3.3X0.8","precioLista":28560},
+  {"codigo":"117.021","descripcion":"Tornillo De Cobertura GM,Ti (default cierre Neodent)","precioLista":13090},
+  {"codigo":"064.4100S","descripcion":"Casquillo de cierre H 0,4 mm (default cierre Straumann)","precioLista":23800},
+  {"codigo":"024.2100S","descripcion":"Default cierre BLT NC (PENDIENTE precio real)","precioLista":0},
+  {"codigo":"024.4100S","descripcion":"Default cierre BLT RC (PENDIENTE precio real)","precioLista":0},
+  {"codigo":"024.0006S","descripcion":"Default cierre BLT SC (PENDIENTE precio real)","precioLista":0}
   // TODO: completar con el catálogo UC real antes de uso productivo.
 ];
+
+const DEFAULT_CIERRE_CODES = ['117.021', '064.4100S', '024.2100S', '024.4100S', '024.0006S'];
 
 let currentUser = null;
 let currentRole = null; // 'super_admin' | 'adquisiciones' | 'stock' | 'admin'
@@ -476,23 +485,41 @@ document.getElementById('btnCalcularPrecio').addEventListener('click', async () 
   resultadoDiv.innerHTML = '<div class="empty-state">Calculando...</div>';
 
   const items = solicitudSeleccionada.items || [];
-  const precios = [];
-  const faltantes = [];
 
-  items.forEach(item => {
-    const prod = PRODUCTS.find(p => p.codigo === item.codigo);
-    if (prod) {
-      precios.push({ codigo: item.codigo, precioLista: prod.precioLista });
-    } else {
-      faltantes.push(item.codigo);
+  // Códigos a validar: los de la solicitud + los 5 default de cierre, SIEMPRE.
+  // Se incluyen los default siempre porque esta pantalla no replica la lógica de
+  // conteo de implantes (vive solo en Supabase) — no podemos saber de antemano
+  // si el auto-completado de calcular_precio_solicitud_uc los va a necesitar.
+  const codigosItems = items.map(it => it.codigo);
+  const codigosAValidar = Array.from(new Set(codigosItems.concat(DEFAULT_CIERRE_CODES)));
+
+  const precios = [];
+  const faltantes = [];   // no existe en PRODUCTS
+  const enCero = [];      // existe pero precioLista === 0 (placeholder bloqueado)
+
+  codigosAValidar.forEach(codigo => {
+    const prod = PRODUCTS.find(p => p.codigo === codigo);
+    if (!prod) {
+      faltantes.push(codigo);
+      return;
     }
+    if (Number(prod.precioLista) === 0) {
+      enCero.push(codigo);
+      return;
+    }
+    precios.push({ codigo: codigo, precioLista: prod.precioLista });
   });
 
-  if (faltantes.length > 0) {
-    resultadoDiv.innerHTML =
-      '<div class="msg msg-error">Falta precio de lista en el catálogo local para: ' +
-      faltantes.map(escapeHtml).join(', ') + '. Actualiza el arreglo PRODUCTS antes de calcular.</div>';
-    return;
+  if (faltantes.length > 0 || enCero.length > 0) {
+    let mensajes = [];
+    faltantes.forEach(c => {
+      mensajes.push('Falta precio de lista real para el código ' + escapeHtml(c) + '. Complete el catálogo UC antes de calcular la OC.');
+    });
+    enCero.forEach(c => {
+      mensajes.push('Falta precio de lista real para el código ' + escapeHtml(c) + '. Complete el catálogo UC antes de calcular la OC.');
+    });
+    resultadoDiv.innerHTML = '<div class="msg msg-error">' + mensajes.join('<br>') + '</div>';
+    return; // No se llama a calcular_precio_solicitud_uc mientras haya precios faltantes o en $0.
   }
 
   const { data, error } = await sb.rpc('calcular_precio_solicitud_uc', {
@@ -506,13 +533,24 @@ document.getElementById('btnCalcularPrecio').addEventListener('click', async () 
     return;
   }
 
-  let html = '<table class="price-table items-table"><thead><tr><th>Código</th><th>Cant.</th><th>P. unitario final</th><th>Subtotal</th></tr></thead><tbody>';
+  let html = '<table class="price-table items-table"><thead><tr>' +
+    '<th>Código</th><th>Descripción</th><th>Cantidad</th>' +
+    '<th>Precio lista neto</th><th>Descuento aplicado</th>' +
+    '<th>Precio neto unitario</th><th>Subtotal neto</th></tr></thead><tbody>';
   (data.items || []).forEach(li => {
-    html += '<tr><td>' + escapeHtml(li.codigo) + '</td><td>' + escapeHtml(String(li.cantidad)) + '</td><td>$' +
-      formatMonto(li.precioUnitarioFinal) + '</td><td>$' + formatMonto(li.subtotal) + '</td></tr>';
+    const filaEstilo = li.especial ? ' style="background:#fff8e1;"' : '';
+    html += '<tr' + filaEstilo + '>' +
+      '<td>' + escapeHtml(li.codigo) + '</td>' +
+      '<td>' + escapeHtml(li.descripcion || '') + '</td>' +
+      '<td>' + escapeHtml(String(li.cantidad)) + '</td>' +
+      '<td>$' + formatMonto(li.precioListaNeto) + '</td>' +
+      '<td>' + formatPorcentaje(li.descuentoPorcentaje) + '</td>' +
+      '<td>$' + formatMonto(li.precioNetoUnitario) + '</td>' +
+      '<td>$' + formatMonto(li.subtotalNeto) + '</td>' +
+      '</tr>';
   });
   html += '</tbody></table>';
-  html += '<div class="price-total">Total: $' + formatMonto(data.total) + '</div>';
+  html += '<div class="price-total">Total neto OC: $' + formatMonto(data.totalNetoOC) + '</div>';
   resultadoDiv.innerHTML = html;
 });
 
@@ -588,6 +626,10 @@ function escapeHtml(str) {
 
 function formatMonto(n) {
   return Number(n).toLocaleString('es-CL');
+}
+
+function formatPorcentaje(p) {
+  return Math.round(Number(p) * 100) + '%';
 }
 
 function formatFecha(iso) {
