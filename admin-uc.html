@@ -485,42 +485,43 @@ document.getElementById('btnCalcularPrecio').addEventListener('click', async () 
   resultadoDiv.innerHTML = '<div class="empty-state">Calculando...</div>';
 
   const items = solicitudSeleccionada.items || [];
-
-  // Códigos a validar: los de la solicitud + los 5 default de cierre, SIEMPRE.
-  // Se incluyen los default siempre porque esta pantalla no replica la lógica de
-  // conteo de implantes (vive solo en Supabase) — no podemos saber de antemano
-  // si el auto-completado de calcular_precio_solicitud_uc los va a necesitar.
   const codigosItems = items.map(it => it.codigo);
-  const codigosAValidar = Array.from(new Set(codigosItems.concat(DEFAULT_CIERRE_CODES)));
 
   const precios = [];
-  const faltantes = [];   // no existe en PRODUCTS
-  const enCero = [];      // existe pero precioLista === 0 (placeholder bloqueado)
+  const bloqueantes = [];
 
-  codigosAValidar.forEach(codigo => {
+  // 1) Códigos EXPLÍCITOS de la solicitud: obligatorios. Si faltan en PRODUCTS
+  // o tienen precioLista=0, se bloquea el cálculo — estos códigos SIEMPRE se
+  // usan, no hay forma de que la OC salga sin ellos.
+  codigosItems.forEach(codigo => {
     const prod = PRODUCTS.find(p => p.codigo === codigo);
-    if (!prod) {
-      faltantes.push(codigo);
-      return;
-    }
-    if (Number(prod.precioLista) === 0) {
-      enCero.push(codigo);
+    if (!prod || Number(prod.precioLista) === 0) {
+      bloqueantes.push('Falta precio de lista real para el código ' + escapeHtml(codigo) + '. Complete el catálogo UC antes de calcular la OC.');
       return;
     }
     precios.push({ codigo: codigo, precioLista: prod.precioLista });
   });
 
-  if (faltantes.length > 0 || enCero.length > 0) {
-    let mensajes = [];
-    faltantes.forEach(c => {
-      mensajes.push('Falta precio de lista real para el código ' + escapeHtml(c) + '. Complete el catálogo UC antes de calcular la OC.');
-    });
-    enCero.forEach(c => {
-      mensajes.push('Falta precio de lista real para el código ' + escapeHtml(c) + '. Complete el catálogo UC antes de calcular la OC.');
-    });
-    resultadoDiv.innerHTML = '<div class="msg msg-error">' + mensajes.join('<br>') + '</div>';
-    return; // No se llama a calcular_precio_solicitud_uc mientras haya precios faltantes o en $0.
+  if (bloqueantes.length > 0) {
+    resultadoDiv.innerHTML = '<div class="msg msg-error">' + bloqueantes.join('<br>') + '</div>';
+    return; // No se llama a calcular_precio_solicitud_uc si falta un precio explicito.
   }
+
+  // 2) Códigos DEFAULT de cierre: opcionales acá. Se incluyen solo si tienen
+  // precioLista > 0. Si un default está en $0 o no está en PRODUCTS, NO se
+  // agrega ni se bloquea el cálculo — muchas solicitudes no van a necesitarlo
+  // (ej. UC-0002 no usa ningún código BLT). Si la RPC efectivamente necesita
+  // ese default para auto-completar el cupo de cierre y no se lo mandamos,
+  // ella misma falla con su propio mensaje claro ("Falta precio de lista
+  // para el codigo por defecto ... del grupo ..."), que es la señal correcta
+  // solo cuando de verdad hacía falta.
+  DEFAULT_CIERRE_CODES.forEach(codigo => {
+    if (codigosItems.indexOf(codigo) !== -1) return; // ya incluido como código explícito
+    const prod = PRODUCTS.find(p => p.codigo === codigo);
+    if (prod && Number(prod.precioLista) > 0) {
+      precios.push({ codigo: codigo, precioLista: prod.precioLista });
+    }
+  });
 
   const { data, error } = await sb.rpc('calcular_precio_solicitud_uc', {
     p_id: solicitudSeleccionada.id,
