@@ -130,6 +130,20 @@
   .msg-ok { background: #d4edda; color: #155724; }
   .msg-error { background: #f8d7da; color: #721c24; }
 
+  input.oc-input {
+    width: 100%;
+    padding: 8px;
+    margin-top: 6px;
+    margin-bottom: 10px;
+    border: 1px solid #ccc;
+    border-radius: 6px;
+    font-size: 13px;
+    font-family: inherit;
+  }
+  .oc-readonly { font-size: 13px; line-height: 1.8; }
+  .oc-readonly .oc-label { color: #888; margin-right: 6px; }
+  .oc-hint { color: #888; font-size: 12px; margin-top: 4px; }
+
   .rol-tag {
     display: inline-block;
     background: #eef2fb;
@@ -217,6 +231,11 @@
           <textarea class="comentario" id="stockComentario" placeholder="Comentario opcional"></textarea>
         </div>
 
+        <div class="detail-section" id="seccionOc" style="display:none">
+          <h4>OC / Customer</h4>
+          <div id="ocContenido"></div>
+        </div>
+
         <div id="accionMsg"></div>
 
         <div class="detail-section">
@@ -266,6 +285,7 @@ const DEFAULT_CIERRE_CODES = ['117.021', '064.4100S', '024.2100S', '024.4100S', 
 let currentUser = null;
 let currentRole = null; // 'super_admin' | 'adquisiciones' | 'stock' | 'admin'
 let solicitudSeleccionada = null;
+let ultimoCalculoPrecio = null; // guarda el ultimo resultado de calcular_precio_solicitud_uc (para prellenar totalNetoOC al registrar OC)
 
 // ============================================================
 // LOGIN
@@ -443,9 +463,11 @@ async function seleccionarSolicitud(id, trElement) {
   });
 
   document.getElementById('resultadoPrecio').innerHTML = '';
+  ultimoCalculoPrecio = null; // al cambiar de solicitud, se pierde el calculo anterior (es de otra OC)
 
   renderSeccionPrecio(sol);
   renderSeccionStock(sol);
+  renderSeccionOc(sol);
   renderHistorial(sol.historial || []);
 }
 
@@ -553,6 +575,9 @@ document.getElementById('btnCalcularPrecio').addEventListener('click', async () 
   html += '</tbody></table>';
   html += '<div class="price-total">Total neto OC: $' + formatMonto(data.totalNetoOC) + '</div>';
   resultadoDiv.innerHTML = html;
+
+  ultimoCalculoPrecio = data; // disponible para prellenar el total al registrar OC
+  if (solicitudSeleccionada) renderSeccionOc(solicitudSeleccionada); // refresca por si el formulario de OC ya estaba visible esperando este calculo
 });
 
 // ============================================================
@@ -613,6 +638,198 @@ async function ejecutarValidacionStock(estado) {
   await cargarListado();
   const tr = document.querySelector('#tbodySolicitudes tr[data-id="' + solicitudSeleccionada.id + '"]');
   if (tr) await seleccionarSolicitud(solicitudSeleccionada.id, tr);
+}
+
+// ============================================================
+// OC / CUSTOMER (adquisiciones registra OC; admin ademas avanza Customer)
+// ============================================================
+const ESTADOS_CON_OC = ['Stock confirmado', 'Stock parcial', 'OC registrada', 'Enviado a Customer', 'Pedido confirmado'];
+
+async function renderSeccionOc(sol) {
+  const seccion = document.getElementById('seccionOc');
+  const cont = document.getElementById('ocContenido');
+  const puedeVerOc = (currentRole === 'adquisiciones' || currentRole === 'admin' || currentRole === 'super_admin');
+
+  if (!puedeVerOc) {
+    seccion.style.display = 'none';
+    return;
+  }
+
+  if (!ESTADOS_CON_OC.includes(sol.estado)) {
+    seccion.style.display = 'block';
+    cont.innerHTML = '<div class="empty-state">La sección OC / Customer se habilita después de confirmar stock.</div>';
+    return;
+  }
+
+  seccion.style.display = 'block';
+  cont.innerHTML = '<div class="empty-state">Cargando datos de OC...</div>';
+
+  const { data, error } = await sb.rpc('detalle_oc_customer_uc', { p_id: sol.id || solicitudSeleccionada.id });
+
+  if (error) {
+    console.warn('[admin-uc] Error detalle_oc_customer_uc:', error.message);
+    const esNoAutorizado = /no autorizado/i.test(error.message || '');
+    cont.innerHTML = esNoAutorizado
+      ? '<div class="msg msg-error">No tienes permiso para ver la sección OC / Customer.</div>'
+      : '<div class="msg msg-error">Error al cargar datos de OC: ' + escapeHtml(error.message) + '</div>';
+    return;
+  }
+
+  const oc = (data && data[0]) || null;
+  renderOcContenido(oc, sol.estado);
+}
+
+function renderOcContenido(oc, estado) {
+  const cont = document.getElementById('ocContenido');
+  const puedeAvanzarCustomer = (currentRole === 'admin' || currentRole === 'super_admin');
+
+  if (estado === 'Stock confirmado' || estado === 'Stock parcial') {
+    if (!ultimoCalculoPrecio) {
+      cont.innerHTML = '<div class="msg msg-error">Primero calcula el precio neto OC antes de registrar la OC.</div>';
+      return;
+    }
+    cont.innerHTML =
+      '<div class="oc-hint">Total neto OC (del último cálculo): <strong>$' + formatMonto(ultimoCalculoPrecio.totalNetoOC) + '</strong></div>' +
+      '<input type="text" class="oc-input" id="ocNumeroInput" placeholder="Número de OC">' +
+      '<textarea class="comentario" id="ocObservacionInput" placeholder="Observación (opcional)"></textarea>';
+    const btn = document.createElement('button');
+    btn.className = 'action-btn btn-calcular';
+    btn.textContent = 'Registrar OC';
+    btn.addEventListener('click', ejecutarRegistrarOc);
+    cont.appendChild(btn);
+    return;
+  }
+
+  // Para el resto de los estados, primero el bloque de solo lectura con lo ya registrado.
+  let html = '<div class="oc-readonly">';
+  html += '<div><span class="oc-label">Número OC:</span>' + escapeHtml(oc && oc.oc_numero || '—') + '</div>';
+  if (oc && oc.oc_observacion) {
+    html += '<div><span class="oc-label">Observación:</span>' + escapeHtml(oc.oc_observacion) + '</div>';
+  }
+  html += '<div><span class="oc-label">Total OC:</span>$' + formatMonto(oc && oc.total_oc) + '</div>';
+  html += '<div><span class="oc-label">Registrada por:</span>' + escapeHtml((oc && oc.oc_registrada_por) || '—') + ' el ' + formatFecha(oc && oc.oc_fecha) + '</div>';
+
+  if (estado === 'Enviado a Customer' || estado === 'Pedido confirmado') {
+    html += '<div><span class="oc-label">Enviado a Customer:</span>' + escapeHtml((oc && oc.ingreso_marcado_por) || '—') + ' el ' + formatFecha(oc && oc.ingreso_fecha) + '</div>';
+  }
+  if (estado === 'Pedido confirmado') {
+    html += '<div><span class="oc-label">Confirmación Customer:</span>' + escapeHtml((oc && oc.confirmacion_por) || '—') + ' el ' + formatFecha(oc && oc.confirmacion_fecha) + '</div>';
+  }
+  html += '</div>';
+  cont.innerHTML = html;
+
+  if (estado === 'OC registrada') {
+    if (puedeAvanzarCustomer) {
+      const btn = document.createElement('button');
+      btn.className = 'action-btn btn-confirmado';
+      btn.textContent = 'Marcar enviado a Customer';
+      btn.style.marginTop = '10px';
+      btn.addEventListener('click', ejecutarMarcarEnviadoCustomer);
+      cont.appendChild(btn);
+    } else {
+      cont.insertAdjacentHTML('beforeend', '<div class="oc-hint" style="margin-top:10px">Solo Carla (admin) o super admin pueden marcar el envío a Customer.</div>');
+    }
+  }
+
+  if (estado === 'Enviado a Customer') {
+    if (puedeAvanzarCustomer) {
+      const textarea = document.createElement('textarea');
+      textarea.className = 'comentario';
+      textarea.id = 'ocComentarioCustomerInput';
+      textarea.placeholder = 'Comentario opcional';
+      textarea.style.marginTop = '10px';
+      cont.appendChild(textarea);
+      const btn = document.createElement('button');
+      btn.className = 'action-btn btn-confirmado';
+      btn.textContent = 'Marcar pedido confirmado';
+      btn.addEventListener('click', ejecutarMarcarConfirmadoCustomer);
+      cont.appendChild(btn);
+    } else {
+      cont.insertAdjacentHTML('beforeend', '<div class="oc-hint" style="margin-top:10px">Solo Carla (admin) o super admin pueden confirmar el ingreso con Customer.</div>');
+    }
+  }
+}
+
+async function ejecutarRegistrarOc() {
+  if (!solicitudSeleccionada || !ultimoCalculoPrecio) return;
+  const numero = document.getElementById('ocNumeroInput').value.trim();
+  const observacion = document.getElementById('ocObservacionInput').value.trim() || null;
+  const msgDiv = document.getElementById('accionMsg');
+  msgDiv.innerHTML = '';
+
+  if (!numero) {
+    msgDiv.innerHTML = '<div class="msg msg-error">El número de OC es obligatorio.</div>';
+    return;
+  }
+
+  const { data, error } = await sb.rpc('registrar_oc_uc', {
+    p_id: solicitudSeleccionada.id,
+    p_oc_numero: numero,
+    p_oc_observacion: observacion,
+    p_total_oc: ultimoCalculoPrecio.totalNetoOC
+  });
+
+  if (error) {
+    console.warn('[admin-uc] Error registrar_oc_uc:', error.message);
+    msgDiv.innerHTML = '<div class="msg msg-error">' + escapeHtml(error.message) + '</div>';
+    return;
+  }
+
+  msgDiv.innerHTML = '<div class="msg msg-ok">OC registrada correctamente.</div>';
+  await refrescarTrasAccionOc();
+}
+
+async function ejecutarMarcarEnviadoCustomer() {
+  if (!solicitudSeleccionada) return;
+  const msgDiv = document.getElementById('accionMsg');
+  msgDiv.innerHTML = '';
+
+  const { data, error } = await sb.rpc('marcar_enviado_customer_uc', {
+    p_id: solicitudSeleccionada.id
+  });
+
+  if (error) {
+    console.warn('[admin-uc] Error marcar_enviado_customer_uc:', error.message);
+    msgDiv.innerHTML = '<div class="msg msg-error">' + escapeHtml(error.message) + '</div>';
+    return;
+  }
+
+  msgDiv.innerHTML = '<div class="msg msg-ok">Marcado como enviado a Customer.</div>';
+  await refrescarTrasAccionOc();
+}
+
+async function ejecutarMarcarConfirmadoCustomer() {
+  if (!solicitudSeleccionada) return;
+  const comentarioEl = document.getElementById('ocComentarioCustomerInput');
+  const comentario = (comentarioEl && comentarioEl.value.trim()) || null;
+  const msgDiv = document.getElementById('accionMsg');
+  msgDiv.innerHTML = '';
+
+  const { data, error } = await sb.rpc('marcar_confirmado_customer_uc', {
+    p_id: solicitudSeleccionada.id,
+    p_comentario: comentario
+  });
+
+  if (error) {
+    console.warn('[admin-uc] Error marcar_confirmado_customer_uc:', error.message);
+    msgDiv.innerHTML = '<div class="msg msg-error">' + escapeHtml(error.message) + '</div>';
+    return;
+  }
+
+  msgDiv.innerHTML = '<div class="msg msg-ok">Pedido marcado como confirmado por Customer.</div>';
+  await refrescarTrasAccionOc();
+}
+
+// Refresco comun tras cualquier accion de OC/Customer: detalle + datos OC + listado.
+// El mensaje de exito ya quedo escrito en accionMsg antes de llamar esta funcion;
+// seleccionarSolicitud limpia accionMsg, asi que se guarda y se restaura.
+async function refrescarTrasAccionOc() {
+  const msgDiv = document.getElementById('accionMsg');
+  const msgPrevio = msgDiv.innerHTML;
+  await cargarListado();
+  const tr = document.querySelector('#tbodySolicitudes tr[data-id="' + solicitudSeleccionada.id + '"]');
+  if (tr) await seleccionarSolicitud(solicitudSeleccionada.id, tr);
+  msgDiv.innerHTML = msgPrevio;
 }
 
 // ============================================================
