@@ -1,0 +1,610 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>UC - Solicitudes Institucionales</title>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>
+  * { box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    background: #f4f5f7;
+    margin: 0;
+    color: #1a1a1a;
+  }
+  header {
+    background: #003DA5;
+    color: #fff;
+    padding: 16px 24px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+  header h1 { font-size: 18px; margin: 0; font-weight: 600; }
+  header .meta { font-size: 13px; opacity: 0.9; }
+  #btnLogout {
+    background: rgba(255,255,255,0.15);
+    color: #fff;
+    border: none;
+    padding: 6px 14px;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 13px;
+  }
+  main { max-width: 1100px; margin: 24px auto; padding: 0 16px; }
+
+  /* Login */
+  #loginBox {
+    max-width: 360px;
+    margin: 80px auto;
+    background: #fff;
+    padding: 32px;
+    border-radius: 10px;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.1);
+  }
+  #loginBox h2 { margin-top: 0; font-size: 18px; }
+  #loginBox input {
+    width: 100%;
+    padding: 10px;
+    margin-bottom: 12px;
+    border: 1px solid #ccc;
+    border-radius: 6px;
+    font-size: 14px;
+  }
+  #loginBox button {
+    width: 100%;
+    padding: 10px;
+    background: #003DA5;
+    color: #fff;
+    border: none;
+    border-radius: 6px;
+    font-size: 14px;
+    cursor: pointer;
+  }
+  #loginError { color: #b3261e; font-size: 13px; margin-top: 8px; min-height: 16px; }
+
+  /* Layout */
+  .grid { display: grid; grid-template-columns: 380px 1fr; gap: 20px; align-items: start; }
+  .card {
+    background: #fff;
+    border-radius: 10px;
+    box-shadow: 0 1px 4px rgba(0,0,0,0.08);
+    padding: 16px;
+  }
+  .card h3 { margin-top: 0; font-size: 15px; color: #444; }
+
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th, td { text-align: left; padding: 8px 6px; border-bottom: 1px solid #eee; }
+  tr.row-clickable { cursor: pointer; }
+  tr.row-clickable:hover { background: #f7f9fc; }
+  tr.row-selected { background: #eaf0fb; }
+
+  .badge { padding: 3px 8px; border-radius: 12px; font-size: 11px; font-weight: 600; }
+  .badge-enviada { background: #fff3cd; color: #856404; }
+  .badge-confirmado { background: #d4edda; color: #155724; }
+  .badge-parcial { background: #ffe5b4; color: #7a4a00; }
+  .badge-sinstock { background: #f8d7da; color: #721c24; }
+
+  .empty-state { color: #888; font-size: 13px; padding: 20px 0; text-align: center; }
+
+  .detail-section { margin-bottom: 18px; }
+  .detail-section h4 { font-size: 13px; color: #666; margin-bottom: 6px; text-transform: uppercase; letter-spacing: 0.03em; }
+  .items-table td, .items-table th { font-size: 13px; }
+
+  .actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; }
+  button.action-btn {
+    padding: 8px 14px;
+    border: none;
+    border-radius: 6px;
+    font-size: 13px;
+    cursor: pointer;
+    color: #fff;
+  }
+  .btn-confirmado { background: #2e7d32; }
+  .btn-parcial { background: #b8860b; }
+  .btn-sinstock { background: #c62828; }
+  .btn-calcular { background: #003DA5; }
+  .btn-refresh { background: #666; }
+  button.action-btn:disabled { background: #bbb; cursor: not-allowed; }
+
+  textarea.comentario {
+    width: 100%;
+    min-height: 50px;
+    margin-top: 8px;
+    padding: 8px;
+    border: 1px solid #ccc;
+    border-radius: 6px;
+    font-size: 13px;
+    font-family: inherit;
+  }
+
+  .historial-item { font-size: 12px; padding: 6px 0; border-bottom: 1px dashed #eee; }
+  .historial-item .actor { font-weight: 600; }
+  .historial-item .fecha { color: #999; }
+
+  .price-table { margin-top: 10px; }
+  .price-total { font-weight: 700; font-size: 15px; margin-top: 10px; text-align: right; }
+
+  .msg { font-size: 13px; margin-top: 10px; padding: 8px 10px; border-radius: 6px; }
+  .msg-ok { background: #d4edda; color: #155724; }
+  .msg-error { background: #f8d7da; color: #721c24; }
+
+  .rol-tag {
+    display: inline-block;
+    background: #eef2fb;
+    color: #003DA5;
+    font-size: 11px;
+    font-weight: 600;
+    padding: 2px 8px;
+    border-radius: 10px;
+    margin-left: 8px;
+  }
+
+  #accessDenied { max-width: 420px; margin: 100px auto; text-align: center; color: #666; }
+</style>
+</head>
+<body>
+
+<!-- ============ LOGIN ============ -->
+<div id="loginBox">
+  <h2>UC - Solicitudes Institucionales</h2>
+  <input type="email" id="loginEmail" placeholder="Correo" autocomplete="username">
+  <input type="password" id="loginPass" placeholder="Contraseña" autocomplete="current-password">
+  <button id="btnLogin">Ingresar</button>
+  <div id="loginError"></div>
+</div>
+
+<!-- ============ SIN ACCESO ============ -->
+<div id="accessDenied" style="display:none">
+  <h2>Sin acceso</h2>
+  <p>Tu cuenta no tiene permisos asignados para la institución UC.</p>
+  <p>Contacta a Daniel Jordán para que revise tu acceso.</p>
+  <button id="btnLogoutDenied" class="btn-refresh action-btn">Cerrar sesión</button>
+</div>
+
+<!-- ============ APP ============ -->
+<div id="app" style="display:none">
+  <header>
+    <div>
+      <h1>UC · Solicitudes Institucionales</h1>
+      <div class="meta" id="userMeta"></div>
+    </div>
+    <button id="btnLogout">Cerrar sesión</button>
+  </header>
+
+  <main>
+    <div class="grid">
+      <!-- LISTADO -->
+      <div class="card">
+        <h3>Solicitudes <button class="action-btn btn-refresh" id="btnRefreshList" style="float:right; padding:4px 10px;">↻</button></h3>
+        <table id="tablaSolicitudes">
+          <thead>
+            <tr><th>Número</th><th>Alumno</th><th>Estado</th></tr>
+          </thead>
+          <tbody id="tbodySolicitudes"></tbody>
+        </table>
+        <div id="listaVacia" class="empty-state" style="display:none">No hay solicitudes UC todavía.</div>
+      </div>
+
+      <!-- DETALLE -->
+      <div class="card" id="detalleCard" style="display:none">
+        <h3 id="detalleTitulo">Detalle</h3>
+
+        <div class="detail-section">
+          <h4>Alumno</h4>
+          <div id="detalleAlumno"></div>
+        </div>
+
+        <div class="detail-section">
+          <h4>Productos solicitados</h4>
+          <table class="items-table" id="tablaItems">
+            <thead><tr><th>Código</th><th>Descripción</th><th>Cantidad</th></tr></thead>
+            <tbody id="tbodyItems"></tbody>
+          </table>
+        </div>
+
+        <div class="detail-section" id="seccionPrecio" style="display:none">
+          <h4>Precio (solo adquisiciones / super admin)</h4>
+          <button class="action-btn btn-calcular" id="btnCalcularPrecio">Calcular precio</button>
+          <div id="resultadoPrecio"></div>
+        </div>
+
+        <div class="detail-section" id="seccionStock" style="display:none">
+          <h4>Validación de stock (solo stock / admin / super admin)</h4>
+          <div id="stockInfo"></div>
+          <div id="stockActions" class="actions"></div>
+          <textarea class="comentario" id="stockComentario" placeholder="Comentario opcional"></textarea>
+        </div>
+
+        <div id="accionMsg"></div>
+
+        <div class="detail-section">
+          <h4>Historial</h4>
+          <div id="historialList"></div>
+        </div>
+      </div>
+    </div>
+  </main>
+</div>
+
+<script>
+// ============================================================
+// Configuración Supabase (mismas credenciales publicas que admin.html)
+// ============================================================
+const SUPABASE_URL = 'https://gzimllusbxjorbsbtsse.supabase.co';
+const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imd6aW1sbHVzYnhqb3Jic2J0c3NlIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE5NDQ4NDcsImV4cCI6MjA5NzUyMDg0N30.DFq-_PY10hyr2QmMUXk-v8VW2LKYz3bAW37VCutwmzY';
+const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+// ============================================================
+// Catálogo UC con precios de lista.
+// IMPORTANTE: este arreglo SOLO existe en este archivo (admin-uc.html),
+// que requiere login. NUNCA debe copiarse a solicitud-uc.html ni a
+// estado-uc.html cuando esas pantallas se construyan.
+// PLACEHOLDER: usa el mismo set de códigos/precios que HOSMIL como base
+// de partida. Daniel debe confirmar/ajustar precios reales de UC antes
+// de dar por buena esta pantalla para uso productivo.
+// ============================================================
+const PRODUCTS = [
+  {"codigo":"106.268","descripcion":"Cilindro Protec. Mini Pilar Conico Neo,Ti","precioLista":18000},
+  {"codigo":"106.278","descripcion":"Cilindro Proteccion Mini Pilar Con Ancho","precioLista":18000},
+  {"codigo":"105.137","descripcion":"Conexion Protesica Hex, StSt","precioLista":22000},
+  {"codigo":"101.092","descripcion":"Analogo reposic. hibr. Mini Pilar,Ti 4.1","precioLista":21000},
+  {"codigo":"118.382","descripcion":"CIL TITA MINI PIL CONI 4.1 AJUS PAS. NEO","precioLista":22000}
+  // TODO: completar con el catálogo UC real antes de uso productivo.
+];
+
+let currentUser = null;
+let currentRole = null; // 'super_admin' | 'adquisiciones' | 'stock' | 'admin'
+let solicitudSeleccionada = null;
+
+// ============================================================
+// LOGIN
+// ============================================================
+document.getElementById('btnLogin').addEventListener('click', async () => {
+  const email = document.getElementById('loginEmail').value.trim();
+  const pass = document.getElementById('loginPass').value;
+  const errBox = document.getElementById('loginError');
+  errBox.textContent = '';
+
+  if (!email || !pass) {
+    errBox.textContent = 'Ingresa correo y contraseña.';
+    return;
+  }
+
+  const { data, error } = await sb.auth.signInWithPassword({ email, password: pass });
+  if (error) {
+    errBox.textContent = 'Credenciales inválidas o cuenta sin acceso.';
+    console.warn('[admin-uc] Error login:', error.message);
+    return;
+  }
+  await initSession(data.user);
+});
+
+document.getElementById('btnLogout').addEventListener('click', logout);
+document.getElementById('btnLogoutDenied').addEventListener('click', logout);
+
+async function logout() {
+  await sb.auth.signOut();
+  location.reload();
+}
+
+// ============================================================
+// DETERMINAR ROL (sin RPC nueva - usa las policies de auto-lectura
+// ya existentes en admin_perfiles y admin_instituciones_permitidas)
+// ============================================================
+async function resolverRol(userId) {
+  const { data: perfil, error: errPerfil } = await sb
+    .from('admin_perfiles')
+    .select('es_super_admin, nombre')
+    .eq('user_id', userId)
+    .maybeSingle();
+
+  if (errPerfil) {
+    console.warn('[admin-uc] Error leyendo admin_perfiles:', errPerfil.message);
+  }
+
+  if (perfil && perfil.es_super_admin) {
+    return { rol: 'super_admin', nombre: perfil.nombre };
+  }
+
+  const { data: permiso, error: errPermiso } = await sb
+    .from('admin_instituciones_permitidas')
+    .select('rol')
+    .eq('user_id', userId)
+    .eq('institucion_codigo', 'UC')
+    .maybeSingle();
+
+  if (errPermiso) {
+    console.warn('[admin-uc] Error leyendo admin_instituciones_permitidas:', errPermiso.message);
+  }
+
+  if (permiso && permiso.rol) {
+    return { rol: permiso.rol, nombre: (perfil && perfil.nombre) || null };
+  }
+
+  return { rol: null, nombre: (perfil && perfil.nombre) || null };
+}
+
+async function initSession(user) {
+  currentUser = user;
+  const info = await resolverRol(user.id);
+  currentRole = info.rol;
+
+  if (!currentRole) {
+    document.getElementById('loginBox').style.display = 'none';
+    document.getElementById('accessDenied').style.display = 'block';
+    return;
+  }
+
+  document.getElementById('loginBox').style.display = 'none';
+  document.getElementById('accessDenied').style.display = 'none';
+  document.getElementById('app').style.display = 'block';
+  document.getElementById('userMeta').textContent =
+    (info.nombre || user.email) + ' · rol: ' + currentRole;
+
+  await cargarListado();
+}
+
+// ============================================================
+// LISTADO
+// ============================================================
+document.getElementById('btnRefreshList').addEventListener('click', cargarListado);
+
+async function cargarListado() {
+  const { data, error } = await sb.rpc('listar_solicitudes_uc');
+  const tbody = document.getElementById('tbodySolicitudes');
+  const vacio = document.getElementById('listaVacia');
+  tbody.innerHTML = '';
+
+  if (error) {
+    console.warn('[admin-uc] Error listar_solicitudes_uc:', error.message);
+    tbody.innerHTML = '<tr><td colspan="3" class="empty-state">Error al cargar solicitudes.</td></tr>';
+    return;
+  }
+
+  if (!data || data.length === 0) {
+    vacio.style.display = 'block';
+    return;
+  }
+  vacio.style.display = 'none';
+
+  data.forEach(sol => {
+    const tr = document.createElement('tr');
+    tr.className = 'row-clickable';
+    tr.dataset.id = sol.id;
+    tr.innerHTML =
+      '<td>' + escapeHtml(sol.numero) + '</td>' +
+      '<td>' + escapeHtml(sol.alumno_nombre) + '</td>' +
+      '<td>' + badgeEstado(sol.estado) + '</td>';
+    tr.addEventListener('click', () => seleccionarSolicitud(sol.id, tr));
+    tbody.appendChild(tr);
+  });
+}
+
+function badgeEstado(estado) {
+  const map = {
+    'Solicitud enviada': 'badge-enviada',
+    'Stock confirmado': 'badge-confirmado',
+    'Stock parcial': 'badge-parcial',
+    'Sin stock': 'badge-sinstock'
+  };
+  const cls = map[estado] || 'badge-enviada';
+  return '<span class="badge ' + cls + '">' + escapeHtml(estado) + '</span>';
+}
+
+// ============================================================
+// DETALLE
+// ============================================================
+async function seleccionarSolicitud(id, trElement) {
+  document.querySelectorAll('#tbodySolicitudes tr').forEach(tr => tr.classList.remove('row-selected'));
+  trElement.classList.add('row-selected');
+
+  const { data, error } = await sb.rpc('detalle_solicitud_uc', { p_id: id });
+  document.getElementById('accionMsg').innerHTML = '';
+
+  if (error || !data || data.length === 0) {
+    console.warn('[admin-uc] Error detalle_solicitud_uc:', error && error.message);
+    return;
+  }
+
+  const sol = data[0];
+  solicitudSeleccionada = { id, ...sol };
+
+  document.getElementById('detalleCard').style.display = 'block';
+  document.getElementById('detalleTitulo').textContent = sol.numero + ' — ' + badgeEstadoTexto(sol.estado);
+  document.getElementById('detalleTitulo').innerHTML = escapeHtml(sol.numero) + ' ' + badgeEstado(sol.estado);
+
+  document.getElementById('detalleAlumno').innerHTML =
+    '<div>' + escapeHtml(sol.alumno_nombre) + (sol.alumno_curso ? ' · ' + escapeHtml(sol.alumno_curso) : '') + '</div>' +
+    '<div style="color:#888">' + escapeHtml(sol.alumno_email || '') + '</div>' +
+    (sol.docente ? '<div style="color:#888">Docente: ' + escapeHtml(sol.docente) + '</div>' : '') +
+    (sol.fecha_requerida ? '<div style="color:#888">Fecha requerida: ' + escapeHtml(sol.fecha_requerida) + '</div>' : '') +
+    (sol.observaciones ? '<div style="margin-top:6px">' + escapeHtml(sol.observaciones) + '</div>' : '');
+
+  const tbodyItems = document.getElementById('tbodyItems');
+  tbodyItems.innerHTML = '';
+  (sol.items || []).forEach(item => {
+    const tr = document.createElement('tr');
+    tr.innerHTML =
+      '<td>' + escapeHtml(item.codigo) + '</td>' +
+      '<td>' + escapeHtml(item.descripcion || '') + '</td>' +
+      '<td>' + escapeHtml(String(item.cantidad)) + '</td>';
+    tbodyItems.appendChild(tr);
+  });
+
+  document.getElementById('resultadoPrecio').innerHTML = '';
+
+  renderSeccionPrecio(sol);
+  renderSeccionStock(sol);
+  renderHistorial(sol.historial || []);
+}
+
+function badgeEstadoTexto(estado) { return estado; }
+
+function renderHistorial(historial) {
+  const cont = document.getElementById('historialList');
+  cont.innerHTML = '';
+  if (!historial.length) {
+    cont.innerHTML = '<div class="empty-state">Sin eventos.</div>';
+    return;
+  }
+  historial.forEach(ev => {
+    const div = document.createElement('div');
+    div.className = 'historial-item';
+    div.innerHTML =
+      '<span class="actor">' + escapeHtml(ev.actor || '') + '</span> — ' +
+      escapeHtml(ev.evento || '') +
+      (ev.comentario ? ' (' + escapeHtml(ev.comentario) + ')' : '') +
+      ' <span class="fecha">' + formatFecha(ev.fecha) + '</span>';
+    cont.appendChild(div);
+  });
+}
+
+// ============================================================
+// PRECIO (solo adquisiciones / super_admin)
+// ============================================================
+function renderSeccionPrecio(sol) {
+  const seccion = document.getElementById('seccionPrecio');
+  const puedeVerPrecio = (currentRole === 'adquisiciones' || currentRole === 'super_admin');
+  seccion.style.display = puedeVerPrecio ? 'block' : 'none';
+}
+
+document.getElementById('btnCalcularPrecio').addEventListener('click', async () => {
+  if (!solicitudSeleccionada) return;
+  const resultadoDiv = document.getElementById('resultadoPrecio');
+  resultadoDiv.innerHTML = '<div class="empty-state">Calculando...</div>';
+
+  const items = solicitudSeleccionada.items || [];
+  const precios = [];
+  const faltantes = [];
+
+  items.forEach(item => {
+    const prod = PRODUCTS.find(p => p.codigo === item.codigo);
+    if (prod) {
+      precios.push({ codigo: item.codigo, precioLista: prod.precioLista });
+    } else {
+      faltantes.push(item.codigo);
+    }
+  });
+
+  if (faltantes.length > 0) {
+    resultadoDiv.innerHTML =
+      '<div class="msg msg-error">Falta precio de lista en el catálogo local para: ' +
+      faltantes.map(escapeHtml).join(', ') + '. Actualiza el arreglo PRODUCTS antes de calcular.</div>';
+    return;
+  }
+
+  const { data, error } = await sb.rpc('calcular_precio_solicitud_uc', {
+    p_id: solicitudSeleccionada.id,
+    p_precios_lista: precios
+  });
+
+  if (error) {
+    console.warn('[admin-uc] Error calcular_precio_solicitud_uc:', error.message);
+    resultadoDiv.innerHTML = '<div class="msg msg-error">' + escapeHtml(error.message) + '</div>';
+    return;
+  }
+
+  let html = '<table class="price-table items-table"><thead><tr><th>Código</th><th>Cant.</th><th>P. unitario final</th><th>Subtotal</th></tr></thead><tbody>';
+  (data.items || []).forEach(li => {
+    html += '<tr><td>' + escapeHtml(li.codigo) + '</td><td>' + escapeHtml(String(li.cantidad)) + '</td><td>$' +
+      formatMonto(li.precioUnitarioFinal) + '</td><td>$' + formatMonto(li.subtotal) + '</td></tr>';
+  });
+  html += '</tbody></table>';
+  html += '<div class="price-total">Total: $' + formatMonto(data.total) + '</div>';
+  resultadoDiv.innerHTML = html;
+});
+
+// ============================================================
+// STOCK (solo stock / admin / super_admin)
+// ============================================================
+function renderSeccionStock(sol) {
+  const seccion = document.getElementById('seccionStock');
+  const puedeValidarStock = (currentRole === 'stock' || currentRole === 'admin' || currentRole === 'super_admin');
+  seccion.style.display = puedeValidarStock ? 'block' : 'none';
+  if (!puedeValidarStock) return;
+
+  const infoDiv = document.getElementById('stockInfo');
+  infoDiv.innerHTML = sol.stock_estado
+    ? '<div>Ya validado: <strong>' + escapeHtml(sol.stock_estado) + '</strong> por ' + escapeHtml(sol.stock_validado_por || '') + '</div>'
+    : '<div style="color:#888">Sin validar todavía.</div>';
+
+  const actionsDiv = document.getElementById('stockActions');
+  const yaValidada = sol.estado !== 'Solicitud enviada';
+  actionsDiv.innerHTML = '';
+
+  const botones = [
+    { estado: 'confirmado', label: 'Confirmar stock', cls: 'btn-confirmado' },
+    { estado: 'parcial', label: 'Stock parcial', cls: 'btn-parcial' },
+    { estado: 'sin_stock', label: 'Sin stock', cls: 'btn-sinstock' }
+  ];
+
+  botones.forEach(b => {
+    const btn = document.createElement('button');
+    btn.className = 'action-btn ' + b.cls;
+    btn.textContent = b.label;
+    btn.disabled = yaValidada;
+    btn.addEventListener('click', () => ejecutarValidacionStock(b.estado));
+    actionsDiv.appendChild(btn);
+  });
+}
+
+async function ejecutarValidacionStock(estado) {
+  if (!solicitudSeleccionada) return;
+  const comentario = document.getElementById('stockComentario').value.trim() || null;
+  const msgDiv = document.getElementById('accionMsg');
+  msgDiv.innerHTML = '';
+
+  const { data, error } = await sb.rpc('validar_stock_uc', {
+    p_id: solicitudSeleccionada.id,
+    p_stock_estado: estado,
+    p_stock_comentario: comentario
+  });
+
+  if (error) {
+    console.warn('[admin-uc] Error validar_stock_uc:', error.message);
+    msgDiv.innerHTML = '<div class="msg msg-error">' + escapeHtml(error.message) + '</div>';
+    return;
+  }
+
+  msgDiv.innerHTML = '<div class="msg msg-ok">Stock actualizado correctamente.</div>';
+  document.getElementById('stockComentario').value = '';
+
+  await cargarListado();
+  const tr = document.querySelector('#tbodySolicitudes tr[data-id="' + solicitudSeleccionada.id + '"]');
+  if (tr) await seleccionarSolicitud(solicitudSeleccionada.id, tr);
+}
+
+// ============================================================
+// Utilidades
+// ============================================================
+function escapeHtml(str) {
+  if (str === null || str === undefined) return '';
+  return String(str)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#039;');
+}
+
+function formatMonto(n) {
+  return Number(n).toLocaleString('es-CL');
+}
+
+function formatFecha(iso) {
+  if (!iso) return '';
+  const d = new Date(iso);
+  return d.toLocaleString('es-CL');
+}
+
+// ============================================================
+// Sesión existente al cargar la página
+// ============================================================
+(async () => {
+  const { data } = await sb.auth.getSession();
+  if (data && data.session && data.session.user) {
+    await initSession(data.session.user);
+  }
+})();
+</script>
+</body>
+</html>
