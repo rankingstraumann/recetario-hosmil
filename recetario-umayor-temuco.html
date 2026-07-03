@@ -1,0 +1,963 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<link rel="manifest" href="/manifest-umayor.json">
+<meta name="theme-color" content="#991b1b">
+<link rel="icon" href="/favicon-32.png" sizes="32x32">
+<link rel="apple-touch-icon" href="/icon-180.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="Recetario U. Mayor Temuco">
+<meta name="mobile-web-app-capable" content="yes">
+<title>Recetario Digital — U. Mayor Temuco | Straumann Group Chile</title>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>
+  :root {
+    --red: #991b1b; --red-dark: #7f1d1d; --green: #047857; --ink: #18181b; --muted: #71717a;
+    --border: #e4e4e7; --bg: #f8fafc; --amber-bg: #fffbeb; --amber-border: #fde68a;
+    --emerald-bg: #ecfdf5; --emerald-text: #047857;
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html { overscroll-behavior-y: contain; }
+  body { margin:0; font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif; background:var(--bg); color:var(--ink); }
+  a { color: inherit; }
+  header.topbar { background:#fff; border-bottom:1px solid var(--border); padding:calc(10px + env(safe-area-inset-top)) 20px 10px; display:flex; align-items:center; justify-content:space-between; position:sticky; top:0; z-index:20; }
+  .brand-name { color:var(--green); font-weight:800; font-size:18px; letter-spacing:-0.02em; line-height:1; }
+  .brand-sub { color:#a1a1aa; font-size:10px; letter-spacing:0.2em; font-weight:600; margin-top:2px; }
+  .badge-inst { display:flex; align-items:center; gap:6px; background:#18181b; color:#fff; font-size:12px; font-weight:600; padding:5px 10px; border-radius:6px; }
+  .topbar-right { font-size:12px; color:#a1a1aa; }
+
+  main.layout { max-width:1180px; margin:0 auto; padding:20px 16px 100px; display:grid; grid-template-columns: 1fr; gap:20px; }
+  @media (min-width: 1024px) { main.layout { grid-template-columns: 1fr 360px; } }
+
+  .card { background:#fff; border:1px solid var(--border); border-radius:14px; padding:16px; margin-bottom:16px; }
+  .card h2 { font-size:14px; font-weight:600; color:#3f3f46; margin:0 0 12px; display:flex; align-items:center; gap:6px; }
+  .form-grid { display:grid; grid-template-columns: 1fr; gap:10px; }
+  @media (min-width:640px) { .form-grid { grid-template-columns: 1fr 1fr; } }
+  .form-grid .span2 { grid-column: 1 / -1; }
+  input[type=text], input[type=email], select, .ta {
+    width:100%; border:1px solid #d4d4d8; border-radius:8px; padding:9px 11px; font-size:16px; font-family:inherit; color:var(--ink);
+  }
+  input:focus, select:focus { outline:none; border-color:var(--red); box-shadow:0 0 0 3px rgba(153,27,27,0.12); }
+  .wsp-field { display:flex; border:1px solid #d4d4d8; border-radius:8px; overflow:hidden; }
+  .wsp-field:focus-within { border-color:var(--red); box-shadow:0 0 0 3px rgba(153,27,27,0.12); }
+  .wsp-prefix { background:#fafafa; color:#71717a; font-size:14px; padding:9px 11px; border-right:1px solid #d4d4d8; }
+  .wsp-field input { border:none; flex:1; min-width:0; box-shadow:none !important; }
+
+  .search-row { display:flex; gap:8px; margin-bottom:14px; flex-wrap:wrap; }
+  .search-row input { flex:1; min-width:200px; }
+  .search-row select { width:auto; min-width:160px; }
+
+  .marca-toggle { display:flex; gap:6px; margin-bottom:12px; background:#f4f4f5; border-radius:10px; padding:4px; }
+  .marca-btn { flex:1; border:none; background:none; padding:9px 12px; font-size:13px; font-weight:700; border-radius:8px; cursor:pointer; color:#71717a; }
+  .marca-btn.active { background:#fff; color:var(--red); box-shadow:0 1px 3px rgba(0,0,0,0.12); }
+  .marca-btn[data-marca="Straumann"].active { color:var(--green); }
+  .marca-btn[data-marca="BLT"].active { color:var(--green); }
+  .fam-straumann { color:var(--green) !important; }
+
+  .fam-title { font-size:11px; font-weight:700; letter-spacing:0.04em; color:#a1a1aa; text-transform:uppercase; margin:14px 0 8px; }
+  .fam-title:first-child { margin-top:0; }
+  .prod-row { display:flex; flex-direction:column; gap:8px; border:1px solid #f4f4f5; border-radius:10px; padding:10px 12px; margin-bottom:6px; }
+  @media (min-width:640px) { .prod-row { flex-direction:row; align-items:center; justify-content:space-between; } }
+  .prod-row:hover { border-color:#e4e4e7; background:#fafafa; }
+  .prod-code { font-family:ui-monospace,monospace; font-size:11px; color:#a1a1aa; }
+  .prod-desc { font-size:14px; color:#27272a; margin-top:2px; }
+  .prod-price-row { display:flex; align-items:center; gap:8px; margin-top:4px; }
+  .prod-price-old { font-size:11px; color:#a1a1aa; text-decoration:line-through; }
+  .prod-price-new { font-size:14px; font-weight:600; color:var(--red); }
+  .btn-add { flex-shrink:0; display:flex; align-items:center; justify-content:center; gap:5px; background:#18181b; color:#fff; font-size:12px; font-weight:600; padding:8px 12px; border:none; border-radius:8px; cursor:pointer; width:100%; }
+  @media (min-width:640px) { .btn-add { width:auto; } }
+  .btn-add:hover { background:var(--red); }
+  .empty-msg { text-align:center; padding:36px 16px; color:#a1a1aa; font-size:14px; }
+
+  aside.cart-aside { align-self:start; }
+  @media (min-width:1024px) { aside.cart-aside { position:sticky; top:80px; } }
+  .cart-card { background:#fff; border:1px solid var(--border); border-radius:14px; overflow:hidden; }
+  .cart-head { padding:12px 16px; border-bottom:1px solid #f4f4f5; display:flex; justify-content:space-between; align-items:center; }
+  .cart-head h3 { font-size:14px; font-weight:600; margin:0; display:flex; align-items:center; gap:6px; }
+  .cart-clear { font-size:11px; color:#a1a1aa; background:none; border:none; cursor:pointer; }
+  .cart-items { max-height:38vh; overflow-y:auto; }
+  .cart-item { padding:10px 16px; border-bottom:1px solid #f4f4f5; }
+  .cart-item-top { display:flex; justify-content:space-between; gap:8px; }
+  .cart-item-code { font-family:ui-monospace,monospace; font-size:10px; color:#a1a1aa; }
+  .cart-item-desc { font-size:12px; color:#27272a; line-height:1.3; }
+  .cart-item-bottom { display:flex; justify-content:space-between; align-items:center; margin-top:6px; }
+  .qty-stepper { display:flex; align-items:center; gap:6px; background:#f4f4f5; border-radius:8px; padding:4px 6px; }
+  .qty-stepper button { border:none; background:none; cursor:pointer; color:#52525b; font-size:14px; width:18px; }
+  .qty-val { font-size:12px; font-weight:600; width:18px; text-align:center; }
+  .remove-btn { border:none; background:none; color:#d4d4d8; cursor:pointer; font-size:13px; }
+  .cart-foot { padding:14px 16px; border-top:1px solid #f4f4f5; background:#fafafa; }
+  .rule-summary { padding:10px 16px; background:#fffbeb; border-top:1px solid #fde68a; border-bottom:1px solid #fde68a; }
+  .rule-summary-title { font-size:11px; font-weight:700; color:#92400e; margin-bottom:4px; }
+  .rule-summary-line { font-size:11px; color:#78350f; display:flex; justify-content:space-between; gap:6px; padding:1px 0; }
+  .rule-badge { font-size:9px; font-weight:700; background:#fde68a; color:#78350f; border-radius:4px; padding:1px 4px; margin-left:4px; }
+  .cart-total-row { display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; }
+  .cart-total-label { font-size:13px; font-weight:600; color:#3f3f46; }
+  .cart-total-value { font-size:18px; font-weight:800; color:var(--red); }
+  .btn-primary { width:100%; background:var(--red); color:#fff; border:none; border-radius:8px; padding:11px; font-size:14px; font-weight:600; cursor:pointer; }
+  .btn-primary:hover { background:var(--red-dark); }
+  .btn-primary:disabled { opacity:0.6; cursor:default; }
+  .msg-error { display:flex; gap:6px; background:#fef2f2; color:#b91c1c; font-size:12px; border-radius:8px; padding:8px 10px; margin-bottom:10px; }
+  .privacy-box { background:#f4f4f5; border-radius:8px; padding:9px 10px; margin-bottom:10px; }
+  .privacy-box p { font-size:10.5px; color:#71717a; line-height:1.4; margin:0 0 7px; }
+  .privacy-box label { display:flex; align-items:flex-start; gap:7px; font-size:11px; color:#3f3f46; cursor:pointer; line-height:1.4; }
+  .privacy-box input[type=checkbox] { margin-top:2px; width:15px; height:15px; flex-shrink:0; accent-color: var(--red); }
+
+  .msg-success { display:flex; gap:6px; background:var(--emerald-bg); color:var(--emerald-text); font-size:12px; border-radius:8px; padding:8px 10px; margin-bottom:10px; }
+
+  .floating-cart-btn { display:none; position:fixed; left:16px; right:16px; bottom:calc(16px + env(safe-area-inset-bottom)); z-index:30; background:var(--red); color:#fff; border:none; border-radius:12px; padding:14px 16px; align-items:center; justify-content:space-between; font-size:14px; font-weight:600; box-shadow:0 8px 20px rgba(127,29,29,0.25); cursor:pointer; }
+  @media (min-width:1024px) { .floating-cart-btn { display:none !important; } }
+
+  /* Compartir view */
+  .compartir-wrap { max-width:560px; margin:0 auto; padding:32px 16px 60px; }
+  .ok-circle { width:48px; height:48px; border-radius:999px; background:var(--emerald-bg); display:flex; align-items:center; justify-content:center; margin:0 auto 12px; font-size:22px; }
+  .center-card { background:#fff; border:1px solid var(--border); border-radius:14px; padding:24px; text-align:center; margin-bottom:16px; }
+  .link-box { display:flex; align-items:center; gap:8px; background:#fafafa; border:1px solid var(--border); border-radius:8px; padding:8px 10px; text-align:left; margin-bottom:8px; }
+  .link-box span { font-size:12px; color:#52525b; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; flex:1; }
+  .btn-copy { flex-shrink:0; display:flex; align-items:center; gap:4px; font-size:12px; font-weight:600; padding:6px 10px; border-radius:8px; border:none; background:#18181b; color:#fff; cursor:pointer; }
+  .btn-copy.copied { background:#d1fae5; color:#047857; }
+  .send-buttons { display:flex; flex-direction:column; gap:8px; margin-top:4px; }
+  @media (min-width:480px) { .send-buttons { flex-direction:row; } }
+  .btn-outline { flex:1; display:flex; align-items:center; justify-content:center; gap:6px; background:#fff; border:1px solid #d4d4d8; color:#3f3f46; font-size:14px; font-weight:600; padding:11px; border-radius:8px; cursor:pointer; }
+  .btn-outline:hover { border-color:#047857; color:#047857; }
+  .btn-solid-red { flex:1; display:flex; align-items:center; justify-content:center; gap:6px; background:var(--red); color:#fff; border:none; font-size:14px; font-weight:600; padding:11px; border-radius:8px; cursor:pointer; }
+  .btn-solid-red:hover { background:var(--red-dark); }
+  .hint { font-size:11px; color:#a1a1aa; margin-top:8px; }
+  .link-back { display:flex; align-items:center; gap:6px; justify-content:center; font-size:13px; color:#71717a; background:none; border:none; cursor:pointer; margin:8px auto 0; }
+
+  .no-print-hide { }
+</style>
+</head>
+<body>
+
+<div id="view-recetario">
+  <header class="topbar">
+    <div style="display:flex;align-items:center;gap:12px;">
+      <div>
+        <div class="brand-name">STRAUMANN</div>
+        <div class="brand-sub">GROUP CHILE · BLC/BLX · NEODENT · BLT</div>
+      </div>
+      <div class="badge-inst">🎓 U. Mayor Temuco</div>
+    </div>
+    <div class="topbar-right">Recetario digital · Implantólogo<br><span style="font-size:10px;">by Daniel Jordán</span></div>
+  </header>
+
+  <main class="layout">
+    <section>
+      <div class="card">
+        <h2 style="display:flex;align-items:center;justify-content:space-between;"><span>📋 Datos de la cotización</span><button type="button" id="btn-limpiar-form" class="cart-clear">🧹 Limpiar</button></h2>
+        <div class="form-grid">
+          <input type="text" id="f-paciente" placeholder="Nombre del paciente">
+          <input type="text" id="f-rut" placeholder="RUT del paciente">
+          <input type="email" id="f-email" placeholder="Correo del paciente">
+          <div class="wsp-field">
+            <span class="wsp-prefix">+56 9</span>
+            <input type="text" id="f-wsp" placeholder="WhatsApp del paciente (8 dígitos)" inputmode="numeric">
+          </div>
+          <div id="doctor-field"></div>
+          <div class="span2">
+            <input type="text" id="f-direccion" placeholder="Dirección del paciente (para facturación)" style="width:100%;">
+            <p style="font-size:11px;color:#a1a1aa;margin:4px 0 0;">📦 El despacho siempre es a U. Mayor Temuco — dirección pendiente de confirmar — esta dirección es solo para la factura.</p>
+          </div>
+          <input type="text" id="f-obs" class="span2" placeholder="Observaciones (opcional)">
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>Recetario digital</h2>
+        <div class="marca-toggle" id="marca-toggle">
+          <button type="button" class="marca-btn" data-marca="Straumann">Straumann BLC/BLX</button>
+          <button type="button" class="marca-btn" data-marca="Neodent">Neodent</button>
+          <button type="button" class="marca-btn" data-marca="BLT">Straumann BLT</button>
+        </div>
+        <div class="search-row">
+          <input type="text" id="f-search" placeholder="Buscar por código o descripción (ej: 140.943, Ø 4.0 x 10)">
+          <select id="f-familia"></select>
+        </div>
+        <div id="product-list" style="max-height:60vh; overflow-y:auto; padding-right:4px;"></div>
+      </div>
+    </section>
+
+    <aside class="cart-aside" id="cotizacion-cart">
+      <div class="cart-card">
+        <div class="cart-head">
+          <h3>🧾 Cotización en curso</h3>
+          <button class="cart-clear" id="btn-vaciar">Vaciar</button>
+        </div>
+        <div class="cart-items" id="cart-items"></div>
+        <div id="cart-rule-summary"></div>
+        <div class="cart-foot">
+          <div id="cart-msgs"></div>
+          <div class="cart-total-row">
+            <span class="cart-total-label" id="cart-count">0 producto(s)</span>
+          </div>
+          <div class="cart-total-row">
+            <span class="cart-total-label">Total (IVA y dscto. incl.)</span>
+            <span class="cart-total-value" id="cart-total">$0</span>
+          </div>
+          <div class="privacy-box">
+            <p>🔒 Los datos del paciente se usan solo para generar y gestionar esta cotización institucional, coordinar el pago y hacer seguimiento de la entrega. Tratados por Manohay Chile SpA (Straumann Group Chile) y almacenados de forma segura.</p>
+            <label><input type="checkbox" id="f-consentimiento"><span>Confirmo que cuento con autorización del paciente para ingresar sus datos y generar esta cotización.</span></label>
+          </div>
+          <button class="btn-primary" id="btn-generar">Generar cotización</button>
+        </div>
+      </div>
+    </aside>
+  </main>
+
+  <button class="floating-cart-btn" id="floating-btn">
+    <span>🧾 Ver cotización (<span id="floating-count">0</span>)</span>
+    <span id="floating-total">$0 →</span>
+  </button>
+</div>
+
+<div id="view-compartir" style="display:none;"></div>
+
+<script>
+const SUPABASE_URL = 'https://gzimllusbxjorbsbtsse.supabase.co';
+const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imd6aW1sbHVzYnhqb3Jic2J0c3NlIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE5NDQ4NDcsImV4cCI6MjA5NzUyMDg0N30.DFq-_PY10hyr2QmMUXk-v8VW2LKYz3bAW37VCutwmzY';
+const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+const PRODUCTS = [{"codigo":"035.9008S","descripcion":"Implante Straumann BLC Roxolid SLActive, ∅3,3 mm, longitud 8 mm","familia":"STRAUMANN — IMPLANTES BLC/BLX","precioLista":254660,"precioFinal":173169},{"codigo":"035.9010S","descripcion":"Implante Straumann BLC Roxolid SLActive, ∅3,3 mm, longitud 10 mm","familia":"STRAUMANN — IMPLANTES BLC/BLX","precioLista":254660,"precioFinal":173169},{"codigo":"035.9012S","descripcion":"Implante Straumann BLC Roxolid SLActive, ∅3,3 mm, longitud 12 mm","familia":"STRAUMANN — IMPLANTES BLC/BLX","precioLista":254660,"precioFinal":173169},{"codigo":"035.9014S","descripcion":"Implante Straumann BLC Roxolid SLActive, ∅3,3 mm, longitud 14 mm","familia":"STRAUMANN — IMPLANTES BLC/BLX","precioLista":254660,"precioFinal":173169},{"codigo":"035.9016S","descripcion":"Implante Straumann BLC Roxolid SLActive, ∅3,3 mm, longitud 16 mm","familia":"STRAUMANN — IMPLANTES BLC/BLX","precioLista":254660,"precioFinal":173169},{"codigo":"035.9018S","descripcion":"Implante Straumann BLC Roxolid SLActive, ∅3,3 mm, longitud 18 mm","familia":"STRAUMANN — IMPLANTES BLC/BLX","precioLista":254660,"precioFinal":173169},{"codigo":"035.9206S","descripcion":"Implante Straumann BLC Roxolid SLActive, ∅3,75 mm, longitud 6 mm","familia":"STRAUMANN — IMPLANTES BLC/BLX","precioLista":254660,"precioFinal":173169},{"codigo":"035.9208S","descripcion":"Implante Straumann BLC Roxolid SLActive, ∅3,75 mm, longitud 8 mm","familia":"STRAUMANN — IMPLANTES BLC/BLX","precioLista":254660,"precioFinal":173169},{"codigo":"035.9210S","descripcion":"Implante Straumann BLC Roxolid SLActive, ∅3,75 mm, longitud 10 mm","familia":"STRAUMANN — IMPLANTES BLC/BLX","precioLista":254660,"precioFinal":173169},{"codigo":"035.9212S","descripcion":"Implante Straumann BLC Roxolid SLActive, ∅3,75 mm, longitud 12 mm","familia":"STRAUMANN — IMPLANTES BLC/BLX","precioLista":254660,"precioFinal":173169},{"codigo":"035.9214S","descripcion":"Implante Straumann BLC Roxolid SLActive, ∅3,75 mm, longitud 14 mm","familia":"STRAUMANN — IMPLANTES BLC/BLX","precioLista":254660,"precioFinal":173169},{"codigo":"035.9216S","descripcion":"Implante Straumann BLC Roxolid SLActive, ∅3,75 mm, longitud 16 mm","familia":"STRAUMANN — IMPLANTES BLC/BLX","precioLista":254660,"precioFinal":173169},{"codigo":"035.9218S","descripcion":"Implante Straumann BLC Roxolid SLActive, ∅3,75 mm, longitud 18 mm","familia":"STRAUMANN — IMPLANTES BLC/BLX","precioLista":254660,"precioFinal":173169},{"codigo":"035.9406S","descripcion":"Implante Straumann BLC Roxolid SLActive, ∅4,5 mm, longitud 6 mm","familia":"STRAUMANN — IMPLANTES BLC/BLX","precioLista":254660,"precioFinal":173169},{"codigo":"035.9408S","descripcion":"Implante Straumann BLC Roxolid SLActive, ∅4,5 mm, longitud 8 mm","familia":"STRAUMANN — IMPLANTES BLC/BLX","precioLista":254660,"precioFinal":173169},{"codigo":"035.9410S","descripcion":"Implante Straumann BLC Roxolid SLActive, ∅4,5 mm, longitud 10 mm","familia":"STRAUMANN — IMPLANTES BLC/BLX","precioLista":254660,"precioFinal":173169},{"codigo":"035.9412S","descripcion":"Implante Straumann BLC Roxolid SLActive, ∅4,5 mm, longitud 12 mm","familia":"STRAUMANN — IMPLANTES BLC/BLX","precioLista":254660,"precioFinal":173169},{"codigo":"035.9414S","descripcion":"Implante Straumann BLC Roxolid SLActive, ∅4,5 mm, longitud 14 mm","familia":"STRAUMANN — IMPLANTES BLC/BLX","precioLista":254660,"precioFinal":173169},{"codigo":"035.9416S","descripcion":"Implante Straumann BLC Roxolid SLActive, ∅4,5 mm, longitud 16 mm","familia":"STRAUMANN — IMPLANTES BLC/BLX","precioLista":254660,"precioFinal":173169},{"codigo":"035.9418S","descripcion":"Implante Straumann BLC Roxolid SLActive, ∅4,5 mm, longitud 18 mm","familia":"STRAUMANN — IMPLANTES BLC/BLX","precioLista":254660,"precioFinal":173169},{"codigo":"035.9706S","descripcion":"Implante Straumann BLC Roxolid SLActive, ∅5,5 mm, longitud 6 mm","familia":"STRAUMANN — IMPLANTES BLC/BLX","precioLista":254660,"precioFinal":173169},{"codigo":"035.9708S","descripcion":"Implante Straumann BLC Roxolid SLActive, ∅5,5 mm, longitud 8 mm","familia":"STRAUMANN — IMPLANTES BLC/BLX","precioLista":254660,"precioFinal":173169},{"codigo":"035.9710S","descripcion":"Implante Straumann BLC Roxolid SLActive, ∅5,5 mm, longitud 10 mm","familia":"STRAUMANN — IMPLANTES BLC/BLX","precioLista":254660,"precioFinal":173169},{"codigo":"035.9712S","descripcion":"Implante Straumann BLC Roxolid SLActive, ∅5,5 mm, longitud 12 mm","familia":"STRAUMANN — IMPLANTES BLC/BLX","precioLista":254660,"precioFinal":173169},{"codigo":"035.9714S","descripcion":"Implante Straumann BLC Roxolid SLActive, ∅5,5 mm, longitud 14 mm","familia":"STRAUMANN — IMPLANTES BLC/BLX","precioLista":254660,"precioFinal":173169},{"codigo":"035.9716S","descripcion":"Implante Straumann BLC Roxolid SLActive, ∅5,5 mm, longitud 16 mm","familia":"STRAUMANN — IMPLANTES BLC/BLX","precioLista":254660,"precioFinal":173169},{"codigo":"035.9806S","descripcion":"Implante Straumann BLC Roxolid SLActive, ∅6,5 mm, longitud 6 mm","familia":"STRAUMANN — IMPLANTES BLC/BLX","precioLista":254660,"precioFinal":173169},{"codigo":"035.9808S","descripcion":"Implante Straumann BLC Roxolid SLActive, ∅6,5 mm, longitud 8 mm","familia":"STRAUMANN — IMPLANTES BLC/BLX","precioLista":254660,"precioFinal":173169},{"codigo":"035.9810S","descripcion":"Implante Straumann BLC Roxolid SLActive, ∅6,5 mm, longitud 10 mm","familia":"STRAUMANN — IMPLANTES BLC/BLX","precioLista":254660,"precioFinal":173169},{"codigo":"035.9812S","descripcion":"Implante Straumann BLC Roxolid SLActive, ∅6,5 mm, longitud 12 mm","familia":"STRAUMANN — IMPLANTES BLC/BLX","precioLista":254660,"precioFinal":173169},{"codigo":"035.9814S","descripcion":"Implante Straumann BLC Roxolid SLActive, ∅6,5 mm, longitud 14 mm","familia":"STRAUMANN — IMPLANTES BLC/BLX","precioLista":254660,"precioFinal":173169},{"codigo":"035.9816S","descripcion":"Implante Straumann BLC Roxolid SLActive, ∅6,5 mm, longitud 16 mm","familia":"STRAUMANN — IMPLANTES BLC/BLX","precioLista":254660,"precioFinal":173169},{"codigo":"061.3308","descripcion":"Implante Straumann BLX Roxolid, ∅3,5 mm, longitud 8 mm","familia":"STRAUMANN — IMPLANTES BLC/BLX","precioLista":254660,"precioFinal":173169},{"codigo":"061.3310","descripcion":"Implante Straumann BLX Roxolid, ∅3,5 mm, longitud 10 mm","familia":"STRAUMANN — IMPLANTES BLC/BLX","precioLista":254660,"precioFinal":173169},{"codigo":"061.3312","descripcion":"Implante Straumann BLX Roxolid, ∅3,5 mm, longitud 12 mm","familia":"STRAUMANN — IMPLANTES BLC/BLX","precioLista":254660,"precioFinal":173169},{"codigo":"061.3314","descripcion":"Implante Straumann BLX Roxolid, ∅3,5 mm, longitud 14 mm","familia":"STRAUMANN — IMPLANTES BLC/BLX","precioLista":254660,"precioFinal":173169},{"codigo":"061.3316","descripcion":"Implante Straumann BLX Roxolid, ∅3,5 mm, longitud 16 mm","familia":"STRAUMANN — IMPLANTES BLC/BLX","precioLista":254660,"precioFinal":173169},{"codigo":"061.3318","descripcion":"Implante Straumann BLX Roxolid, ∅3,5 mm, longitud 18 mm","familia":"STRAUMANN — IMPLANTES BLC/BLX","precioLista":254660,"precioFinal":173169},{"codigo":"061.4306","descripcion":"Implante Straumann BLX Roxolid, ∅3,75 mm, longitud 6 mm","familia":"STRAUMANN — IMPLANTES BLC/BLX","precioLista":254660,"precioFinal":173169},{"codigo":"061.4308","descripcion":"Implante Straumann BLX Roxolid, ∅3,75 mm, longitud 8 mm","familia":"STRAUMANN — IMPLANTES BLC/BLX","precioLista":254660,"precioFinal":173169},{"codigo":"061.4310","descripcion":"Implante Straumann BLX Roxolid, ∅3,75 mm, longitud 10 mm","familia":"STRAUMANN — IMPLANTES BLC/BLX","precioLista":254660,"precioFinal":173169},{"codigo":"061.4312","descripcion":"Implante Straumann BLX Roxolid, ∅3,75 mm, longitud 12 mm","familia":"STRAUMANN — IMPLANTES BLC/BLX","precioLista":254660,"precioFinal":173169},{"codigo":"061.4314","descripcion":"Implante Straumann BLX Roxolid, ∅3,75 mm, longitud 14 mm","familia":"STRAUMANN — IMPLANTES BLC/BLX","precioLista":254660,"precioFinal":173169},{"codigo":"061.4316","descripcion":"Implante Straumann BLX Roxolid, ∅3,75 mm, longitud 16 mm","familia":"STRAUMANN — IMPLANTES BLC/BLX","precioLista":254660,"precioFinal":173169},{"codigo":"061.4318","descripcion":"Implante Straumann BLX Roxolid, ∅3,75 mm, longitud 18 mm","familia":"STRAUMANN — IMPLANTES BLC/BLX","precioLista":254660,"precioFinal":173169},{"codigo":"061.5306","descripcion":"Implante Straumann BLX Roxolid, ∅4,0 mm, longitud 6 mm","familia":"STRAUMANN — IMPLANTES BLC/BLX","precioLista":254660,"precioFinal":173169},{"codigo":"061.5308","descripcion":"Implante Straumann BLX Roxolid, ∅4,0 mm, longitud 8 mm","familia":"STRAUMANN — IMPLANTES BLC/BLX","precioLista":254660,"precioFinal":173169},{"codigo":"061.5310","descripcion":"Implante Straumann BLX Roxolid, ∅4,0 mm, longitud 10 mm","familia":"STRAUMANN — IMPLANTES BLC/BLX","precioLista":254660,"precioFinal":173169},{"codigo":"061.5312","descripcion":"Implante Straumann BLX Roxolid, ∅4,0 mm, longitud 12 mm","familia":"STRAUMANN — IMPLANTES BLC/BLX","precioLista":254660,"precioFinal":173169},{"codigo":"061.5314","descripcion":"Implante Straumann BLX Roxolid, ∅4,0 mm, longitud 14 mm","familia":"STRAUMANN — IMPLANTES BLC/BLX","precioLista":254660,"precioFinal":173169},{"codigo":"061.5316","descripcion":"Implante Straumann BLX Roxolid, ∅4,0 mm, longitud 16 mm","familia":"STRAUMANN — IMPLANTES BLC/BLX","precioLista":254660,"precioFinal":173169},{"codigo":"061.5318","descripcion":"Implante Straumann BLX Roxolid, ∅4,0 mm, longitud 18 mm","familia":"STRAUMANN — IMPLANTES BLC/BLX","precioLista":254660,"precioFinal":173169},{"codigo":"061.6306","descripcion":"Implante Straumann BLX Roxolid, ∅4,5 mm, longitud 6 mm","familia":"STRAUMANN — IMPLANTES BLC/BLX","precioLista":254660,"precioFinal":173169},{"codigo":"061.6308","descripcion":"Implante Straumann BLX Roxolid, ∅4,5 mm, longitud 8 mm","familia":"STRAUMANN — IMPLANTES BLC/BLX","precioLista":254660,"precioFinal":173169},{"codigo":"061.6310","descripcion":"Implante Straumann BLX Roxolid, ∅4,5 mm, longitud 10 mm","familia":"STRAUMANN — IMPLANTES BLC/BLX","precioLista":254660,"precioFinal":173169},{"codigo":"061.6312","descripcion":"Implante Straumann BLX Roxolid, ∅4,5 mm, longitud 12 mm","familia":"STRAUMANN — IMPLANTES BLC/BLX","precioLista":254660,"precioFinal":173169},{"codigo":"061.6314","descripcion":"Implante Straumann BLX Roxolid, ∅4,5 mm, longitud 14 mm","familia":"STRAUMANN — IMPLANTES BLC/BLX","precioLista":254660,"precioFinal":173169},{"codigo":"061.6316","descripcion":"Implante Straumann BLX Roxolid, ∅4,5 mm, longitud 16 mm","familia":"STRAUMANN — IMPLANTES BLC/BLX","precioLista":254660,"precioFinal":173169},{"codigo":"061.6318","descripcion":"Implante Straumann BLX Roxolid, ∅4,5 mm, longitud 18 mm","familia":"STRAUMANN — IMPLANTES BLC/BLX","precioLista":254660,"precioFinal":173169},{"codigo":"061.7306","descripcion":"Implante Straumann BLX Roxolid, ∅5,0 mm, longitud 6 mm","familia":"STRAUMANN — IMPLANTES BLC/BLX","precioLista":254660,"precioFinal":173169},{"codigo":"061.7308","descripcion":"Implante Straumann BLX Roxolid, ∅5,0 mm, longitud 8 mm","familia":"STRAUMANN — IMPLANTES BLC/BLX","precioLista":254660,"precioFinal":173169},{"codigo":"061.7310","descripcion":"Implante Straumann BLX Roxolid, ∅5,0 mm, longitud 10 mm","familia":"STRAUMANN — IMPLANTES BLC/BLX","precioLista":254660,"precioFinal":173169},{"codigo":"061.7312","descripcion":"Implante Straumann BLX Roxolid, ∅5,0 mm, longitud 12 mm","familia":"STRAUMANN — IMPLANTES BLC/BLX","precioLista":254660,"precioFinal":173169},{"codigo":"061.7314","descripcion":"Implante Straumann BLX Roxolid, ∅5,0 mm, longitud 14 mm","familia":"STRAUMANN — IMPLANTES BLC/BLX","precioLista":254660,"precioFinal":173169},{"codigo":"061.8306","descripcion":"Implante Straumann BLX Roxolid, ∅5,5 mm, longitud 6 mm","familia":"STRAUMANN — IMPLANTES BLC/BLX","precioLista":254660,"precioFinal":173169},{"codigo":"061.8308","descripcion":"Implante Straumann BLX Roxolid, ∅5,5 mm, longitud 8 mm","familia":"STRAUMANN — IMPLANTES BLC/BLX","precioLista":254660,"precioFinal":173169},{"codigo":"061.8310","descripcion":"Implante Straumann BLX Roxolid, ∅5,5 mm, longitud 10 mm","familia":"STRAUMANN — IMPLANTES BLC/BLX","precioLista":254660,"precioFinal":173169},{"codigo":"061.8312","descripcion":"Implante Straumann BLX Roxolid, ∅5,5 mm, longitud 12 mm","familia":"STRAUMANN — IMPLANTES BLC/BLX","precioLista":254660,"precioFinal":173169},{"codigo":"061.9306","descripcion":"Implante Straumann BLX Roxolid, ∅6,5 mm, longitud 6 mm","familia":"STRAUMANN — IMPLANTES BLC/BLX","precioLista":254660,"precioFinal":173169},{"codigo":"061.9308","descripcion":"Implante Straumann BLX Roxolid, ∅6,5 mm, longitud 8 mm","familia":"STRAUMANN — IMPLANTES BLC/BLX","precioLista":254660,"precioFinal":173169},{"codigo":"061.9310","descripcion":"Implante Straumann BLX Roxolid, ∅6,5 mm, longitud 10 mm","familia":"STRAUMANN — IMPLANTES BLC/BLX","precioLista":254660,"precioFinal":173169},{"codigo":"061.9312","descripcion":"Implante Straumann BLX Roxolid, ∅6,5 mm, longitud 12 mm","familia":"STRAUMANN — IMPLANTES BLC/BLX","precioLista":254660,"precioFinal":173169},{"codigo":"064.4100S","descripcion":"Casquillo de cierre H 0,4 mm","familia":"STRAUMANN — TAPAS Y CICATRIZADORES","precioLista":23800,"precioFinal":16660},{"codigo":"064.8102S","descripcion":"Casquillo de cierre H 0,4 mm","familia":"STRAUMANN — TAPAS Y CICATRIZADORES","precioLista":23800,"precioFinal":16660},{"codigo":"064.4202S","descripcion":"Pilar de cicatrización para corona, AH 2 mm, ∅4,0 mm, GH 1,5 mm","familia":"STRAUMANN — TAPAS Y CICATRIZADORES","precioLista":26180,"precioFinal":18326},{"codigo":"064.4204S","descripcion":"Pilar de cicatrización para corona, AH 2 mm, ∅4,0 mm, GH 2,5 mm","familia":"STRAUMANN — TAPAS Y CICATRIZADORES","precioLista":26180,"precioFinal":18326},{"codigo":"064.4206S","descripcion":"Pilar de cicatrización para corona, AH 2 mm, ∅4,0 mm, GH 3,5 mm","familia":"STRAUMANN — TAPAS Y CICATRIZADORES","precioLista":26180,"precioFinal":18326},{"codigo":"064.4212S","descripcion":"Pilar de cicatrización para corona, AH 2 mm, ∅5,0 mm, GH 1,5 mm","familia":"STRAUMANN — TAPAS Y CICATRIZADORES","precioLista":26180,"precioFinal":18326},{"codigo":"064.4214S","descripcion":"Pilar de cicatrización para corona, AH 2 mm, ∅5,0 mm, GH 2,5 mm","familia":"STRAUMANN — TAPAS Y CICATRIZADORES","precioLista":26180,"precioFinal":18326},{"codigo":"064.4216S","descripcion":"Pilar de cicatrización para corona, AH 2 mm, ∅5,0 mm, GH 3,5 mm","familia":"STRAUMANN — TAPAS Y CICATRIZADORES","precioLista":26180,"precioFinal":18326},{"codigo":"064.4222S","descripcion":"Pilar de cicatrización para corona, AH 2 mm, ∅6,5 mm, GH 1,5 mm","familia":"STRAUMANN — TAPAS Y CICATRIZADORES","precioLista":26180,"precioFinal":18326},{"codigo":"064.4224S","descripcion":"Pilar de cicatrización para corona, AH 2 mm, ∅6,5 mm, GH 2,5 mm","familia":"STRAUMANN — TAPAS Y CICATRIZADORES","precioLista":26180,"precioFinal":18326},{"codigo":"064.4226S","descripcion":"Pilar de cicatrización para corona, AH 2 mm, ∅6,5 mm, GH 3,5 mm","familia":"STRAUMANN — TAPAS Y CICATRIZADORES","precioLista":26180,"precioFinal":18326},{"codigo":"064.4203S","descripcion":"Pilar de cicatrización para corona, AH 4 mm, ∅4,0 mm, GH 1,5 mm","familia":"STRAUMANN — TAPAS Y CICATRIZADORES","precioLista":26180,"precioFinal":18326},{"codigo":"064.4205S","descripcion":"Pilar de cicatrización para corona, AH 4 mm, ∅4,0 mm, GH 2,5 mm","familia":"STRAUMANN — TAPAS Y CICATRIZADORES","precioLista":26180,"precioFinal":18326},{"codigo":"064.4207S","descripcion":"Pilar de cicatrización para corona, AH 4 mm, ∅4,0 mm, GH 3,5 mm","familia":"STRAUMANN — TAPAS Y CICATRIZADORES","precioLista":26180,"precioFinal":18326},{"codigo":"064.4213S","descripcion":"Pilar de cicatrización para corona, AH 4 mm, ∅5,0 mm, GH 1,5 mm","familia":"STRAUMANN — TAPAS Y CICATRIZADORES","precioLista":26180,"precioFinal":18326},{"codigo":"064.4215S","descripcion":"Pilar de cicatrización para corona, AH 4 mm, ∅5,0 mm, GH 2,5 mm","familia":"STRAUMANN — TAPAS Y CICATRIZADORES","precioLista":26180,"precioFinal":18326},{"codigo":"064.4217S","descripcion":"Pilar de cicatrización para corona, AH 4 mm, ∅5,0 mm, GH 3,5 mm","familia":"STRAUMANN — TAPAS Y CICATRIZADORES","precioLista":26180,"precioFinal":18326},{"codigo":"064.4223S","descripcion":"Pilar de cicatrización para corona, AH 4 mm, ∅6,5 mm, GH 1,5 mm","familia":"STRAUMANN — TAPAS Y CICATRIZADORES","precioLista":26180,"precioFinal":18326},{"codigo":"064.4225S","descripcion":"Pilar de cicatrización para corona, AH 4 mm, ∅6,5 mm, GH 2,5 mm","familia":"STRAUMANN — TAPAS Y CICATRIZADORES","precioLista":26180,"precioFinal":18326},{"codigo":"064.4227S","descripcion":"Pilar de cicatrización para corona, AH 4 mm, ∅6,5 mm, GH 3,5 mm","familia":"STRAUMANN — TAPAS Y CICATRIZADORES","precioLista":26180,"precioFinal":18326},{"codigo":"064.4232S","descripcion":"Pilar de cicatrización para puente, AH 2 mm, ∅5,0 mm, GH 1,5 mm","familia":"STRAUMANN — TAPAS Y CICATRIZADORES","precioLista":26180,"precioFinal":18326},{"codigo":"064.4233S","descripcion":"Pilar de cicatrización para puente, AH 4 mm, ∅5,0 mm, GH 1,5 mm","familia":"STRAUMANN — TAPAS Y CICATRIZADORES","precioLista":26180,"precioFinal":18326},{"codigo":"064.8201S","descripcion":"Pilar de cicatrización para corona, perfil ancho, AH 2 mm, ∅6,0 mm, GH 0,75 mm","familia":"STRAUMANN — TAPAS Y CICATRIZADORES","precioLista":26180,"precioFinal":18326},{"codigo":"064.8203S","descripcion":"Pilar de cicatrización para corona, perfil ancho, AH 2 mm, ∅7,5 mm, GH 0,75 mm","familia":"STRAUMANN — TAPAS Y CICATRIZADORES","precioLista":26180,"precioFinal":18326},{"codigo":"064.8212S","descripcion":"Pilar de cicatrización para corona, perfil ancho, AH 2 mm, ∅6,0 mm, GH 1,5 mm","familia":"STRAUMANN — TAPAS Y CICATRIZADORES","precioLista":26180,"precioFinal":18326},{"codigo":"064.8214S","descripcion":"Pilar de cicatrización para corona, perfil ancho, AH 2 mm, ∅7,5 mm, GH 1,5 mm","familia":"STRAUMANN — TAPAS Y CICATRIZADORES","precioLista":26180,"precioFinal":18326},{"codigo":"064.8202S","descripcion":"Pilar de cicatrización para corona, perfil ancho, AH 4 mm, ∅6,0 mm, GH 0,75 mm","familia":"STRAUMANN — TAPAS Y CICATRIZADORES","precioLista":26180,"precioFinal":18326},{"codigo":"064.8204S","descripcion":"Pilar de cicatrización para corona, perfil ancho, AH 4 mm, ∅7,5 mm, GH 0,75 mm","familia":"STRAUMANN — TAPAS Y CICATRIZADORES","precioLista":26180,"precioFinal":18326},{"codigo":"064.8213S","descripcion":"Pilar de cicatrización para corona, perfil ancho, AH 4 mm, ∅6,0 mm, GH 1,5 mm","familia":"STRAUMANN — TAPAS Y CICATRIZADORES","precioLista":26180,"precioFinal":18326},{"codigo":"064.8215S","descripcion":"Pilar de cicatrización para corona, perfil ancho, AH 4 mm, ∅7,5 mm, GH 1,5 mm","familia":"STRAUMANN — TAPAS Y CICATRIZADORES","precioLista":26180,"precioFinal":18326},{"codigo":"025.0050","descripcion":"Análogo de implante para pilares atornillados, ∅4,6 mm, 0°","familia":"STRAUMANN — TOMA DE IMPRESIÓN","precioLista":20230,"precioFinal":14161},{"codigo":"023.4757","descripcion":"Análogo de implante para pilares atornillados, ∅4,6 mm, 17°/30°","familia":"STRAUMANN — TOMA DE IMPRESIÓN","precioLista":20230,"precioFinal":14161},{"codigo":"025.2244","descripcion":"Impresión en cubeta abierta para pilares atornillados, ∅4,6 mm - corona","familia":"STRAUMANN — TOMA DE IMPRESIÓN","precioLista":27370,"precioFinal":19159},{"codigo":"025.0012","descripcion":"Impresión en cubeta abierta para pilares atornillados, ∅4,6 mm - puente/barra","familia":"STRAUMANN — TOMA DE IMPRESIÓN","precioLista":27370,"precioFinal":19159},{"codigo":"025.2246","descripcion":"Impresión en cubeta cerrada para pilares atornillados, ∅4,6 mm - corona","familia":"STRAUMANN — TOMA DE IMPRESIÓN","precioLista":27370,"precioFinal":19159},{"codigo":"025.0014","descripcion":"Impresión en cubeta cerrada para pilares atornillados, ∅4,6 mm - puente/barra","familia":"STRAUMANN — TOMA DE IMPRESIÓN","precioLista":27370,"precioFinal":19159},{"codigo":"025.0081","descripcion":"Cuerpo de referencia para pilares atornillados, ∅4,6 mm","familia":"STRAUMANN — TOMA DE IMPRESIÓN","precioLista":53550,"precioFinal":37485},{"codigo":"025.0008","descripcion":"Análogo de implante reposicionable para pilares atornillados, ∅4,6 mm","familia":"STRAUMANN — TOMA DE IMPRESIÓN","precioLista":27370,"precioFinal":19159},{"codigo":"025.0005","descripcion":"Ayuda de pulimento para pilares atornillados, ∅4,6 mm","familia":"STRAUMANN — TOMA DE IMPRESIÓN","precioLista":20230,"precioFinal":14161},{"codigo":"065.0021","descripcion":"Análogo de implante nivel de implante","familia":"STRAUMANN — TOMA DE IMPRESIÓN","precioLista":24990,"precioFinal":17493},{"codigo":"065.0031","descripcion":"Cubeta abierta nivel de implante, con encaje","familia":"STRAUMANN — TOMA DE IMPRESIÓN","precioLista":29750,"precioFinal":20825},{"codigo":"065.0033","descripcion":"Cubeta abierta nivel de implante, con encaje","familia":"STRAUMANN — TOMA DE IMPRESIÓN","precioLista":29750,"precioFinal":20825},{"codigo":"065.4310","descripcion":"Cubeta cerrada nivel de implante, con encaje","familia":"STRAUMANN — TOMA DE IMPRESIÓN","precioLista":29750,"precioFinal":20825},{"codigo":"065.0022","descripcion":"Análogo de implante nivel de implante","familia":"STRAUMANN — TOMA DE IMPRESIÓN","precioLista":24990,"precioFinal":17493},{"codigo":"065.0032","descripcion":"Cubeta abierta nivel de implante","familia":"STRAUMANN — TOMA DE IMPRESIÓN","precioLista":29750,"precioFinal":20825},{"codigo":"065.0034","descripcion":"Cubeta abierta nivel de implante","familia":"STRAUMANN — TOMA DE IMPRESIÓN","precioLista":29750,"precioFinal":20825},{"codigo":"065.4810","descripcion":"Cubeta cerrada nivel de implante","familia":"STRAUMANN — TOMA DE IMPRESIÓN","precioLista":29750,"precioFinal":20825},{"codigo":"065.0103","descripcion":"Cuerpo de referencia Straumann®","familia":"STRAUMANN — TOMA DE IMPRESIÓN","precioLista":53550,"precioFinal":37485},{"codigo":"065.0023","descripcion":"Análogo de implante reposicionable","familia":"STRAUMANN — TOMA DE IMPRESIÓN","precioLista":24990,"precioFinal":17493},{"codigo":"065.0038","descripcion":"ScanPost para flujo de trabajo CEREC™","familia":"STRAUMANN — TOMA DE IMPRESIÓN","precioLista":34510,"precioFinal":24157},{"codigo":"065.0024","descripcion":"Análogo de implante reposicionable","familia":"STRAUMANN — TOMA DE IMPRESIÓN","precioLista":24990,"precioFinal":17493},{"codigo":"024.0023","descripcion":"Casquillo provisional de titanio para pilares atornillados, ∅4,6 mm - corona","familia":"STRAUMANN — PILARES PROVISIONALES","precioLista":33320,"precioFinal":23324},{"codigo":"024.0024","descripcion":"Casquillo provisional de titanio para pilares atornillados, ∅4,6 mm - puente","familia":"STRAUMANN — PILARES PROVISIONALES","precioLista":33320,"precioFinal":23324},{"codigo":"023.4763","descripcion":"Tornillo de sustitución / tornillo oclusal para casquillos y pilares atornillados","familia":"STRAUMANN — PILARES PROVISIONALES","precioLista":17850,"precioFinal":12495},{"codigo":"064.4362","descripcion":"Pilar provisional para corona, AH 10 mm, ∅3,8 mm (RB/WB), GH 1,5 mm","familia":"STRAUMANN — PILARES PROVISIONALES","precioLista":53550,"precioFinal":37485},{"codigo":"064.4363","descripcion":"Pilar provisional para corona, AH 10 mm, ∅3,8 mm (RB/WB), GH 2,5 mm","familia":"STRAUMANN — PILARES PROVISIONALES","precioLista":53550,"precioFinal":37485},{"codigo":"064.4364","descripcion":"Pilar provisional para corona, AH 10 mm, ∅3,8 mm (RB/WB), GH 3,5 mm","familia":"STRAUMANN — PILARES PROVISIONALES","precioLista":53550,"precioFinal":37485},{"codigo":"064.4372","descripcion":"Pilar provisional para corona, AH 10 mm, ∅4,5 mm (RB/WB), GH 1,5 mm","familia":"STRAUMANN — PILARES PROVISIONALES","precioLista":53550,"precioFinal":37485},{"codigo":"064.4373","descripcion":"Pilar provisional para corona, AH 10 mm, ∅4,5 mm (RB/WB), GH 2,5 mm","familia":"STRAUMANN — PILARES PROVISIONALES","precioLista":53550,"precioFinal":37485},{"codigo":"064.4374","descripcion":"Pilar provisional para corona, AH 10 mm, ∅4,5 mm (RB/WB), GH 3,5 mm","familia":"STRAUMANN — PILARES PROVISIONALES","precioLista":53550,"precioFinal":37485},{"codigo":"064.4382","descripcion":"Pilar provisional para corona, AH 10 mm, ∅6,0 mm (RB/WB), GH 2,5 mm","familia":"STRAUMANN — PILARES PROVISIONALES","precioLista":53550,"precioFinal":37485},{"codigo":"064.4383","descripcion":"Pilar provisional para corona, AH 10 mm, ∅6,0 mm (RB/WB), GH 3,5 mm","familia":"STRAUMANN — PILARES PROVISIONALES","precioLista":53550,"precioFinal":37485},{"codigo":"065.0036","descripcion":"Tornillo de sustitución para pilares provisionales RB/WB","familia":"STRAUMANN — PILARES PROVISIONALES","precioLista":19040,"precioFinal":13328},{"codigo":"064.4352","descripcion":"Pilar provisional para puente, AH 10 mm, ∅4,5 mm (RB/WB), GH 1,5 mm","familia":"STRAUMANN — PILARES PROVISIONALES","precioLista":53550,"precioFinal":37485},{"codigo":"065.0036","descripcion":"Tornillo de sustitución para pilar provisional para puente","familia":"STRAUMANN — PILARES PROVISIONALES","precioLista":19040,"precioFinal":13328},{"codigo":"064.4391","descripcion":"Pilar provisional para corona, AH 11 mm, ∅5,5 mm (WB), GH 0,75 mm","familia":"STRAUMANN — PILARES PROVISIONALES","precioLista":53550,"precioFinal":37485},{"codigo":"064.4392","descripcion":"Pilar provisional para corona, AH 11 mm, ∅5,5 mm (WB), GH 1,5 mm","familia":"STRAUMANN — PILARES PROVISIONALES","precioLista":53550,"precioFinal":37485},{"codigo":"065.0036","descripcion":"Tornillo de sustitución para pilar provisional WB","familia":"STRAUMANN — PILARES PROVISIONALES","precioLista":19040,"precioFinal":13328},{"codigo":"023.4748","descripcion":"Casquillo calcinable plástico, ∅4,6 mm - corona","familia":"STRAUMANN — REHABILITACIÓN","precioLista":19040,"precioFinal":13328},{"codigo":"023.4758","descripcion":"Casquillo calcinable plástico, ∅4,6 mm - puente","familia":"STRAUMANN — REHABILITACIÓN","precioLista":19040,"precioFinal":13328},{"codigo":"023.4747","descripcion":"Casquillo de titanio, ∅4,6 mm - corona","familia":"STRAUMANN — REHABILITACIÓN","precioLista":33320,"precioFinal":23324},{"codigo":"023.4751","descripcion":"Casquillo de titanio, ∅4,6 mm - puente","familia":"STRAUMANN — REHABILITACIÓN","precioLista":33320,"precioFinal":23324},{"codigo":"023.4752","descripcion":"Casquillo de titanio, ∅4,6 mm - barra","familia":"STRAUMANN — REHABILITACIÓN","precioLista":35700,"precioFinal":24990},{"codigo":"023.0028","descripcion":"Variobase® para puente/barra cilíndrico, ∅4,6 mm, incluye tornillo 023.4763","familia":"STRAUMANN — REHABILITACIÓN","precioLista":58310,"precioFinal":40817},{"codigo":"023.0032","descripcion":"Casquillo calcinable para Variobase® cilíndrico para puente/barra","familia":"STRAUMANN — REHABILITACIÓN","precioLista":19040,"precioFinal":13328},{"codigo":"025.0006","descripcion":"Tornillo de procesamiento de laboratorio, L 20 mm","familia":"STRAUMANN — REHABILITACIÓN","precioLista":17850,"precioFinal":12495},{"codigo":"062.4722S","descripcion":"Pilar atornillado ∅4,6 mm (RB/WB), GH 1,5 mm, angulación 0°","familia":"STRAUMANN — REHABILITACIÓN","precioLista":91630,"precioFinal":64141},{"codigo":"062.4723S","descripcion":"Pilar atornillado ∅4,6 mm (RB/WB), GH 2,5 mm, angulación 0°","familia":"STRAUMANN — REHABILITACIÓN","precioLista":91630,"precioFinal":64141},{"codigo":"062.4724S","descripcion":"Pilar atornillado ∅4,6 mm (RB/WB), GH 3,5 mm, angulación 0°","familia":"STRAUMANN — REHABILITACIÓN","precioLista":91630,"precioFinal":64141},{"codigo":"062.4733S","descripcion":"Pilar atornillado ∅4,6 mm (RB/WB), GH 3,5 mm, angulación 17°","familia":"STRAUMANN — REHABILITACIÓN","precioLista":91630,"precioFinal":64141},{"codigo":"062.4743S","descripcion":"Pilar atornillado ∅4,6 mm (RB/WB), GH 3,5 mm, angulación 30°","familia":"STRAUMANN — REHABILITACIÓN","precioLista":91630,"precioFinal":64141},{"codigo":"062.4725S","descripcion":"Pilar atornillado ∅4,6 mm (RB/WB), GH 4,5 mm, angulación 0°","familia":"STRAUMANN — REHABILITACIÓN","precioLista":91630,"precioFinal":64141},{"codigo":"062.4734S","descripcion":"Pilar atornillado ∅4,6 mm (RB/WB), GH 4,5 mm, angulación 17°","familia":"STRAUMANN — REHABILITACIÓN","precioLista":91630,"precioFinal":64141},{"codigo":"062.4744S","descripcion":"Pilar atornillado ∅4,6 mm (RB/WB), GH 4,5 mm, angulación 30°","familia":"STRAUMANN — REHABILITACIÓN","precioLista":91630,"precioFinal":64141},{"codigo":"062.4735S","descripcion":"Pilar atornillado ∅4,6 mm (RB/WB), GH 5,5 mm, angulación 17°","familia":"STRAUMANN — REHABILITACIÓN","precioLista":91630,"precioFinal":64141},{"codigo":"062.4745S","descripcion":"Pilar atornillado ∅4,6 mm (RB/WB), GH 5,5 mm, angulación 30°","familia":"STRAUMANN — REHABILITACIÓN","precioLista":91630,"precioFinal":64141},{"codigo":"065.0036","descripcion":"Tornillo de sustitución para pilares atornillados RB/WB","familia":"STRAUMANN — REHABILITACIÓN","precioLista":19040,"precioFinal":13328},{"codigo":"025.0073V4","descripcion":"RB/WB pilar atornillado PLAN, POM, angulación 0°","familia":"STRAUMANN — REHABILITACIÓN","precioLista":53550,"precioFinal":37485},{"codigo":"025.0074V4","descripcion":"RB/WB pilar atornillado PLAN, POM, angulación 17°","familia":"STRAUMANN — REHABILITACIÓN","precioLista":53550,"precioFinal":37485},{"codigo":"025.0075V4","descripcion":"RB/WB pilar atornillado PLAN, POM, angulación 30°","familia":"STRAUMANN — REHABILITACIÓN","precioLista":53550,"precioFinal":37485},{"codigo":"062.4603","descripcion":"Bloque prefresado para pilar RB/WB, para serie M, ∅12 mm","familia":"STRAUMANN — REHABILITACIÓN","precioLista":67830,"precioFinal":47481},{"codigo":"062.4934","descripcion":"Variobase® para corona, AH 5,5 mm, ∅3,8 mm (RB/WB), GH 1,5 mm","familia":"STRAUMANN — REHABILITACIÓN","precioLista":67830,"precioFinal":47481},{"codigo":"062.4935","descripcion":"Variobase® para corona, AH 5,5 mm, ∅3,8 mm (RB/WB), GH 2,5 mm","familia":"STRAUMANN — REHABILITACIÓN","precioLista":67830,"precioFinal":47481},{"codigo":"062.4936","descripcion":"Variobase® para corona, AH 5,5 mm, ∅3,8 mm (RB/WB), GH 3,5 mm","familia":"STRAUMANN — REHABILITACIÓN","precioLista":67830,"precioFinal":47481},{"codigo":"062.4944","descripcion":"Variobase® para corona, AH 5,5 mm, ∅4,5 mm (RB/WB), GH 1,5 mm","familia":"STRAUMANN — REHABILITACIÓN","precioLista":67830,"precioFinal":47481},{"codigo":"062.4945","descripcion":"Variobase® para corona, AH 5,5 mm, ∅4,5 mm (RB/WB), GH 2,5 mm","familia":"STRAUMANN — REHABILITACIÓN","precioLista":67830,"precioFinal":47481},{"codigo":"062.4946","descripcion":"Variobase® para corona, AH 5,5 mm, ∅4,5 mm (RB/WB), GH 3,5 mm","familia":"STRAUMANN — REHABILITACIÓN","precioLista":67830,"precioFinal":47481},{"codigo":"065.0036","descripcion":"Tornillo de sustitución para Variobase® para corona RB/WB","familia":"STRAUMANN — REHABILITACIÓN","precioLista":19040,"precioFinal":13328},{"codigo":"065.0014","descripcion":"Casquillo calcinable para Variobase® para corona, ∅3,8 mm (RB/WB)","familia":"STRAUMANN — REHABILITACIÓN","precioLista":21420,"precioFinal":14994},{"codigo":"065.0015","descripcion":"Casquillo calcinable para Variobase® para corona, ∅4,5 mm (RB/WB)","familia":"STRAUMANN — REHABILITACIÓN","precioLista":21420,"precioFinal":14994},{"codigo":"062.4961","descripcion":"Variobase® para puente/barra cilíndrico, AH 3,5 mm, ∅4,5 mm (RB/WB), GH 1,5 mm","familia":"STRAUMANN — REHABILITACIÓN","precioLista":67830,"precioFinal":47481},{"codigo":"065.0036","descripcion":"Tornillo de sustitución para Variobase® puente/barra cilíndrico RB/WB","familia":"STRAUMANN — REHABILITACIÓN","precioLista":19040,"precioFinal":13328},{"codigo":"065.0017","descripcion":"Casquillo calcinable para Variobase® puente/barra cilíndrico, ∅4,5 mm (RB/WB)","familia":"STRAUMANN — REHABILITACIÓN","precioLista":21420,"precioFinal":14994},{"codigo":"062.4972","descripcion":"Variobase® para corona SA, AH 5,5 mm, ∅4,5 mm (RB/WB), GH 1,5 mm","familia":"STRAUMANN — REHABILITACIÓN","precioLista":80920,"precioFinal":56644},{"codigo":"065.0037","descripcion":"Tornillo de sustitución para Variobase® para corona SA RB/WB","familia":"STRAUMANN — REHABILITACIÓN","precioLista":19040,"precioFinal":13328},{"codigo":"065.0018","descripcion":"Casquillo calcinable para Variobase® para corona SA, ∅4,5 mm (RB/WB)","familia":"STRAUMANN — REHABILITACIÓN","precioLista":21420,"precioFinal":14994},{"codigo":"062.4981","descripcion":"Variobase® C, ∅3,8 mm (RB/WB), GH 1,5 mm","familia":"STRAUMANN — REHABILITACIÓN","precioLista":67830,"precioFinal":47481},{"codigo":"062.4982","descripcion":"Variobase® C, ∅4,5 mm (RB/WB), GH 1,5 mm","familia":"STRAUMANN — REHABILITACIÓN","precioLista":67830,"precioFinal":47481},{"codigo":"065.0036","descripcion":"Tornillo de sustitución para Variobase® C RB/WB","familia":"STRAUMANN — REHABILITACIÓN","precioLista":19040,"precioFinal":13328},{"codigo":"065.0016","descripcion":"Casquillo calcinable para Variobase® para corona, ∅5,5 mm (WB)","familia":"STRAUMANN — REHABILITACIÓN","precioLista":21420,"precioFinal":14994},{"codigo":"062.4953","descripcion":"Variobase® para corona, AH 5,5 mm, ∅5,5 mm (WB), GH 0,75 mm","familia":"STRAUMANN — REHABILITACIÓN","precioLista":67830,"precioFinal":47481},{"codigo":"062.4954","descripcion":"Variobase® para corona, AH 5,5 mm, ∅5,5 mm (WB), GH 1,5 mm","familia":"STRAUMANN — REHABILITACIÓN","precioLista":67830,"precioFinal":47481},{"codigo":"065.0036","descripcion":"Tornillo de sustitución para Variobase® WB","familia":"STRAUMANN — REHABILITACIÓN","precioLista":19040,"precioFinal":13328},{"codigo":"065.0019","descripcion":"Casquillo calcinable para Variobase® para corona SA, ∅5,5 mm (WB)","familia":"STRAUMANN — REHABILITACIÓN","precioLista":41650,"precioFinal":29155},{"codigo":"062.4971","descripcion":"Variobase® para corona SA, AH 5,5 mm, ∅5,5 mm (WB), GH 1,5 mm","familia":"STRAUMANN — REHABILITACIÓN","precioLista":80920,"precioFinal":56644},{"codigo":"065.0037","descripcion":"Tornillo de sustitución para Variobase® para corona SA WB","familia":"STRAUMANN — REHABILITACIÓN","precioLista":19040,"precioFinal":13328},{"codigo":"062.4983","descripcion":"Variobase® C, ∅5,5 mm (WB), GH 1,5 mm","familia":"STRAUMANN — REHABILITACIÓN","precioLista":67830,"precioFinal":47481},{"codigo":"065.0036","descripcion":"Tornillo de sustitución para Variobase® C WB","familia":"STRAUMANN — REHABILITACIÓN","precioLista":19040,"precioFinal":13328},{"codigo":"062.4501","descripcion":"Novaloc® ∅3,8 mm (RB/WB), GH 1,5 mm, angulación 0°","familia":"STRAUMANN — SOBREDENTADURA","precioLista":120190,"precioFinal":84133},{"codigo":"062.4502","descripcion":"Novaloc® ∅3,8 mm (RB/WB), GH 2,5 mm, angulación 0°","familia":"STRAUMANN — SOBREDENTADURA","precioLista":120190,"precioFinal":84133},{"codigo":"062.4507","descripcion":"Novaloc® ∅3,8 mm (RB/WB), GH 2,5 mm, angulación 15°","familia":"STRAUMANN — SOBREDENTADURA","precioLista":120190,"precioFinal":84133},{"codigo":"062.4503","descripcion":"Novaloc® ∅3,8 mm (RB/WB), GH 3,5 mm, angulación 0°","familia":"STRAUMANN — SOBREDENTADURA","precioLista":120190,"precioFinal":84133},{"codigo":"062.4508","descripcion":"Novaloc® ∅3,8 mm (RB/WB), GH 3,5 mm, angulación 15°","familia":"STRAUMANN — SOBREDENTADURA","precioLista":120190,"precioFinal":84133},{"codigo":"062.4504","descripcion":"Novaloc® ∅3,8 mm (RB/WB), GH 4,5 mm, angulación 0°","familia":"STRAUMANN — SOBREDENTADURA","precioLista":120190,"precioFinal":84133},{"codigo":"062.4509","descripcion":"Novaloc® ∅3,8 mm (RB/WB), GH 4,5 mm, angulación 15°","familia":"STRAUMANN — SOBREDENTADURA","precioLista":120190,"precioFinal":84133},{"codigo":"062.4505","descripcion":"Novaloc® ∅3,8 mm (RB/WB), GH 5,5 mm, angulación 0°","familia":"STRAUMANN — SOBREDENTADURA","precioLista":120190,"precioFinal":84133},{"codigo":"062.4510","descripcion":"Novaloc® ∅3,8 mm (RB/WB), GH 5,5 mm, angulación 15°","familia":"STRAUMANN — SOBREDENTADURA","precioLista":120190,"precioFinal":84133},{"codigo":"062.4506","descripcion":"Novaloc® ∅3,8 mm (RB/WB), GH 6,5 mm, angulación 0°","familia":"STRAUMANN — SOBREDENTADURA","precioLista":120190,"precioFinal":84133},{"codigo":"062.4511","descripcion":"Novaloc® ∅3,8 mm (RB/WB), GH 6,5 mm, angulación 15°","familia":"STRAUMANN — SOBREDENTADURA","precioLista":120190,"precioFinal":84133},{"codigo":"062.4512","descripcion":"Novaloc® ∅3,8 mm (RB/WB), GH 7,5 mm, angulación 15°","familia":"STRAUMANN — SOBREDENTADURA","precioLista":120190,"precioFinal":84133},{"codigo":"065.0036","descripcion":"Tornillo de sustitución para Novaloc®","familia":"STRAUMANN — SOBREDENTADURA","precioLista":19040,"precioFinal":13328},{"codigo":"2010.601-NOV","descripcion":"Kit procedimiento - titanio Novaloc®","familia":"STRAUMANN — SOBREDENTADURA","precioLista":44030,"precioFinal":30821},{"codigo":"2010.611-NOV","descripcion":"Kit procedimiento - PEEK Novaloc®","familia":"STRAUMANN — SOBREDENTADURA","precioLista":44030,"precioFinal":30821},{"codigo":"062.4103","descripcion":"Pilar anatómico ∅6,0 mm (RB/WB), GH 2,5 mm, angulación 0°","familia":"STRAUMANN — PILARES ANATÓMICOS","precioLista":122570,"precioFinal":98056},{"codigo":"062.4153","descripcion":"Pilar anatómico ∅6,0 mm (RB/WB), GH 2,5 mm, angulación 17°","familia":"STRAUMANN — PILARES ANATÓMICOS","precioLista":122570,"precioFinal":98056},{"codigo":"062.4104","descripcion":"Pilar anatómico ∅6,0 mm (RB/WB), GH 3,5 mm, angulación 0°","familia":"STRAUMANN — PILARES ANATÓMICOS","precioLista":122570,"precioFinal":98056},{"codigo":"062.4154","descripcion":"Pilar anatómico ∅6,0 mm (RB/WB), GH 3,5 mm, angulación 17°","familia":"STRAUMANN — PILARES ANATÓMICOS","precioLista":122570,"precioFinal":98056},{"codigo":"065.0036","descripcion":"Tornillo de sustitución para pilares anatómicos","familia":"STRAUMANN — PILARES ANATÓMICOS","precioLista":19040,"precioFinal":15232},{"codigo":"075.098W","descripcion":"Emdogain 0.15 ml 5-Pack","familia":"LINEA DE BIOMATERIALES","precioLista":243950,"precioFinal":182962},{"codigo":"075.101W","descripcion":"Emdogain 0.3 ml Singlepack","familia":"LINEA DE BIOMATERIALES","precioLista":97580,"precioFinal":73185},{"codigo":"075.102W","descripcion":"Emdogain 0.7 ml Singlepack","familia":"LINEA DE BIOMATERIALES","precioLista":227290,"precioFinal":170468},{"codigo":"075.114W","descripcion":"Emdogain 0.3 ml Multipack","familia":"LINEA DE BIOMATERIALES","precioLista":292740,"precioFinal":219555},{"codigo":"075.116W","descripcion":"Emdogain 0.7 ml Multipack","familia":"LINEA DE BIOMATERIALES","precioLista":683060,"precioFinal":512295},{"codigo":"075.127W","descripcion":"Emdogain 0.15 ml Singlepack","familia":"LINEA DE BIOMATERIALES","precioLista":48790,"precioFinal":36592},{"codigo":"075.203W","descripcion":"PrefGel 0.6 ml, 5-Pack","familia":"LINEA DE BIOMATERIALES","precioLista":29750,"precioFinal":22312},{"codigo":"BO-1510","descripcion":"cerabone granules 500-1000micron, 0.5cc","familia":"LINEA DE BIOMATERIALES","precioLista":73440,"precioFinal":55080},{"codigo":"BO-1511","descripcion":"cerabone granules 500-1000micron, 1.0cc","familia":"LINEA DE BIOMATERIALES","precioLista":98333,"precioFinal":73750},{"codigo":"BO-1512","descripcion":"cerabone granules 500-1000micron, 2.0cc","familia":"LINEA DE BIOMATERIALES","precioLista":152420,"precioFinal":114315},{"codigo":"BO-1515","descripcion":"cerabone granules 500-1000micron, 5.0cc","familia":"LINEA DE BIOMATERIALES","precioLista":434075,"precioFinal":325556},{"codigo":"BO-1520","descripcion":"cerabone granules 1000-2000micron, 0.5cc","familia":"LINEA DE BIOMATERIALES","precioLista":72053,"precioFinal":54040},{"codigo":"BO-1521","descripcion":"cerabone granules 1000-2000micron, 1.0cc","familia":"LINEA DE BIOMATERIALES","precioLista":99451,"precioFinal":74588},{"codigo":"BO-1522","descripcion":"cerabone granules 1000-2000micron, 2.0cc","familia":"LINEA DE BIOMATERIALES","precioLista":138178,"precioFinal":103634},{"codigo":"BO-1525","descripcion":"cerabone granules 1000-2000micron, 5.0cc","familia":"LINEA DE BIOMATERIALES","precioLista":346048,"precioFinal":259536},{"codigo":"BO-20005","descripcion":"maxresorb granules 0.5-1.0mm(S), 0.5cc","familia":"LINEA DE BIOMATERIALES","precioLista":55930,"precioFinal":41948},{"codigo":"BO-20010","descripcion":"maxresorb granules 0.5-1.0mm(S), 1.0cc","familia":"LINEA DE BIOMATERIALES","precioLista":82110,"precioFinal":61582},{"codigo":"BO-20105","descripcion":"maxresorb granules 0.8-1.5mm(L), 0.5cc","familia":"LINEA DE BIOMATERIALES","precioLista":55930,"precioFinal":41948},{"codigo":"BO-20120","descripcion":"maxresorb granules 0.8-1.5mm(L), 2.0cc","familia":"LINEA DE BIOMATERIALES","precioLista":149940,"precioFinal":112455},{"codigo":"BO-22005","descripcion":"maxresorb inject 1x syringe, 0.5cc","familia":"LINEA DE BIOMATERIALES","precioLista":95200,"precioFinal":71400},{"codigo":"BO-22010","descripcion":"maxresorb inject 1x syringe, 1.0cc","familia":"LINEA DE BIOMATERIALES","precioLista":116620,"precioFinal":87465},{"codigo":"BO-22025","descripcion":"maxresorb inject 1x syringe, 2.5cc","familia":"LINEA DE BIOMATERIALES","precioLista":214200,"precioFinal":160650},{"codigo":"BO-30005","descripcion":"maxgraft cancellous 0.5-2.0mm, 0.5cc","familia":"LINEA DE BIOMATERIALES","precioLista":87329,"precioFinal":65497},{"codigo":"BO-30010","descripcion":"maxgraft cancellous 0.5-2.0mm, 1.0cc","familia":"LINEA DE BIOMATERIALES","precioLista":122261,"precioFinal":91696},{"codigo":"BO-30020","descripcion":"maxgraft cancellous 0.5-2.0mm, 2.0cc","familia":"LINEA DE BIOMATERIALES","precioLista":209591,"precioFinal":157193},{"codigo":"BO-30040","descripcion":"maxgraft cancellous 0.5-2.0mm, 4.0cc","familia":"LINEA DE BIOMATERIALES","precioLista":262162,"precioFinal":196622},{"codigo":"BO-31005","descripcion":"maxgraft cortic.-canc., 0.5-2.0mm, 0.5cc","familia":"LINEA DE BIOMATERIALES","precioLista":91987,"precioFinal":68990},{"codigo":"BO-31010","descripcion":"maxgraft cortic.-canc., 0.5-2.0mm, 1.0cc","familia":"LINEA DE BIOMATERIALES","precioLista":128083,"precioFinal":96062},{"codigo":"BO-31020","descripcion":"maxgraft cortic.-canc., 0.5-2.0mm, 2.0cc","familia":"LINEA DE BIOMATERIALES","precioLista":221236,"precioFinal":165927},{"codigo":"BO-31040","descripcion":"maxgraft cortic.-canc., 0.5-2.0mm, 4.0cc","familia":"LINEA DE BIOMATERIALES","precioLista":277621,"precioFinal":208216},{"codigo":"BO-32111","descripcion":"maxgraft cancellous block 10x10x10mm","familia":"LINEA DE BIOMATERIALES","precioLista":333663,"precioFinal":250247},{"codigo":"BO-32112","descripcion":"maxgraft cancellous block 20x10x10mm","familia":"LINEA DE BIOMATERIALES","precioLista":590324,"precioFinal":442743},{"codigo":"BO-511112","descripcion":"collacone Ø11-7 (top-bot.); 16mm h; 12pc","familia":"LINEA DE BIOMATERIALES","precioLista":153487,"precioFinal":115115},{"codigo":"BO-601520","descripcion":"collprotect membrane 15x20mm","familia":"LINEA DE BIOMATERIALES","precioLista":90066,"precioFinal":67550},{"codigo":"BO-602030","descripcion":"collprotect membrane 20x30mm","familia":"LINEA DE BIOMATERIALES","precioLista":110851,"precioFinal":83138},{"codigo":"BO-603040","descripcion":"collprotect membrane 30x40mm","familia":"LINEA DE BIOMATERIALES","precioLista":173204,"precioFinal":129903},{"codigo":"BO-681520","descripcion":"Jason membrane 15x20mm","familia":"LINEA DE BIOMATERIALES","precioLista":116102,"precioFinal":87076},{"codigo":"BO-682030","descripcion":"Jason membrane 20x30mm","familia":"LINEA DE BIOMATERIALES","precioLista":138564,"precioFinal":103923},{"codigo":"BO-683040","descripcion":"Jason membrane 30x40mm","familia":"LINEA DE BIOMATERIALES","precioLista":207845,"precioFinal":155884},{"codigo":"BO-690412","descripcion":"Jason fleece 20x20mm; 12pc","familia":"LINEA DE BIOMATERIALES","precioLista":205736,"precioFinal":154302},{"codigo":"BO-701520","descripcion":"mucoderm 15x20mm","familia":"LINEA DE BIOMATERIALES","precioLista":159348,"precioFinal":119511},{"codigo":"BO-702030","descripcion":"mucoderm 20x30mm","familia":"LINEA DE BIOMATERIALES","precioLista":187061,"precioFinal":140296},{"codigo":"BO-703040","descripcion":"mucoderm 30x40mm","familia":"LINEA DE BIOMATERIALES","precioLista":346408,"precioFinal":259806}];
+const PRODUCTS_BLT = [{"codigo":"022.0109","descripcion":"RC VB Crown, incl. torn. Ø4.5 AH5.5 GH3","familia":"BLT — VARIOBASE","precioLista":61880,"precioFinal":43316,"conexion":"RC"},{"codigo":"022.0107","descripcion":"RC VB Crown, incl. torn. Ø4.5 AH5.5 GH2","familia":"BLT — VARIOBASE","precioLista":61880,"precioFinal":43316,"conexion":"RC"},{"codigo":"022.0105","descripcion":"RC VB Crown, incl. torn. Ø4.5 AH3.5 GH3","familia":"BLT — VARIOBASE","precioLista":61880,"precioFinal":43316,"conexion":"RC"},{"codigo":"022.0103","descripcion":"RC VB Crown, incl. torn. Ø4.5 AH3.5 GH2","familia":"BLT — VARIOBASE","precioLista":61880,"precioFinal":43316,"conexion":"RC"},{"codigo":"022.0111","descripcion":"RC Variobase® para puente/barra cilin.","familia":"BLT — VARIOBASE","precioLista":61880,"precioFinal":43316,"conexion":"RC"},{"codigo":"022.0096","descripcion":"RC Variobase p corona SA, Ø4.7 AH5.5 GH1","familia":"BLT — VARIOBASE","precioLista":73780,"precioFinal":51646,"conexion":"RC"},{"codigo":"022.0087","descripcion":"RC Variobase p corona SA, Ø4.7 AH3.5 GH1","familia":"BLT — VARIOBASE","precioLista":73780,"precioFinal":51646,"conexion":"RC"},{"codigo":"022.0108","descripcion":"NC VB Crown, incl. torn. Ø3.8 AH5.5 GH3","familia":"BLT — VARIOBASE","precioLista":61880,"precioFinal":43316,"conexion":"NC"},{"codigo":"022.0106","descripcion":"NC VB Crown, incl. torn. Ø3.8 AH5.5 GH2","familia":"BLT — VARIOBASE","precioLista":61880,"precioFinal":43316,"conexion":"NC"},{"codigo":"022.0104","descripcion":"NC VB Crown, incl. torn. Ø3.8 AH3.5 GH3","familia":"BLT — VARIOBASE","precioLista":61880,"precioFinal":43316,"conexion":"NC"},{"codigo":"022.0102","descripcion":"NC VB Crown, incl. torn. Ø3.8 AH3.5 GH2","familia":"BLT — VARIOBASE","precioLista":61880,"precioFinal":43316,"conexion":"NC"},{"codigo":"022.0110","descripcion":"NC Variobase® para puente/barra cilin.","familia":"BLT — VARIOBASE","precioLista":61880,"precioFinal":43316,"conexion":"NC"},{"codigo":"022.0093","descripcion":"NC Variobase p corona SA, Ø4.1 AH5.5 GH1","familia":"BLT — VARIOBASE","precioLista":73780,"precioFinal":51646,"conexion":"NC"},{"codigo":"022.0084","descripcion":"NC Variobase p corona SA, Ø4.1 AH3.5 GH1","familia":"BLT — VARIOBASE","precioLista":73780,"precioFinal":51646,"conexion":"NC"},{"codigo":"025.0000","descripcion":"Straumann® CARES® Cuerpo de referencia mono para / pilares atornillados / ∅ 3,5 mm","familia":"BLT — TOMA DE IMPRESIÓN","precioLista":13090,"precioFinal":9163},{"codigo":"025.0001","descripcion":"Straumann® CARES® Cuerpo de referencia mono / para pilares atornillados / ∅ 4,6 mm","familia":"BLT — TOMA DE IMPRESIÓN","precioLista":13090,"precioFinal":9163},{"codigo":"025.2102","descripcion":"SC Análogo de implante reposicionable / Straumann® CARES® Cuerpo de referencia mono / Análogo de implante reposicionable","familia":"BLT — TOMA DE IMPRESIÓN","precioLista":27370,"precioFinal":19159,"conexion":"SC"},{"codigo":"025.0020","descripcion":"Impresión en cubeta cerrada / corta / larga","familia":"BLT — TOMA DE IMPRESIÓN","precioLista":27370,"precioFinal":19159},{"codigo":"024.0010S","descripcion":"SC Pilar de cicatrización, H 6,5 mm","familia":"BLT — TAPAS Y CICATRIZADORES","precioLista":30940,"precioFinal":21658,"conexion":"SC"},{"codigo":"024.0009S","descripcion":"SC Pilar de cicatrización, H 5 mm","familia":"BLT — TAPAS Y CICATRIZADORES","precioLista":30940,"precioFinal":21658,"conexion":"SC"},{"codigo":"024.0008S","descripcion":"SC Pilar de cicatrización, H 3,5 mm","familia":"BLT — TAPAS Y CICATRIZADORES","precioLista":30940,"precioFinal":21658,"conexion":"SC"},{"codigo":"024.0007S","descripcion":"SC Pilar de cicatrización, H 2 mm","familia":"BLT — TAPAS Y CICATRIZADORES","precioLista":30940,"precioFinal":21658,"conexion":"SC"},{"codigo":"024.0006S","descripcion":"SC Casquillo de cierre, H 0,5 mm","familia":"BLT — TAPAS Y CICATRIZADORES","precioLista":21420,"precioFinal":14994,"conexion":"SC"},{"codigo":"024.4270S","descripcion":"RC Pilar de cicatrización Ø 7,0 mm, H 7 mm","familia":"BLT — TAPAS Y CICATRIZADORES","precioLista":30940,"precioFinal":21658,"conexion":"RC"},{"codigo":"024.4246S","descripcion":"RC Pilar de cicatrización Ø 6,5 mm, H 6 mm","familia":"BLT — TAPAS Y CICATRIZADORES","precioLista":23800,"precioFinal":16660,"conexion":"RC"},{"codigo":"024.4244S","descripcion":"RC Pilar de cicatrización Ø 6,5 mm, H 4 mm","familia":"BLT — TAPAS Y CICATRIZADORES","precioLista":23800,"precioFinal":16660,"conexion":"RC"},{"codigo":"024.4242S","descripcion":"RC Pilar de cicatrización Ø 6,5 mm, H 2 mm","familia":"BLT — TAPAS Y CICATRIZADORES","precioLista":23800,"precioFinal":16660,"conexion":"RC"},{"codigo":"024.0005S","descripcion":"RC Pilar de cicatrización Ø 6,0 mm, H 6 mm","familia":"BLT — TAPAS Y CICATRIZADORES","precioLista":23800,"precioFinal":16660,"conexion":"RC"},{"codigo":"024.0004S","descripcion":"RC Pilar de cicatrización Ø 6,0 mm, H 4 mm","familia":"BLT — TAPAS Y CICATRIZADORES","precioLista":23800,"precioFinal":16660,"conexion":"RC"},{"codigo":"024.0003S","descripcion":"RC Pilar de cicatrización Ø 6,0 mm, H 2 mm","familia":"BLT — TAPAS Y CICATRIZADORES","precioLista":23800,"precioFinal":16660,"conexion":"RC"},{"codigo":"024.4226S","descripcion":"RC Pilar de cicatrización Ø 5,0 mm, H 6 mm","familia":"BLT — TAPAS Y CICATRIZADORES","precioLista":23800,"precioFinal":16660,"conexion":"RC"},{"codigo":"024.4224S","descripcion":"RC Pilar de cicatrización Ø 5,0 mm, H 4 mm","familia":"BLT — TAPAS Y CICATRIZADORES","precioLista":23800,"precioFinal":16660,"conexion":"RC"},{"codigo":"024.4222S","descripcion":"RC Pilar de cicatrización Ø 5,0 mm, H 2 mm","familia":"BLT — TAPAS Y CICATRIZADORES","precioLista":23800,"precioFinal":16660,"conexion":"RC"},{"codigo":"024.0002S","descripcion":"RC Pilar de cicatrización Ø 4,5 mm, H 6 mm","familia":"BLT — TAPAS Y CICATRIZADORES","precioLista":23800,"precioFinal":16660,"conexion":"RC"},{"codigo":"024.0001S","descripcion":"RC Pilar de cicatrización Ø 4,5 mm, H 4 mm","familia":"BLT — TAPAS Y CICATRIZADORES","precioLista":23800,"precioFinal":16660,"conexion":"RC"},{"codigo":"024.0000S","descripcion":"RC Pilar de cicatrización Ø 4,5 mm, H 2 mm","familia":"BLT — TAPAS Y CICATRIZADORES","precioLista":23800,"precioFinal":16660,"conexion":"RC"},{"codigo":"024.4105S","descripcion":"RC Casquillo de cierre, H 0,5 mm","familia":"BLT — TAPAS Y CICATRIZADORES","precioLista":23800,"precioFinal":16660,"conexion":"RC"},{"codigo":"024.4100S","descripcion":"RC Casquillo de cierre, H 0 mm","familia":"BLT — TAPAS Y CICATRIZADORES","precioLista":23800,"precioFinal":16660,"conexion":"RC"},{"codigo":"024.2270S","descripcion":"NC Pilar de cicatrización Ø 5,0 mm, H 7 mm","familia":"BLT — TAPAS Y CICATRIZADORES","precioLista":30940,"precioFinal":21658,"conexion":"NC"},{"codigo":"024.2246S","descripcion":"NC Pilar de cicatrización Ø 4,8 mm, H 5 mm","familia":"BLT — TAPAS Y CICATRIZADORES","precioLista":23800,"precioFinal":16660,"conexion":"NC"},{"codigo":"024.2244S","descripcion":"NC Pilar de cicatrización Ø 4,8 mm, H 3,5 mm","familia":"BLT — TAPAS Y CICATRIZADORES","precioLista":23800,"precioFinal":16660,"conexion":"NC"},{"codigo":"024.2242S","descripcion":"NC Pilar de cicatrización Ø 4,8 mm, H 2 mm","familia":"BLT — TAPAS Y CICATRIZADORES","precioLista":23800,"precioFinal":16660,"conexion":"NC"},{"codigo":"024.2226S","descripcion":"NC Pilar de cicatrización Ø 3,6 mm, H 5 mm","familia":"BLT — TAPAS Y CICATRIZADORES","precioLista":23800,"precioFinal":16660,"conexion":"NC"},{"codigo":"024.2224S","descripcion":"NC Pilar de cicatrización Ø 3,6 mm, H 3,5 mm","familia":"BLT — TAPAS Y CICATRIZADORES","precioLista":23800,"precioFinal":16660,"conexion":"NC"},{"codigo":"024.2222S","descripcion":"NC Pilar de cicatrización Ø 3,6 mm, H 2 mm","familia":"BLT — TAPAS Y CICATRIZADORES","precioLista":23800,"precioFinal":16660,"conexion":"NC"},{"codigo":"024.2105S","descripcion":"NC Casquillo de cierre, H 0,5 mm","familia":"BLT — TAPAS Y CICATRIZADORES","precioLista":23800,"precioFinal":16660,"conexion":"NC"},{"codigo":"024.2100S","descripcion":"NC Casquillo de cierre, H 0 mm","familia":"BLT — TAPAS Y CICATRIZADORES","precioLista":23800,"precioFinal":16660,"conexion":"NC"},{"codigo":"2010.711-STM","descripcion":"Verde (aprox. 1650 g) / Azul (aprox. 2100 g) / Negro (aprox. 2550 g)","familia":"BLT — SOBREDENTADURA","precioLista":26512,"precioFinal":18558},{"codigo":"2010.712-STM","descripcion":"Verde (aprox. 1650 g) / Azul (aprox. 2100 g) / Negro (aprox. 2550 g)","familia":"BLT — SOBREDENTADURA","precioLista":26512,"precioFinal":18558},{"codigo":"2010.713-STM","descripcion":"Verde (aprox. 1650 g) / Azul (aprox. 2100 g) / Negro (aprox. 2550 g)","familia":"BLT — SOBREDENTADURA","precioLista":26512,"precioFinal":18558},{"codigo":"2010.714-STM","descripcion":"Verde (aprox. 1650 g) / Azul (aprox. 2100 g) / Negro (aprox. 2550 g)","familia":"BLT — SOBREDENTADURA","precioLista":26512,"precioFinal":18558},{"codigo":"2010.715-STM","descripcion":"Verde (aprox. 1650 g) / Azul (aprox. 2100 g) / Negro (aprox. 2550 g)","familia":"BLT — SOBREDENTADURA","precioLista":26512,"precioFinal":18558},{"codigo":"024.4323-04","descripcion":"Casquillos de protección (Pack de 4 unidades, incluyen tornillos) / 4,5 mm / 5,1 mm","familia":"BLT — REHABILITACIÓN","precioLista":32130,"precioFinal":22491},{"codigo":"022.0163S","descripcion":"RC Pilar atornillado, 30°, Ø 4,6 mm, GH 5,5 mm, Tipo B","familia":"BLT — PILARES ATORNILLADOS","precioLista":84490,"precioFinal":59143,"conexion":"RC"},{"codigo":"022.0162S","descripcion":"RC Pilar atornillado, 30°, Ø 4,6 mm, GH 5,5 mm, Tipo A","familia":"BLT — PILARES ATORNILLADOS","precioLista":84490,"precioFinal":59143,"conexion":"RC"},{"codigo":"022.0161S","descripcion":"RC Pilar atornillado, 30°, Ø 4,6 mm, GH 4,5 mm, Tipo B","familia":"BLT — PILARES ATORNILLADOS","precioLista":84490,"precioFinal":59143,"conexion":"RC"},{"codigo":"022.0160S","descripcion":"RC Pilar atornillado, 30°, Ø 4,6 mm, GH 4,5 mm, Tipo A","familia":"BLT — PILARES ATORNILLADOS","precioLista":84490,"precioFinal":59143,"conexion":"RC"},{"codigo":"022.0159S","descripcion":"RC Pilar atornillado, 30°, Ø 4,6 mm, GH 3,5 mm, Tipo B","familia":"BLT — PILARES ATORNILLADOS","precioLista":84490,"precioFinal":59143,"conexion":"RC"},{"codigo":"022.0158S","descripcion":"RC Pilar atornillado, 30°, Ø 4,6 mm, GH 3,5 mm, Tipo A","familia":"BLT — PILARES ATORNILLADOS","precioLista":84490,"precioFinal":59143,"conexion":"RC"},{"codigo":"022.0157S","descripcion":"RC Pilar atornillado, 17°, Ø 4,6 mm, GH 5,5 mm, Tipo B","familia":"BLT — PILARES ATORNILLADOS","precioLista":84490,"precioFinal":59143,"conexion":"RC"},{"codigo":"022.0156S","descripcion":"RC Pilar atornillado, 17°, Ø 4,6 mm, GH 5,5 mm, Tipo A","familia":"BLT — PILARES ATORNILLADOS","precioLista":84490,"precioFinal":59143,"conexion":"RC"},{"codigo":"022.0155S","descripcion":"RC Pilar atornillado, 17°, Ø 4,6 mm, GH 4,5 mm, Tipo B","familia":"BLT — PILARES ATORNILLADOS","precioLista":84490,"precioFinal":59143,"conexion":"RC"},{"codigo":"022.0154S","descripcion":"RC Pilar atornillado, 17°, Ø 4,6 mm, GH 4,5 mm, Tipo A","familia":"BLT — PILARES ATORNILLADOS","precioLista":84490,"precioFinal":59143,"conexion":"RC"},{"codigo":"022.0153S","descripcion":"RC Pilar atornillado, 17°, Ø 4,6 mm, GH 3,5 mm, Tipo B","familia":"BLT — PILARES ATORNILLADOS","precioLista":84490,"precioFinal":59143,"conexion":"RC"},{"codigo":"022.0152S","descripcion":"RC Pilar atornillado, 17°, Ø 4,6 mm, GH 3,5 mm, Tipo A","familia":"BLT — PILARES ATORNILLADOS","precioLista":84490,"precioFinal":59143,"conexion":"RC"},{"codigo":"022.0151S","descripcion":"RC Pilar atornillado, 17°, Ø 4,6 mm, GH 2,5 mm, Tipo B","familia":"BLT — PILARES ATORNILLADOS","precioLista":84490,"precioFinal":59143,"conexion":"RC"},{"codigo":"022.0150S","descripcion":"RC Pilar atornillado, 17°, Ø 4,6 mm, GH 2,5 mm, Tipo A","familia":"BLT — PILARES ATORNILLADOS","precioLista":84490,"precioFinal":59143,"conexion":"RC"},{"codigo":"022.0134S","descripcion":"RC Pilar atornillado, 0°, Ø 4,6 mm, GH 3,5 mm","familia":"BLT — PILARES ATORNILLADOS","precioLista":84490,"precioFinal":59143,"conexion":"RC"},{"codigo":"022.0133S","descripcion":"RC Pilar atornillado, 0°, Ø 4,6 mm, GH 2,5 mm","familia":"BLT — PILARES ATORNILLADOS","precioLista":84490,"precioFinal":59143,"conexion":"RC"},{"codigo":"022.0132S","descripcion":"RC Pilar atornillado, 0°, Ø 4,6 mm, GH 1,5 mm","familia":"BLT — PILARES ATORNILLADOS","precioLista":84490,"precioFinal":59143,"conexion":"RC"},{"codigo":"022.0149S","descripcion":"NC Pilar atornillado, 30°, Ø 4,6 mm, GH 5,5 mm, Tipo B","familia":"BLT — PILARES ATORNILLADOS","precioLista":84490,"precioFinal":59143,"conexion":"NC"},{"codigo":"022.0148S","descripcion":"NC Pilar atornillado, 30°, Ø 4,6 mm, GH 5,5 mm, Tipo A","familia":"BLT — PILARES ATORNILLADOS","precioLista":84490,"precioFinal":59143,"conexion":"NC"},{"codigo":"022.0147S","descripcion":"NC Pilar atornillado, 30°, Ø 4,6 mm, GH 4,5 mm, Tipo B","familia":"BLT — PILARES ATORNILLADOS","precioLista":84490,"precioFinal":59143,"conexion":"NC"},{"codigo":"022.0146S","descripcion":"NC Pilar atornillado, 30°, Ø 4,6 mm, GH 4,5 mm, Tipo A","familia":"BLT — PILARES ATORNILLADOS","precioLista":84490,"precioFinal":59143,"conexion":"NC"},{"codigo":"022.0145S","descripcion":"NC Pilar atornillado, 30°, Ø 4,6 mm, GH 3,5 mm, Tipo B","familia":"BLT — PILARES ATORNILLADOS","precioLista":84490,"precioFinal":59143,"conexion":"NC"},{"codigo":"022.0144S","descripcion":"NC Pilar atornillado, 30°, Ø 4,6 mm, GH 3,5 mm, Tipo A","familia":"BLT — PILARES ATORNILLADOS","precioLista":84490,"precioFinal":59143,"conexion":"NC"},{"codigo":"022.0143S","descripcion":"NC Pilar atornillado, 17°, Ø 4,6 mm, GH 5,5 mm, Tipo B","familia":"BLT — PILARES ATORNILLADOS","precioLista":84490,"precioFinal":59143,"conexion":"NC"},{"codigo":"022.0142S","descripcion":"NC Pilar atornillado, 17°, Ø 4,6 mm, GH 5,5 mm, Tipo A","familia":"BLT — PILARES ATORNILLADOS","precioLista":84490,"precioFinal":59143,"conexion":"NC"},{"codigo":"022.0141S","descripcion":"NC Pilar atornillado, 17°, Ø 4,6 mm, GH 4,5 mm, Tipo B","familia":"BLT — PILARES ATORNILLADOS","precioLista":84490,"precioFinal":59143,"conexion":"NC"},{"codigo":"022.0140S","descripcion":"NC Pilar atornillado, 17°, Ø 4,6 mm, GH 4,5 mm, Tipo A","familia":"BLT — PILARES ATORNILLADOS","precioLista":84490,"precioFinal":59143,"conexion":"NC"},{"codigo":"022.0139S","descripcion":"NC Pilar atornillado, 17°, Ø 4,6 mm, GH 3,5 mm, Tipo B","familia":"BLT — PILARES ATORNILLADOS","precioLista":84490,"precioFinal":59143,"conexion":"NC"},{"codigo":"022.0138S","descripcion":"NC Pilar atornillado, 17°, Ø 4,6 mm, GH 3,5 mm, Tipo A","familia":"BLT — PILARES ATORNILLADOS","precioLista":84490,"precioFinal":59143,"conexion":"NC"},{"codigo":"022.0137S","descripcion":"NC Pilar atornillado, 17°, Ø 4,6 mm, GH 2,5 mm, Tipo B","familia":"BLT — PILARES ATORNILLADOS","precioLista":84490,"precioFinal":59143,"conexion":"NC"},{"codigo":"022.0136S","descripcion":"NC Pilar atornillado, 17°, Ø 4,6 mm, GH 2,5 mm, Tipo A","familia":"BLT — PILARES ATORNILLADOS","precioLista":84490,"precioFinal":59143,"conexion":"NC"},{"codigo":"022.0130S","descripcion":"NC Pilar atornillado, 0°, Ø 4,6 mm, GH 3,5 mm","familia":"BLT — PILARES ATORNILLADOS","precioLista":84490,"precioFinal":59143,"conexion":"NC"},{"codigo":"022.0129S","descripcion":"NC Pilar atornillado, 0°, Ø 4,6 mm, GH 2,5 mm","familia":"BLT — PILARES ATORNILLADOS","precioLista":84490,"precioFinal":59143,"conexion":"NC"},{"codigo":"022.0128S","descripcion":"NC Pilar atornillado, 0°, Ø 4,6 mm, GH 1,5 mm","familia":"BLT — PILARES ATORNILLADOS","precioLista":84490,"precioFinal":59143,"conexion":"NC"},{"codigo":"022.0126S","descripcion":"NC Pilar atornillado, 0°, Ø 3,5 mm, GH 3,5 mm","familia":"BLT — PILARES ATORNILLADOS","precioLista":84490,"precioFinal":59143,"conexion":"NC"},{"codigo":"022.0125S","descripcion":"NC Pilar atornillado, 0°, Ø 3,5 mm, GH 2,5 mm","familia":"BLT — PILARES ATORNILLADOS","precioLista":84490,"precioFinal":59143,"conexion":"NC"},{"codigo":"022.0124S","descripcion":"NC Pilar atornillado, 0°, Ø 3,5 mm, GH 1,5 mm","familia":"BLT — PILARES ATORNILLADOS","precioLista":84490,"precioFinal":59143,"conexion":"NC"},{"codigo":"021.3510","descripcion":"Implante (BLT), conexión NC, Ø 3,3 mm, Roxolid SLA, longitud 10 mm","familia":"BLT — IMPLANTES SLA","precioLista":184450,"precioFinal":129115,"conexion":"NC"},{"codigo":"021.3512","descripcion":"Implante (BLT), conexión NC, Ø 3,3 mm, Roxolid SLA, longitud 12 mm","familia":"BLT — IMPLANTES SLA","precioLista":184450,"precioFinal":129115,"conexion":"NC"},{"codigo":"021.3514","descripcion":"Implante (BLT), conexión NC, Ø 3,3 mm, Roxolid SLA, longitud 14 mm","familia":"BLT — IMPLANTES SLA","precioLista":184450,"precioFinal":129115,"conexion":"NC"},{"codigo":"021.3516","descripcion":"Implante (BLT), conexión NC, Ø 3,3 mm, Roxolid SLA, longitud 16 mm","familia":"BLT — IMPLANTES SLA","precioLista":184450,"precioFinal":129115,"conexion":"NC"},{"codigo":"021.3518","descripcion":"Implante (BLT), conexión NC, Ø 3,3 mm, Roxolid SLA, longitud 18 mm","familia":"BLT — IMPLANTES SLA","precioLista":184450,"precioFinal":129115,"conexion":"NC"},{"codigo":"021.3508","descripcion":"Implante (BLT), conexión NC, Ø 3,3 mm, Roxolid SLA, longitud 8 mm","familia":"BLT — IMPLANTES SLA","precioLista":184450,"precioFinal":129115,"conexion":"NC"},{"codigo":"021.5510","descripcion":"Implante (BLT), conexión RC, Ø 4,1 mm, Roxolid SLA, longitud 10 mm","familia":"BLT — IMPLANTES SLA","precioLista":184450,"precioFinal":129115,"conexion":"RC"},{"codigo":"021.5512","descripcion":"Implante (BLT), conexión RC, Ø 4,1 mm, Roxolid SLA, longitud 12 mm","familia":"BLT — IMPLANTES SLA","precioLista":184450,"precioFinal":129115,"conexion":"RC"},{"codigo":"021.5514","descripcion":"Implante (BLT), conexión RC, Ø 4,1 mm, Roxolid SLA, longitud 14 mm","familia":"BLT — IMPLANTES SLA","precioLista":184450,"precioFinal":129115,"conexion":"RC"},{"codigo":"021.5516","descripcion":"Implante (BLT), conexión RC, Ø 4,1 mm, Roxolid SLA, longitud 16 mm","familia":"BLT — IMPLANTES SLA","precioLista":184450,"precioFinal":129115,"conexion":"RC"},{"codigo":"021.5508","descripcion":"Implante (BLT), conexión RC, Ø 4,1 mm, Roxolid SLA, longitud 8 mm","familia":"BLT — IMPLANTES SLA","precioLista":184450,"precioFinal":129115,"conexion":"RC"},{"codigo":"021.7510","descripcion":"Implante (BLT), conexión RC, Ø 4,8 mm, Roxolid SLA, longitud 10 mm","familia":"BLT — IMPLANTES SLA","precioLista":184450,"precioFinal":129115,"conexion":"RC"},{"codigo":"021.7512","descripcion":"Implante (BLT), conexión RC, Ø 4,8 mm, Roxolid SLA, longitud 12 mm","familia":"BLT — IMPLANTES SLA","precioLista":184450,"precioFinal":129115,"conexion":"RC"},{"codigo":"021.7514","descripcion":"Implante (BLT), conexión RC, Ø 4,8 mm, Roxolid SLA, longitud 14 mm","familia":"BLT — IMPLANTES SLA","precioLista":184450,"precioFinal":129115,"conexion":"RC"},{"codigo":"021.7516","descripcion":"Implante (BLT), conexión RC, Ø 4,8 mm, Roxolid SLA, longitud 16 mm","familia":"BLT — IMPLANTES SLA","precioLista":184450,"precioFinal":129115,"conexion":"RC"},{"codigo":"021.7508","descripcion":"Implante (BLT), conexión RC, Ø 4,8 mm, Roxolid SLA, longitud 8 mm","familia":"BLT — IMPLANTES SLA","precioLista":184450,"precioFinal":129115,"conexion":"RC"},{"codigo":"021.3310","descripcion":"Implante (BLT), conexión NC, Ø 3,3 mm, Roxolid SLActive, longitud 10 mm","familia":"BLT — IMPLANTES SLActive","precioLista":221340,"precioFinal":154938,"conexion":"NC"},{"codigo":"021.3312","descripcion":"Implante (BLT), conexión NC, Ø 3,3 mm, Roxolid SLActive, longitud 12 mm","familia":"BLT — IMPLANTES SLActive","precioLista":221340,"precioFinal":154938,"conexion":"NC"},{"codigo":"021.3314","descripcion":"Implante (BLT), conexión NC, Ø 3,3 mm, Roxolid SLActive, longitud 14 mm","familia":"BLT — IMPLANTES SLActive","precioLista":221340,"precioFinal":154938,"conexion":"NC"},{"codigo":"021.3316","descripcion":"Implante (BLT), conexión NC, Ø 3,3 mm, Roxolid SLActive, longitud 16 mm","familia":"BLT — IMPLANTES SLActive","precioLista":221340,"precioFinal":154938,"conexion":"NC"},{"codigo":"021.3308","descripcion":"Implante (BLT), conexión NC, Ø 3,3 mm, Roxolid SLActive, longitud 8 mm","familia":"BLT — IMPLANTES SLActive","precioLista":221340,"precioFinal":154938,"conexion":"NC"},{"codigo":"021.5310","descripcion":"Implante (BLT), conexión RC, Ø 4,1 mm, Roxolid SLActive, longitud 10 mm","familia":"BLT — IMPLANTES SLActive","precioLista":221340,"precioFinal":154938,"conexion":"RC"},{"codigo":"021.5312","descripcion":"Implante (BLT), conexión RC, Ø 4,1 mm, Roxolid SLActive, longitud 12 mm","familia":"BLT — IMPLANTES SLActive","precioLista":221340,"precioFinal":154938,"conexion":"RC"},{"codigo":"021.5314","descripcion":"Implante (BLT), conexión RC, Ø 4,1 mm, Roxolid SLActive, longitud 14 mm","familia":"BLT — IMPLANTES SLActive","precioLista":221340,"precioFinal":154938,"conexion":"RC"},{"codigo":"021.5316","descripcion":"Implante (BLT), conexión RC, Ø 4,1 mm, Roxolid SLActive, longitud 16 mm","familia":"BLT — IMPLANTES SLActive","precioLista":221340,"precioFinal":154938,"conexion":"RC"},{"codigo":"021.5308","descripcion":"Implante (BLT), conexión RC, Ø 4,1 mm, Roxolid SLActive, longitud 8 mm","familia":"BLT — IMPLANTES SLActive","precioLista":221340,"precioFinal":154938,"conexion":"RC"},{"codigo":"021.7310","descripcion":"Implante (BLT), conexión RC, Ø 4,8 mm, Roxolid SLActive, longitud 10 mm","familia":"BLT — IMPLANTES SLActive","precioLista":221340,"precioFinal":154938,"conexion":"RC"},{"codigo":"021.7312","descripcion":"Implante (BLT), conexión RC, Ø 4,8 mm, Roxolid SLActive, longitud 12 mm","familia":"BLT — IMPLANTES SLActive","precioLista":221340,"precioFinal":154938,"conexion":"RC"},{"codigo":"021.7314","descripcion":"Implante (BLT), conexión RC, Ø 4,8 mm, Roxolid SLActive, longitud 14 mm","familia":"BLT — IMPLANTES SLActive","precioLista":221340,"precioFinal":154938,"conexion":"RC"},{"codigo":"021.7316","descripcion":"Implante (BLT), conexión RC, Ø 4,8 mm, Roxolid SLActive, longitud 16 mm","familia":"BLT — IMPLANTES SLActive","precioLista":221340,"precioFinal":154938,"conexion":"RC"},{"codigo":"021.7308","descripcion":"Implante  (BLT), conexión RC, Ø 4,8 mm, Roxolid SLActive, longitud 8 mm","familia":"BLT — IMPLANTES SLActive","precioLista":221340,"precioFinal":154938,"conexion":"RC"},{"codigo":"021.0010","descripcion":"Implante (BLT), conexión SC, Ø 2,9 mm, Roxolid SLActive, longitud 10 mm","familia":"BLT — IMPLANTES SLActive","precioLista":221340,"precioFinal":154938,"conexion":"SC"},{"codigo":"021.0012","descripcion":"Implante (BLT), conexión SC, Ø 2,9 mm, Roxolid SLActive, longitud 12 mm","familia":"BLT — IMPLANTES SLActive","precioLista":221340,"precioFinal":154938,"conexion":"SC"},{"codigo":"023.0030","descripcion":"Casquillos calcinables para / Variobase® para puentes/ / barras cilíndricos","familia":"BLT — CALCINABLES","precioLista":19040,"precioFinal":13328},{"codigo":"023.0030V4","descripcion":"Casquillos calcinables para / Variobase® para puentes/ / barras cilíndricos","familia":"BLT — CALCINABLES","precioLista":39270,"precioFinal":27489},{"codigo":"025.0024","descripcion":"Casquillos Calcinables / SC CARES® Cuerpo de referencia mono / SC Análogo de implante reposicionable","familia":"BLT — CALCINABLES","precioLista":20230,"precioFinal":14161,"conexion":"SC"},{"codigo":"025.0078","descripcion":"Scanbody NC","familia":"BLT — TOMA DE IMPRESIÓN","precioLista":53550,"precioFinal":37485,"conexion":"NC"},{"codigo":"025.0079","descripcion":"Scanbody RC","familia":"BLT — TOMA DE IMPRESIÓN","precioLista":53550,"precioFinal":37485,"conexion":"RC"}];
+PRODUCTS.push.apply(PRODUCTS, PRODUCTS_BLT);
+const FAMILIA_ORDEN = ["STRAUMANN — IMPLANTES BLC/BLX", "BLT — IMPLANTES SLActive", "BLT — IMPLANTES SLA", "STRAUMANN — TAPAS Y CICATRIZADORES", "BLT — TAPAS Y CICATRIZADORES", "STRAUMANN — REHABILITACIÓN", "STRAUMANN — TOMA DE IMPRESIÓN", "STRAUMANN — PILARES PROVISIONALES", "STRAUMANN — SOBREDENTADURA", "STRAUMANN — PILARES ANATÓMICOS", "BLT — VARIOBASE", "BLT — TOMA DE IMPRESIÓN", "BLT — PILARES ATORNILLADOS", "BLT — SOBREDENTADURA", "BLT — REHABILITACIÓN", "BLT — CALCINABLES", "LINEA DE BIOMATERIALES"];
+const DOCTORES = ['Otro / nuevo doctor'];
+const NICOLE_EMAIL = 'bethania.henriquez@straumann.com';
+const NICOLE_WSP = '56947943058';
+const COBRANZA_EMAIL = 'cobranza.cl@straumann.com';
+const WEBPAY_LINK = 'https://www.webpay.cl/form-pay/33930';
+const PATIENT_LINK_BASE = 'https://recetario-umayor-temuco.vercel.app/';
+
+// Regla de negocio: por cada implante (ACQUA o NEOPOROS) debe ir 1 tapa de cierre o
+// pilar de cicatrización al 99% de descuento (sobre precio de lista). Si faltan, se
+// autocompleta con 117.021. Si sobran, el excedente queda a precio normal.
+// Regla de negocio: por cada implante debe ir 1 tapa de cierre o pilar de cicatrización
+// al 99% de descuento (sobre precio de lista). Si faltan, se autocompleta con el código por
+// defecto de ESE sistema. Si sobran, el excedente queda a precio normal.
+// Neodent y Straumann son sistemas de conexión distintos: el crédito de implante y las tapas
+// NUNCA se mezclan entre marcas.
+const REGLAS_CIERRE = [
+  {
+    nombre: 'BLT NC',
+    implantCodes: ["021.3510", "021.3512", "021.3514", "021.3516", "021.3518", "021.3508", "021.3310", "021.3312", "021.3314", "021.3316", "021.3308"],
+    cierreCodes: ["024.2270S", "024.2246S", "024.2244S", "024.2242S", "024.2226S", "024.2224S", "024.2222S", "024.2105S", "024.2100S"],
+    defaultCode: '024.2100S'
+  },
+  {
+    nombre: 'BLT RC',
+    implantCodes: ["021.5510", "021.5512", "021.5514", "021.5516", "021.5508", "021.7510", "021.7512", "021.7514", "021.7516", "021.7508", "021.5310", "021.5312", "021.5314", "021.5316", "021.5308", "021.7310", "021.7312", "021.7314", "021.7316", "021.7308"],
+    cierreCodes: ["024.4270S", "024.4246S", "024.4244S", "024.4242S", "024.0005S", "024.0004S", "024.0003S", "024.4226S", "024.4224S", "024.4222S", "024.0002S", "024.0001S", "024.0000S", "024.4105S", "024.4100S"],
+    defaultCode: '024.4100S'
+  },
+  {
+    nombre: 'BLT SC',
+    implantCodes: ["021.0010", "021.0012"],
+    cierreCodes: ["024.0010S", "024.0009S", "024.0008S", "024.0007S", "024.0006S"],
+    defaultCode: '024.0006S'
+  },
+  {
+    nombre: 'Neodent',
+    implantFamilias: ['ACQUA', 'NEOPOROS'],
+    cierreCodes: ['106.207','106.208','106.209','106.210','106.211','106.212','106.213','106.214','106.215','106.216','106.217','106.218','117.021','117.022'],
+    defaultCode: '117.021'
+  },
+  {
+    nombre: 'Straumann',
+    implantFamilias: ['STRAUMANN — IMPLANTES BLC/BLX'],
+    cierreCodes: ["064.4100S", "064.8102S", "064.4202S", "064.4204S", "064.4206S", "064.4212S", "064.4214S", "064.4216S", "064.4222S", "064.4224S", "064.4226S", "064.4203S", "064.4205S", "064.4207S", "064.4213S", "064.4215S", "064.4217S", "064.4223S", "064.4225S", "064.4227S", "064.4232S", "064.4233S", "064.8201S", "064.8203S", "064.8212S", "064.8214S", "064.8202S", "064.8204S", "064.8213S", "064.8215S"],
+    defaultCode: '064.4100S'
+  }
+];
+const DESCUENTO_CIERRE = 0.99;
+const CIERRE_CODES = REGLAS_CIERRE.reduce(function (acc, g) { return acc.concat(g.cierreCodes); }, []);
+
+const state = {
+  cart: {},
+  paciente: '', rut: '', pacienteEmail: '', pacienteWhatsapp: '', pacienteDireccion: '',
+  doctorSel: '', doctorOtro: '', obs: '',
+  search: '', familiaFiltro: 'Todas', marcaFiltro: 'Straumann', consentimiento: false,
+  view: 'recetario',
+  activeQuote: null,
+  errorMsg: '', sendError: '', notifMsg: '', savingQuote: false,
+  enviandoAuto: false,
+  copiado: '',
+  institucionCodigo: 'UMAYORT'
+};
+
+function fmt(n) { return '$' + Math.round(n || 0).toLocaleString('es-CL'); }
+function fechaCorta(iso) {
+  try { return new Date(iso).toLocaleDateString('es-CL', { day:'2-digit', month:'2-digit', year:'numeric' }); }
+  catch (e) { return '-'; }
+}
+function esc(s) {
+  if (s === undefined || s === null) return '';
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+function toBase64Url(str) {
+  const utf8 = encodeURIComponent(str).replace(/%([0-9A-F]{2})/g, function (_, p1) { return String.fromCharCode('0x'+p1); });
+  const b64 = btoa(utf8);
+  return b64.replace(/\+/g,'-').replace(/\//g,'_').replace(/=+$/,'');
+}
+function construirLinkPaciente(quote, token) {
+  // El token lo genera la base de datos al guardar (aleatorio e impredecible),
+  // mucho más seguro que armar el link solo con el número, que sigue un patrón de fecha/hora adivinable.
+  return PATIENT_LINK_BASE + '?t=' + encodeURIComponent(token);
+}
+// Respaldo: si por algún motivo no se pudo guardar en la base de datos, el link
+// lleva los datos codificados directamente (más largo, pero funciona igual sin depender del guardado).
+function construirLinkPacienteEmbebido(quote) {
+  const data = {
+    numero: quote.numero, fecha: quote.fecha, institucion: quote.institucion,
+    paciente: quote.paciente, rut: quote.rut, doctor: quote.doctor,
+    items: quote.items.map(it => ({ codigo: it.codigo, descripcion: it.descripcion, cantidad: it.cantidad, subtotal: it.subtotal })),
+    total: quote.total, observaciones: quote.observaciones
+  };
+  return PATIENT_LINK_BASE + '?d=' + toBase64Url(JSON.stringify(data));
+}
+function construirMensajeCorto(quote) {
+  return 'Hola ' + quote.paciente + ',\n\n' +
+    'Aquí está el resumen de tu cotización ' + quote.numero + ' (U. Mayor Temuco), con el detalle de productos y las formas de pago:\n' +
+    quote.link + '\n\n' +
+    'Total: ' + fmt(quote.total) + ' (IVA y descuento institucional incluidos)\n\n' +
+    'Cualquier duda, contáctanos.\n\nSaludos.';
+}
+function abrirEnlace(url) {
+  const a = document.createElement('a');
+  a.href = url; a.target = '_blank'; a.rel = 'noopener noreferrer';
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+}
+function copiar(value, key, btnEl) {
+  function done(ok) {
+    if (!ok) return;
+    state.copiado = key;
+    const original = btnEl.innerHTML;
+    btnEl.classList.add('copied');
+    btnEl.innerHTML = '✓ Copiado';
+    setTimeout(function () { btnEl.classList.remove('copied'); btnEl.innerHTML = original; }, 1500);
+  }
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(value).then(function(){done(true);}).catch(function(){fallbackCopy(value, done);});
+  } else { fallbackCopy(value, done); }
+}
+function fallbackCopy(value, cb) {
+  try {
+    const ta = document.createElement('textarea');
+    ta.value = value; ta.style.position='fixed'; ta.style.opacity='0';
+    document.body.appendChild(ta); ta.focus(); ta.select();
+    document.execCommand('copy'); document.body.removeChild(ta);
+    cb(true);
+  } catch (e) { cb(false); }
+}
+
+const FAMILIAS_COMPARTIDAS = ['LINEA DE BIOMATERIALES']; // productos complementarios, visibles en ambas marcas
+function marcaDeFamilia(familia) { if (familia.indexOf('STRAUMANN') === 0) return 'Straumann'; if (familia.indexOf('BLT') === 0) return 'BLT'; return 'Neodent'; }
+function familiaVisibleEnMarca(familia, marca) {
+  if (FAMILIAS_COMPARTIDAS.indexOf(familia) !== -1) return true;
+  return marcaDeFamilia(familia) === marca;
+}
+function familiaLabel(familia) { if (familia.indexOf('STRAUMANN — ') === 0) return familia.slice('STRAUMANN — '.length); if (familia.indexOf('BLT — ') === 0) return familia.slice('BLT — '.length); return familia; }
+function familiasDisponibles() { return FAMILIA_ORDEN.filter(f => familiaVisibleEnMarca(f, state.marcaFiltro) && PRODUCTS.some(p => p.familia === f)); }
+function productosFiltrados() {
+  const q = state.search.trim().toLowerCase();
+  if (!q) {
+    return PRODUCTS.filter(function(p) {
+      return familiaVisibleEnMarca(p.familia, state.marcaFiltro) &&
+             (state.familiaFiltro === 'Todas' || p.familia === state.familiaFiltro);
+    });
+  }
+  return PRODUCTS.filter(function(p) {
+    const matchFam = state.familiaFiltro === 'Todas' || p.familia === state.familiaFiltro;
+    return matchFam && (p.codigo.toLowerCase().includes(q) || p.descripcion.toLowerCase().includes(q));
+  });
+}
+function agruparPorFamilia(items) {
+  const groups = {};
+  items.forEach(p => { (groups[p.familia] = groups[p.familia] || []).push(p); });
+  Object.keys(groups).forEach(f => { groups[f].sort((a,b) => a.descripcion.localeCompare(b.descripcion,'es')); });
+  const ordered = {};
+  FAMILIA_ORDEN.forEach(f => { if (groups[f]) ordered[f] = groups[f]; });
+  Object.keys(groups).forEach(f => { if (!ordered[f]) ordered[f] = groups[f]; });
+  return ordered;
+}
+function cartItemsList() {
+  return Object.entries(state.cart).map(function ([codigo, cantidad]) {
+    const p = PRODUCTS.find(function (x) { return x.codigo === codigo; });
+    return p ? Object.assign({}, p, { cantidad: cantidad }) : null;
+  }).filter(Boolean);
+}
+function totalCarrito() { return cartItemsList().reduce(function (s, it) { return s + it.precioFinal * it.cantidad; }, 0); }
+function totalItemsCarrito() { return cartItemsList().reduce(function (s, it) { return s + it.cantidad; }, 0); }
+
+function construirLineasCotizacion() {
+  const rawItems = cartItemsList();
+  const lineas = [];
+
+  REGLAS_CIERRE.forEach(function (grupo) {
+    let implantUnits = 0;
+    if (grupo.implantCodes) {
+      rawItems.forEach(function (it) { if (grupo.implantCodes.indexOf(it.codigo) !== -1) implantUnits += it.cantidad; });
+    } else {
+      rawItems.forEach(function (it) { if (grupo.implantFamilias.indexOf(it.familia) !== -1) implantUnits += it.cantidad; });
+    }
+    let creditoRestante = implantUnits;
+
+    rawItems.forEach(function (it) {
+      if (grupo.cierreCodes.indexOf(it.codigo) === -1) return;
+      const conDescuento = Math.min(it.cantidad, creditoRestante);
+      const sinDescuento = it.cantidad - conDescuento;
+      creditoRestante -= conDescuento;
+      if (conDescuento > 0) {
+        const precioEspecial = Math.round(it.precioLista * (1 - DESCUENTO_CIERRE));
+        lineas.push({ codigo: it.codigo, descripcion: it.descripcion + ' (precio especial por implante)', cantidad: conDescuento, precioUnitario: precioEspecial, subtotal: precioEspecial * conDescuento, especial: true, precioLista: it.precioLista, descuento: DESCUENTO_CIERRE });
+      }
+      if (sinDescuento > 0) {
+        lineas.push({ codigo: it.codigo, descripcion: it.descripcion, cantidad: sinDescuento, precioUnitario: it.precioFinal, subtotal: it.precioFinal * sinDescuento, especial: false, precioLista: it.precioLista, descuento: it.descuento });
+      }
+    });
+
+    if (creditoRestante > 0) {
+      const def = PRODUCTS.find(function (p) { return p.codigo === grupo.defaultCode; });
+      if (def) {
+        const precioEspecial = Math.round(def.precioLista * (1 - DESCUENTO_CIERRE));
+        lineas.push({ codigo: def.codigo, descripcion: def.descripcion + ' (agregado automático por implante)', cantidad: creditoRestante, precioUnitario: precioEspecial, subtotal: precioEspecial * creditoRestante, especial: true, auto: true, precioLista: def.precioLista, descuento: DESCUENTO_CIERRE });
+      }
+    }
+  });
+
+  rawItems.forEach(function (it) {
+    if (CIERRE_CODES.indexOf(it.codigo) !== -1) return; // ya procesado arriba por su grupo
+    lineas.push({ codigo: it.codigo, descripcion: it.descripcion, cantidad: it.cantidad, precioUnitario: it.precioFinal, subtotal: it.precioFinal * it.cantidad, especial: false, precioLista: it.precioLista, descuento: it.descuento });
+  });
+
+
+  // Orden cotización: implantes → tapas/cicatrizadores → resto alfabético
+  const FAMILIAS_IMPLANTE = ['ACQUA','NEOPOROS','STRAUMANN — IMPLANTES BLC/BLX','BLT — IMPLANTES SLA','BLT — IMPLANTES SLActive'];
+  const FAMILIAS_CIERRE_ORD = ['TAPAS - CICATRIZADORES','STRAUMANN — TAPAS Y CICATRIZADORES','BLT — TAPAS Y CICATRIZADORES'];
+  lineas.sort(function(a,b){
+    function ord(l){ var p=PRODUCTS.find(function(x){return x.codigo===l.codigo;}); var f=p?p.familia:'';
+      if(FAMILIAS_IMPLANTE.indexOf(f)!==-1) return 0;
+      if(FAMILIAS_CIERRE_ORD.indexOf(f)!==-1||l.especial) return 1; return 2; }
+    var oa=ord(a),ob=ord(b); if(oa!==ob) return oa-ob;
+    return a.descripcion.localeCompare(b.descripcion,'es');
+  });
+  return lineas;
+}
+
+function addToCart(codigo) { state.errorMsg=''; state.cart[codigo] = (state.cart[codigo]||0) + 1; renderCart(); renderFloating(); }
+function setQty(codigo, qty) { if (qty<=0) delete state.cart[codigo]; else state.cart[codigo]=qty; renderCart(); renderFloating(); }
+function removeFromCart(codigo) { delete state.cart[codigo]; renderCart(); renderFloating(); }
+function vaciarCarrito() { state.cart={}; renderCart(); renderFloating(); }
+
+function renderDoctorField() {
+  const c = document.getElementById('doctor-field');
+  if (state.doctorSel === 'Otro / nuevo doctor') {
+    c.innerHTML = '<div style="display:flex;gap:6px;">' +
+      '<input type="text" id="f-doctor-otro" placeholder="Nombre del doctor tratante" style="flex:1;" value="' + esc(state.doctorOtro) + '">' +
+      '<button type="button" id="btn-volver-lista" style="font-size:11px;color:#a1a1aa;background:none;border:none;cursor:pointer;white-space:nowrap;">Volver a la lista</button>' +
+      '</div>';
+    document.getElementById('f-doctor-otro').addEventListener('input', function(e){ state.doctorOtro = e.target.value; });
+    document.getElementById('btn-volver-lista').addEventListener('click', function(){ state.doctorSel=''; state.doctorOtro=''; renderDoctorField(); });
+  } else {
+    let opts = '<option value="">Selecciona el doctor tratante</option>';
+    DOCTORES.forEach(function(d){ opts += '<option value="' + esc(d) + '"' + (state.doctorSel===d?' selected':'') + '>' + esc(d) + '</option>'; });
+    c.innerHTML = '<select id="f-doctor-sel">' + opts + '</select>';
+    document.getElementById('f-doctor-sel').addEventListener('change', function(e){ state.doctorSel = e.target.value; renderDoctorField(); });
+  }
+}
+
+function renderProductList() {
+  const filtered = productosFiltrados();
+  const grouped = agruparPorFamilia(filtered);
+  const el = document.getElementById('product-list');
+  if (Object.keys(grouped).length === 0) {
+    el.innerHTML = '<div class="empty-msg">No encontramos productos con ese criterio. Prueba con otro código o descripción.</div>';
+    return;
+  }
+  let html = '';
+  Object.keys(grouped).forEach(function (fam) {
+    const items = grouped[fam];
+    html += '<div class="fam-title' + (fam.indexOf('STRAUMANN') === 0 || fam.indexOf('BLT') === 0 ? ' fam-straumann' : '') + '">' + esc(familiaLabel(fam)) + ' <span style="color:#d4d4d8;font-weight:400;">· ' + items.length + ' ítems</span></div>';
+    items.forEach(function (p) {
+      html += '<div class="prod-row">' +
+        '<div>' +
+          '<div class="prod-code">' + esc(p.codigo) + '</div>' +
+          '<div class="prod-desc">' + esc(p.descripcion) + '</div>' +
+          '<div class="prod-price-row">' +
+            '<span class="prod-price-old">' + fmt(p.precioLista) + '</span>' +
+            '<span class="prod-price-new">' + fmt(p.precioFinal) + '</span>' +
+          '</div>' +
+        '</div>' +
+        '<button class="btn-add" onclick="addToCart(\'' + p.codigo + '\')">+ Agregar</button>' +
+        '</div>';
+    });
+  });
+  el.innerHTML = html;
+}
+
+function renderCart() {
+  const allItems = cartItemsList();
+  const normales = allItems.filter(function (it) { return CIERRE_CODES.indexOf(it.codigo) === -1; });
+  const itemsEl = document.getElementById('cart-items');
+  if (allItems.length === 0) {
+    itemsEl.innerHTML = '<div class="empty-msg" style="padding:36px 16px;">Tu cotización está vacía.<br>Busca un producto a la izquierda y agrégalo.</div>';
+  } else if (normales.length === 0) {
+    itemsEl.innerHTML = '<div class="empty-msg" style="padding:20px 16px;font-size:12px;">Solo agregaste productos de cierre/cicatrización — revisa el recuadro de abajo. 👇</div>';
+  } else {
+    let html = '';
+    normales.forEach(function (it) {
+      html += '<div class="cart-item">' +
+        '<div class="cart-item-top">' +
+          '<div><div class="cart-item-code">' + esc(it.codigo) + '</div><div class="cart-item-desc">' + esc(it.descripcion) + '</div></div>' +
+          '<button class="remove-btn" onclick="removeFromCart(\'' + it.codigo + '\')">✕</button>' +
+        '</div>' +
+        '<div class="cart-item-bottom">' +
+          '<div class="qty-stepper">' +
+            '<button onclick="setQty(\'' + it.codigo + '\', ' + (it.cantidad-1) + ')">−</button>' +
+            '<span class="qty-val">' + it.cantidad + '</span>' +
+            '<button onclick="setQty(\'' + it.codigo + '\', ' + (it.cantidad+1) + ')">+</button>' +
+          '</div>' +
+          '<span style="font-size:12px;font-weight:600;">' + fmt(it.precioFinal * it.cantidad) + '</span>' +
+        '</div></div>';
+    });
+    itemsEl.innerHTML = html;
+  }
+
+  const lineas = construirLineasCotizacion();
+  const lineasCierre = lineas.filter(function (l) { return CIERRE_CODES.indexOf(l.codigo) !== -1; });
+
+  // Agrupar por código (un producto puede venir partido en especial/normal)
+  const porCodigo = {};
+  lineasCierre.forEach(function (l) {
+    if (!porCodigo[l.codigo]) {
+      porCodigo[l.codigo] = {
+        codigo: l.codigo,
+        descripcion: l.descripcion.replace(' (precio especial por implante)', '').replace(' (agregado automático por implante)', ''),
+        especialQty: 0, especialSubtotal: 0, normalQty: 0, normalSubtotal: 0, auto: false
+      };
+    }
+    const g = porCodigo[l.codigo];
+    if (l.auto) { g.auto = true; g.especialQty += l.cantidad; g.especialSubtotal += l.subtotal; }
+    else if (l.especial) { g.especialQty += l.cantidad; g.especialSubtotal += l.subtotal; }
+    else { g.normalQty += l.cantidad; g.normalSubtotal += l.subtotal; }
+  });
+
+  const summaryEl = document.getElementById('cart-rule-summary');
+  const grupos = Object.values(porCodigo);
+  if (grupos.length > 0) {
+    let sHtml = '<div class="rule-summary"><div class="rule-summary-title">🦷 Regla cierre/cicatrización por implante</div>';
+    grupos.forEach(function (g) {
+      const totalQty = g.especialQty + g.normalQty;
+      const totalSub = g.especialSubtotal + g.normalSubtotal;
+      let badge = g.auto ? '<span class="rule-badge">AGREGADO AUTO · 99% DTO</span>' : (g.especialQty > 0 ? '<span class="rule-badge">99% DTO</span>' : '');
+      let desglose = '';
+      if (g.especialQty > 0 && g.normalQty > 0) {
+        desglose = '<div style="font-size:10px;color:#92400e;margin-top:2px;">' + g.especialQty + ' al 99% dto + ' + g.normalQty + ' a precio normal</div>';
+      }
+      let controles = '';
+      if (!g.auto) {
+        const totalEnCarrito = state.cart[g.codigo] || 0;
+        controles = '<div class="qty-stepper">' +
+          '<button onclick="setQty(\'' + g.codigo + '\', ' + (totalEnCarrito - 1) + ')">−</button>' +
+          '<span class="qty-val">' + totalEnCarrito + '</span>' +
+          '<button onclick="setQty(\'' + g.codigo + '\', ' + (totalEnCarrito + 1) + ')">+</button>' +
+          '</div>';
+      } else {
+        controles = '<span style="font-size:10px;color:#a1a1aa;">se agrega solo</span>';
+      }
+      sHtml += '<div style="background:#fff;border:1px solid #fde68a;border-radius:8px;padding:8px 10px;margin-bottom:6px;">' +
+        '<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:6px;">' +
+        '<div><div style="font-family:ui-monospace,monospace;font-size:10px;color:#a1a1aa;">' + esc(g.codigo) + '</div>' +
+        '<div style="font-size:11px;color:#27272a;">' + esc(g.descripcion) + '</div></div>' +
+        badge +
+        '</div>' +
+        desglose +
+        '<div style="display:flex;justify-content:space-between;align-items:center;margin-top:6px;">' +
+        controles +
+        '<span style="font-size:12px;font-weight:700;">' + fmt(totalSub) + '</span>' +
+        '</div></div>';
+    });
+    sHtml += '</div>';
+    summaryEl.innerHTML = sHtml;
+  } else {
+    summaryEl.innerHTML = '';
+  }
+
+  const totalReal = lineas.reduce(function (s, l) { return s + l.subtotal; }, 0);
+  const cantidadReal = lineas.reduce(function (s, l) { return s + l.cantidad; }, 0);
+  document.getElementById('cart-count').textContent = cantidadReal + ' producto(s)';
+  document.getElementById('cart-total').textContent = fmt(totalReal);
+
+  const msgsEl = document.getElementById('cart-msgs');
+  let msgsHtml = '';
+  if (state.errorMsg) msgsHtml += '<div class="msg-error">⚠️ ' + esc(state.errorMsg) + '</div>';
+  msgsEl.innerHTML = msgsHtml;
+
+  const btn = document.getElementById('btn-generar');
+  btn.disabled = state.savingQuote;
+  btn.textContent = state.savingQuote ? 'Generando...' : 'Generar cotización';
+}
+
+function renderFloating() {
+  const btn = document.getElementById('floating-btn');
+  const count = totalItemsCarrito();
+  if (count > 0 && state.view === 'recetario') {
+    const lineas = construirLineasCotizacion();
+    const totalReal = lineas.reduce(function (s, l) { return s + l.subtotal; }, 0);
+    btn.style.display = 'flex';
+    document.getElementById('floating-count').textContent = count;
+    document.getElementById('floating-total').textContent = fmt(totalReal) + ' →';
+  } else {
+    btn.style.display = 'none';
+  }
+}
+
+async function generarCotizacion() {
+  const doctorFinal = state.doctorSel === 'Otro / nuevo doctor' ? state.doctorOtro.trim() : state.doctorSel;
+  if (cartItemsList().length === 0) {
+    state.errorMsg = 'Agrega al menos un producto del recetario antes de generar la cotización.'; renderCart(); return;
+  }
+  if (!state.paciente.trim() || !doctorFinal) {
+    state.errorMsg = 'Completa el nombre del paciente y selecciona (o escribe) el doctor tratante.'; renderCart(); return;
+  }
+  if (!state.pacienteEmail.trim()) {
+    state.errorMsg = 'Ingresa el correo del paciente para poder enviarle la cotización.'; renderCart(); return;
+  }
+  if (!state.consentimiento) {
+    state.errorMsg = 'Marca la casilla de autorización del paciente para continuar.'; renderCart(); return;
+  }
+  state.errorMsg = ''; state.savingQuote = true; renderCart();
+
+  const ahora = new Date();
+  const pad2 = function (n) { return String(n).padStart(2, '0'); };
+  const numero = 'UMAYORT-' + ahora.getFullYear() + pad2(ahora.getMonth()+1) + pad2(ahora.getDate()) + '-' + pad2(ahora.getHours()) + pad2(ahora.getMinutes()) + pad2(ahora.getSeconds());
+
+  const lineasCotizacion = construirLineasCotizacion();
+  const lineasEspeciales = lineasCotizacion.filter(function(l) { return l.especial; });
+  const lineasNormales   = lineasCotizacion.filter(function(l) { return !l.especial; });
+
+  let itemsNormalesValidados = [];
+  if (lineasNormales.length > 0) {
+    const itemsParaRPC = lineasNormales.map(function(l) {
+      const prod = PRODUCTS.find(function(p) { return p.codigo === l.codigo; });
+      return { codigo: l.codigo, descripcion: l.descripcion, familia: prod ? prod.familia : '', precioLista: l.precioLista, cantidad: l.cantidad };
+    });
+    let calcError = null; let calcData = null;
+    try {
+      const calcRes = await sb.rpc('calcular_items_cotizacion', { p_institucion_codigo: state.institucionCodigo, p_items: itemsParaRPC });
+      calcError = calcRes.error; calcData = calcRes.data;
+    } catch(e) { calcError = e; }
+    if (calcError || !calcData) {
+      state.errorMsg = '⚠️ No se pudieron validar los precios con el servidor. Por favor intenta nuevamente antes de generar la cotización.';
+      state.savingQuote = false; renderCart(); return;
+    }
+    itemsNormalesValidados = calcData.map(function(item) {
+      return { codigo: item.codigo, descripcion: item.descripcion, cantidad: item.cantidad, precioFinal: item.precioFinal, subtotal: item.subtotal, precioLista: item.precioLista };
+    });
+  }
+
+  const itemsEspeciales = lineasEspeciales.map(function(l) {
+    return { codigo: l.codigo, descripcion: l.descripcion, cantidad: l.cantidad, precioFinal: l.precioUnitario, subtotal: l.subtotal, precioLista: l.precioLista };
+  });
+
+  const items = itemsNormalesValidados.concat(itemsEspeciales);
+  const total = items.reduce(function(s, it) { return s + it.subtotal; }, 0);
+
+  const quote = {
+    numero: numero,
+    institucion: 'U. Mayor Temuco — Universidad Mayor',
+    paciente: state.paciente.trim(),
+    rut: state.rut.trim(),
+    pacienteEmail: state.pacienteEmail.trim(),
+    pacienteWhatsapp: state.pacienteWhatsapp.trim(),
+    pacienteDireccion: state.pacienteDireccion.trim(),
+    doctor: doctorFinal,
+    fecha: ahora.toISOString(),
+    observaciones: state.obs.trim(),
+    items: items,
+    total: total,
+    estado: 'Cotización generada',
+    historial: [{ estado: 'Cotización generada', fecha: ahora.toISOString() }]
+  };
+  let dbId = null;
+  let dbToken = null;
+  let dbError = '';
+  try {
+    const { data, error } = await sb.rpc('crear_cotizacion', {
+      payload: {
+        numero: quote.numero, institucion: quote.institucion, paciente: quote.paciente, rut: quote.rut,
+        paciente_email: quote.pacienteEmail, paciente_whatsapp: quote.pacienteWhatsapp, paciente_direccion: quote.pacienteDireccion, doctor: quote.doctor,
+        fecha: quote.fecha, observaciones: quote.observaciones, items: quote.items, total: quote.total,
+        estado: quote.estado, historial: quote.historial
+      }
+    });
+    if (!error && data && data.token) { dbId = data.id; dbToken = data.token; }
+    else if (!error) { dbError = 'La base de datos no devolvió un token válido.'; }
+    else { dbError = (error.message || '') + ' | code: ' + (error.code || '-') + ' | details: ' + (error.details || '-') + ' | hint: ' + (error.hint || '-'); }
+  } catch (e) { dbError = 'Excepción JS: ' + (e && e.message ? e.message : String(e)); }
+  quote.dbId = dbId;
+  quote.dbError = dbError;
+  if (dbError) {
+    // No se pudo guardar: no hay fila ni token que buscar, así que se usa el link
+    // con los datos embebidos como respaldo para no dejar al doctor sin link.
+    quote.link = construirLinkPacienteEmbebido(quote);
+  } else {
+    quote.link = construirLinkPaciente(quote, dbToken);
+  }
+
+  state.savingQuote = false;
+  state.activeQuote = quote;
+  state.sendError = ''; state.notifMsg = '';
+  state.view = 'compartir';
+  document.getElementById('view-recetario').style.display = 'none';
+  document.getElementById('view-compartir').style.display = 'block';
+  window.scrollTo({ top: 0, behavior: 'auto' });
+  renderCompartir();
+}
+
+async function actualizarEstadoActivo(nuevoEstado) {
+  if (!state.activeQuote) return;
+  state.activeQuote.estado = nuevoEstado;
+  state.activeQuote.historial.push({ estado: nuevoEstado, fecha: new Date().toISOString() });
+  if (state.activeQuote.dbId) {
+    try { await sb.rpc('actualizar_estado_cotizacion', { p_id: state.activeQuote.dbId, p_estado: nuevoEstado, p_historial: state.activeQuote.historial }); } catch (e) {}
+  }
+}
+
+async function enviarAlPaciente() {
+  const q = state.activeQuote; if (!q) return;
+  if (!q.pacienteEmail) { state.sendError = 'Esta cotización no tiene correo del paciente.'; renderCompartir(); return; }
+  state.sendError=''; state.notifMsg='';
+  await actualizarEstadoActivo('Enviada al paciente');
+  const cuerpo = construirMensajeCorto(q);
+  const asunto = 'Cotización ' + q.numero + ' - U. Mayor Temuco';
+  abrirEnlace('mailto:' + q.pacienteEmail + '?cc=' + NICOLE_EMAIL + '&subject=' + encodeURIComponent(asunto) + '&body=' + encodeURIComponent(cuerpo));
+  state.notifMsg = 'Se abrió tu correo con el link de la cotización, el paciente como destinatario y Bethania en copia (CC). Solo revisa y presiona enviar.';
+  renderCompartir();
+}
+async function enviarAlPacienteWhatsapp() {
+  const q = state.activeQuote; if (!q) return;
+  if (!q.pacienteWhatsapp) { state.sendError = 'Esta cotización no tiene WhatsApp del paciente registrado.'; renderCompartir(); return; }
+  state.sendError=''; state.notifMsg='';
+  await actualizarEstadoActivo('Enviada al paciente');
+  const texto = construirMensajeCorto(q);
+  abrirEnlace('https://wa.me/569' + q.pacienteWhatsapp + '?text=' + encodeURIComponent(texto));
+  state.notifMsg = 'Se abrió WhatsApp con el link de la cotización para el paciente. WhatsApp no permite copiar a Bethania automáticamente — avísale aparte con los botones de abajo si usas este canal.';
+  renderCompartir();
+}
+async function enviarAutomaticamente() {
+  const q = state.activeQuote; if (!q) return;
+  if (!q.pacienteEmail) { state.sendError = 'Esta cotización no tiene correo del paciente.'; renderCompartir(); return; }
+  if (!q.dbId) { state.sendError = 'Esta cotización no quedó guardada en el sistema. Usa "Copiar link" o los botones manuales de abajo.'; renderCompartir(); return; }
+
+  state.sendError = ''; state.notifMsg = ''; state.enviandoAuto = true;
+  renderCompartir();
+
+  try {
+    const { data, error } = await sb.functions.invoke('enviar-cotizacion', {
+      body: { cotizacion_id: q.dbId }
+    });
+
+    if (error || !data || data.ok !== true) {
+      const msg = (data && data.error) || (error && error.message) || 'No se pudo enviar el correo automáticamente.';
+      state.sendError = msg + ' Puedes usar "Copiar link" o los botones manuales de abajo mientras tanto.';
+      state.enviandoAuto = false;
+      renderCompartir();
+      return;
+    }
+
+    q.estado = 'Enviada al paciente';
+    q.historial.push({ estado: 'Enviada al paciente', fecha: new Date().toISOString(), canal: 'automatico' });
+    state.notifMsg = 'Correo enviado automáticamente al paciente desde cotizaciones@recetariostra.cl.';
+    state.enviandoAuto = false;
+    renderCompartir();
+  } catch (e) {
+    state.sendError = 'Error de red al intentar el envío automático. Puedes usar "Copiar link" o los botones manuales de abajo mientras tanto.';
+    state.enviandoAuto = false;
+    renderCompartir();
+  }
+}
+
+function limpiarFormulario() {
+  state.paciente = ''; state.rut = ''; state.pacienteEmail = ''; state.pacienteWhatsapp = '';
+  state.pacienteDireccion = ''; state.obs = ''; state.doctorSel = ''; state.doctorOtro = '';
+  state.cart = {}; state.errorMsg = ''; state.search = ''; state.familiaFiltro = 'Todas'; state.marcaFiltro = 'Straumann'; state.consentimiento = false;
+
+  document.getElementById('f-paciente').value = '';
+  document.getElementById('f-rut').value = '';
+  document.getElementById('f-email').value = '';
+  document.getElementById('f-wsp').value = '';
+  document.getElementById('f-direccion').value = '';
+  document.getElementById('f-obs').value = '';
+  document.getElementById('f-consentimiento').checked = false;
+  document.getElementById('f-search').value = '';
+
+  renderDoctorField();
+  renderMarcaToggle();
+  renderFamiliaSelect();
+  renderProductList();
+  renderCart();
+  renderFloating();
+}
+
+function volverAlRecetario() {
+  state.view = 'recetario'; state.activeQuote = null;
+  document.getElementById('view-compartir').style.display = 'none';
+  document.getElementById('view-recetario').style.display = 'block';
+  window.scrollTo({ top: 0, behavior: 'auto' });
+  limpiarFormulario();
+}
+
+function campoCopiableHtml(label, value, key) {
+  return '<div style="display:flex;align-items:center;justify-content:space-between;gap:8px;background:#fff;border:1px solid #fde68a;border-radius:10px;padding:8px 12px;margin-bottom:6px;">' +
+    '<div><div style="font-size:10px;text-transform:uppercase;color:#a1a1aa;">' + esc(label) + '</div><div style="font-weight:700;font-size:14px;">' + esc(value) + '</div></div>' +
+    '<button class="btn-copy" onclick="copiar(\'' + value.replace(/'/g,"\\'") + '\', \'' + key + '\', this)">📋 Copiar</button>' +
+    '</div>';
+}
+
+function renderCompartir() {
+  const q = state.activeQuote;
+  const el = document.getElementById('view-compartir');
+  if (!q) { el.innerHTML = ''; return; }
+
+  let msgsHtml = '';
+  if (state.sendError) msgsHtml += '<div class="msg-error" style="text-align:left;">⚠️ ' + esc(state.sendError) + '</div>';
+  if (state.notifMsg) msgsHtml += '<div class="msg-success" style="text-align:left;">✅ ' + esc(state.notifMsg) + '</div>';
+
+  el.innerHTML =
+    '<header class="topbar"><div><div class="brand-name">STRAUMANN</div><div class="brand-sub">GROUP CHILE · BLC/BLX · NEODENT · BLT</div></div>' +
+    '<button onclick="window.print()" style="font-size:12px;color:#71717a;background:none;border:none;cursor:pointer;">🖨️ Vista de impresión</button></header>' +
+    '<div class="compartir-wrap">' +
+      '<div class="center-card">' +
+        '<div class="ok-circle">✅</div>' +
+        '<h2 style="font-size:18px;font-weight:700;margin:0 0 4px;">Cotización ' + esc(q.numero) + ' generada</h2>' +
+        '<p style="font-size:13px;color:#71717a;margin:0 0 18px;">' + esc(q.paciente) + ' · ' + fmt(q.total) + '</p>' +
+        '<div class="link-box"><span>' + esc(q.link) + '</span>' +
+          '<button class="btn-copy" onclick="copiar(\'' + q.link.replace(/'/g,"\\'") + '\', \'enlace\', this)">📋 Copiar</button></div>' +
+        '<p class="hint" style="margin-bottom:16px;">Este link abre para tu paciente el detalle completo de su cotización y las formas de pago, listo para que pague.</p>' +
+        (q.dbError ? '<div style="text-align:left;background:#fef2f2;border:1px solid #fecaca;border-radius:8px;padding:10px 12px;margin-bottom:14px;font-size:11px;color:#991b1b;word-break:break-word;"><strong>Aviso técnico (no afecta el link del paciente):</strong> no se guardó en el panel de Nicole/Admin. Detalle: ' + esc(q.dbError) + '</div>' : '') +
+        msgsHtml +
+        '<div class="send-buttons">' +
+          '<button class="btn-solid-red" onclick="enviarAutomaticamente()"' + (state.enviandoAuto ? ' disabled' : '') + '>' +
+            (state.enviandoAuto ? '⏳ Enviando...' : '📨 Enviar automáticamente al paciente') +
+          '</button>' +
+        '</div>' +
+        '<div class="send-buttons" style="margin-top:6px;">' +
+          '<button class="btn-outline" onclick="enviarAlPaciente()">✉️ Por correo (manual, copia a Bethania)</button>' +
+          '<button class="btn-outline" onclick="enviarAlPacienteWhatsapp()">💬 Por WhatsApp</button>' +
+        '</div>' +
+        '<p class="hint">El envío automático llega directo al paciente sin depender de tu correo o celular. Los botones manuales quedan como respaldo si lo prefieres.</p>' +
+      '</div>' +
+
+      '<div style="background:var(--amber-bg);border:2px solid var(--amber-border);border-radius:14px;padding:20px;text-align:left;margin-bottom:16px;">' +
+        '<h3 style="font-size:15px;font-weight:700;margin:0 0 4px;">💳 Confirmación de formas de pago</h3>' +
+        '<p style="font-size:12px;color:#71717a;margin:0 0 14px;">Esto mismo lo ve tu paciente en su link.</p>' +
+        '<div style="font-size:13px;font-weight:700;margin-bottom:8px;">Opción 1 — Transferencia</div>' +
+        campoCopiableHtml('Nombre / Destinatario', 'Manohay Chile SpA', 'doc-nombre') +
+        '<div style="font-size:12px;color:#71717a;padding:0 4px;margin-bottom:6px;">Banco: <strong>BICE</strong> · Tipo de cuenta: <strong>Cuenta Corriente</strong></div>' +
+        campoCopiableHtml('N° de Cuenta', '21002704', 'doc-cuenta') +
+        campoCopiableHtml('RUT', '76.598.913-2', 'doc-rut') +
+        '<div style="font-size:12px;color:#52525b;margin-top:6px;background:#fff;border:1px solid #fde68a;border-radius:8px;padding:8px 10px;">Comprobante a <strong>' + COBRANZA_EMAIL + '</strong> con copia a <strong>' + NICOLE_EMAIL + '</strong></div>' +
+        '<div style="font-size:13px;font-weight:700;margin:14px 0 8px;">Opción 2 — Pagar en línea</div>' +
+        '<a href="' + WEBPAY_LINK + '" target="_blank" rel="noopener noreferrer" style="display:flex;align-items:center;justify-content:center;gap:8px;background:var(--red);color:#fff;font-weight:700;font-size:14px;padding:12px 16px;border-radius:10px;text-decoration:none;">💳 Pagar ahora con Webpay</a>' +
+      '</div>' +
+
+      '<button class="link-back" onclick="volverAlRecetario()">← Volver al recetario</button>' +
+    '</div>';
+}
+
+
+async function initInstitucion() {
+  try {
+    var dominio = window.location.hostname;
+    if (dominio !== 'recetario-umayor-temuco.vercel.app' && dominio.indexOf('recetario-umayor-temuco') !== -1) {
+      dominio = 'recetario-umayor-temuco.vercel.app';
+    }
+    const { data, error } = await sb.rpc('obtener_config_institucion', { p_dominio: dominio });
+    if (error || !data || !data.codigo) return;
+    state.institucionCodigo = data.codigo;
+  } catch(e) { /* fallback silencioso: state.institucionCodigo queda como 'UMAYORT' */ }
+}
+initInstitucion();
+
+// --- Wiring de eventos de los campos estáticos (se escriben una sola vez) ---
+document.getElementById('f-paciente').addEventListener('input', function(e){ state.paciente = e.target.value; });
+document.getElementById('f-rut').addEventListener('input', function(e){ state.rut = e.target.value; });
+document.getElementById('f-email').addEventListener('input', function(e){ state.pacienteEmail = e.target.value; });
+document.getElementById('f-wsp').addEventListener('input', function(e){
+  e.target.value = e.target.value.replace(/\D/g,'').slice(0,8);
+  state.pacienteWhatsapp = e.target.value;
+});
+document.getElementById('f-direccion').addEventListener('input', function(e){ state.pacienteDireccion = e.target.value; });
+document.getElementById('f-obs').addEventListener('input', function(e){ state.obs = e.target.value; });
+document.getElementById('f-search').addEventListener('input', function(e) {
+  state.search = e.target.value;
+  const q = state.search.trim().toLowerCase();
+  if (q) {
+    const resultados = PRODUCTS.filter(function(p) {
+      return p.codigo.toLowerCase().includes(q) || p.descripcion.toLowerCase().includes(q);
+    });
+    const algunoVisible = resultados.some(function(p) { return familiaVisibleEnMarca(p.familia, state.marcaFiltro); });
+    if (resultados.length > 0 && !algunoVisible) {
+      const marcas = resultados.reduce(function(acc, p) {
+        var m = marcaDeFamilia(p.familia); if (acc.indexOf(m) === -1) acc.push(m); return acc;
+      }, []);
+      if (marcas.length === 1) {
+        state.marcaFiltro = marcas[0];
+        state.familiaFiltro = 'Todas';
+        renderMarcaToggle();
+        renderFamiliaSelect();
+      }
+    }
+  }
+  renderProductList();
+});
+document.getElementById('btn-vaciar').addEventListener('click', vaciarCarrito);
+document.getElementById('btn-limpiar-form').addEventListener('click', limpiarFormulario);
+document.getElementById('f-consentimiento').addEventListener('change', function (e) { state.consentimiento = e.target.checked; });
+document.getElementById('btn-generar').addEventListener('click', generarCotizacion);
+document.getElementById('floating-btn').addEventListener('click', function(){
+  document.getElementById('cotizacion-cart').scrollIntoView({ behavior:'smooth', block:'start' });
+});
+
+// Familia select (opciones generadas dinámicamente según la marca activa)
+function renderFamiliaSelect(){
+  const sel = document.getElementById('f-familia');
+  let opts = '<option value="Todas">Todas</option>';
+  familiasDisponibles().forEach(function(f){ opts += '<option value="' + esc(f) + '"' + (state.familiaFiltro===f?' selected':'') + '>' + esc(familiaLabel(f)) + '</option>'; });
+  sel.innerHTML = opts;
+}
+document.getElementById('f-familia').addEventListener('change', function(e){ state.familiaFiltro = e.target.value; renderProductList(); });
+
+function renderMarcaToggle(){
+  document.querySelectorAll('.marca-btn').forEach(function(btn){
+    btn.classList.toggle('active', btn.getAttribute('data-marca') === state.marcaFiltro);
+  });
+}
+document.querySelectorAll('.marca-btn').forEach(function(btn){
+  btn.addEventListener('click', function(){
+    state.marcaFiltro = btn.getAttribute('data-marca');
+    state.familiaFiltro = 'Todas';
+    renderMarcaToggle();
+    renderFamiliaSelect();
+    renderProductList();
+  });
+});
+renderMarcaToggle();
+renderFamiliaSelect();
+
+renderDoctorField();
+renderProductList();
+renderCart();
+renderFloating();
+
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', function () {
+    navigator.serviceWorker.register('/sw.js').catch(function () {});
+  });
+}
+</script>
+</body>
+</html>
