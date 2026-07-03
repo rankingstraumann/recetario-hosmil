@@ -105,11 +105,45 @@ const ESTADO_COLOR = {
 let cotizaciones = [];
 let estadoFiltro = 'Todos';
 let institucionFiltro = 'Todas';
+let filtroUrgencia = 'Todos'; // 'Todos' | 'PagoInformado' | 'Urgente48h' | 'Gestionados'
 let filaAbierta = null;
 let channel = null;
 let errorConexion = false;
 let errorConexionMsg = '';
 let miPerfil = null; // { es_super_admin, es_observador } del usuario logueado
+
+// --- Criterios de urgencia: pago informado pendiente de ingreso ---
+function fechaPagoInformado(c) {
+  var hist = Array.isArray(c.historial) ? c.historial : [];
+  for (var i = hist.length - 1; i >= 0; i--) {
+    if (hist[i] && hist[i].estado === 'Pago informado' && hist[i].fecha) return hist[i].fecha;
+  }
+  return c.created_at; // respaldo si no hay historial con ese estado
+}
+function esPagoInformadoPendiente(c) { return c.estado === 'Pago informado'; }
+function esUrgente48h(c) {
+  if (!esPagoInformadoPendiente(c)) return false;
+  var f = fechaPagoInformado(c);
+  if (!f) return false;
+  return (Date.now() - new Date(f).getTime()) > 48 * 60 * 60 * 1000;
+}
+var IDX_INGRESADO = ESTADOS.indexOf('Pedido ingresado al sistema');
+function estaGestionado(c) {
+  return c.estado !== 'Anulado' && ESTADOS.indexOf(c.estado) >= IDX_INGRESADO;
+}
+function comparaPrioridadUrgencia(a, b) {
+  var aInf = esPagoInformadoPendiente(a), bInf = esPagoInformadoPendiente(b);
+  if (aInf && !bInf) return -1;
+  if (!aInf && bInf) return 1;
+  if (aInf && bInf) {
+    var aUrg = esUrgente48h(a), bUrg = esUrgente48h(b);
+    if (aUrg && !bUrg) return -1;
+    if (!aUrg && bUrg) return 1;
+    // dentro del mismo grupo: más antiguo primero
+    return new Date(fechaPagoInformado(a)).getTime() - new Date(fechaPagoInformado(b)).getTime();
+  }
+  return 0; // el resto conserva el orden ya existente (created_at desc)
+}
 let vistaActiva = 'cotizaciones'; // 'cotizaciones' | 'dashboard'
 let dashFiltro = 'todo'; // 'hoy' | '7d' | '30d' | 'todo'
 function esObservador() { return !!(miPerfil && miPerfil.es_observador); }
@@ -916,18 +950,44 @@ function renderDashboard() {
   const visibles = cotizaciones.filter(function (c) {
     const matchEstado = estadoFiltro === 'Todos' || c.estado === estadoFiltro;
     const matchInst = institucionFiltro === 'Todas' || institucionInfo(c.institucion).label === institucionFiltro;
-    return matchEstado && matchInst;
+    const matchUrgencia =
+      filtroUrgencia === 'Todos' ? true :
+      filtroUrgencia === 'PagoInformado' ? esPagoInformadoPendiente(c) :
+      filtroUrgencia === 'Urgente48h' ? esUrgente48h(c) :
+      filtroUrgencia === 'Gestionados' ? estaGestionado(c) : true;
+    return matchEstado && matchInst && matchUrgencia;
+  }).sort(comparaPrioridadUrgencia);
+
+  // Indicadores superiores: siempre sobre el universo filtrado por institución
+  // (no por estadoFiltro/filtroUrgencia), para que el número no desaparezca
+  // al estar mirando otro filtro.
+  const universoIndicadores = cotizaciones.filter(function (c) {
+    return institucionFiltro === 'Todas' || institucionInfo(c.institucion).label === institucionFiltro;
   });
+  const countPagoInformado = universoIndicadores.filter(esPagoInformadoPendiente).length;
+  const countUrgente48h = universoIndicadores.filter(esUrgente48h).length;
 
   let filasHtml = '';
   if (visibles.length === 0) {
-    filasHtml = '<tr><td colspan="7"><div class="empty-msg">No hay cotizaciones' + (estadoFiltro !== 'Todos' ? ' con estado "' + esc(estadoFiltro) + '"' : ' todavía') + '.</div></td></tr>';
+    const sufijoUrgenciaMsg =
+      filtroUrgencia === 'PagoInformado' ? ' con pago informado pendiente de ingreso' :
+      filtroUrgencia === 'Urgente48h' ? ' con más de 48 hrs sin gestión' :
+      filtroUrgencia === 'Gestionados' ? ' ya ingresadas/gestionadas' : '';
+    filasHtml = '<tr><td colspan="7"><div class="empty-msg">No hay cotizaciones' + sufijoUrgenciaMsg + (estadoFiltro !== 'Todos' ? ' con estado "' + esc(estadoFiltro) + '"' : sufijoUrgenciaMsg ? '' : ' todavía') + '.</div></td></tr>';
   } else {
     visibles.forEach(function (c) {
       const colorStyle = ESTADO_COLOR[c.estado] || '#f4f4f5;color:#3f3f46';
       const inst = institucionInfo(c.institucion);
       let estadoOpts = '';
       ESTADOS.forEach(function (e) { estadoOpts += '<option value="' + esc(e) + '"' + (c.estado === e ? ' selected' : '') + '>' + esc(e) + '</option>'; });
+
+      const badgeUrgencia = esUrgente48h(c)
+        ? '<div style="margin-top:3px;"><span style="font-size:9px;font-weight:800;letter-spacing:.03em;background:#fee2e2;color:#991b1b;border-radius:5px;padding:2px 6px;">🔴 URGENTE +48 HRS</span></div>'
+        : esPagoInformadoPendiente(c)
+          ? '<div style="margin-top:3px;"><span style="font-size:9px;font-weight:800;letter-spacing:.03em;background:#fef3c7;color:#92400e;border-radius:5px;padding:2px 6px;">🟡 PAGO INFORMADO — PENDIENTE</span></div>'
+          : estaGestionado(c)
+            ? '<div style="margin-top:3px;"><span style="font-size:9px;font-weight:700;letter-spacing:.03em;background:#d1fae5;color:#065f46;border-radius:5px;padding:2px 6px;">✓ INGRESADO</span></div>'
+            : '';
 
       filasHtml += '<tr onclick="toggleFila(\'' + c.id + '\')">' +
         '<td><span style="font-size:10px;font-weight:700;border-radius:6px;padding:3px 7px;background:' + inst.color + '">' + esc(inst.label) + '</span><br><span style="font-size:10px;color:#a1a1aa;margin-top:2px;display:inline-block;">' + esc(inst.responsable) + '</span></td>' +
@@ -940,6 +1000,7 @@ function renderDashboard() {
           (esObservador()
             ? '<span class="estado-select" style="background:' + colorStyle + ';display:inline-block;" title="Solo lectura">' + esc(c.estado) + '</span>'
             : '<select class="estado-select" style="background:' + colorStyle + '" onchange="cambiarEstado(\'' + c.id + '\', this.value)">' + estadoOpts + '</select>') +
+          badgeUrgencia +
         '</td>' +
       '</tr>';
 
@@ -995,6 +1056,27 @@ function renderDashboard() {
       (esSuperAdmin() ? '<div class="view-tabs"><button class="view-tab active">📋 Cotizaciones</button><button class="view-tab" onclick="vistaActiva=\'dashboard\';renderDashboardPiloto()">📊 Dashboard Piloto</button></div>' : '') +
       '<h2 style="margin:0 0 4px;">Cotizaciones</h2>' +
       '<p style="font-size:12px;color:#a1a1aa;margin:0 0 18px;">Se actualiza en vivo a medida que se generan cotizaciones.</p>' +
+      (countPagoInformado > 0 || countUrgente48h > 0 ?
+      '<div style="display:flex;gap:12px;flex-wrap:wrap;margin-bottom:16px;">' +
+        (countPagoInformado > 0 ?
+        '<div style="flex:1;min-width:220px;background:#fffbeb;border:1px solid #fde68a;border-radius:10px;padding:14px 18px;">' +
+          '<div style="font-size:11px;font-weight:700;color:#92400e;text-transform:uppercase;letter-spacing:.03em;">Pagos informados por ingresar</div>' +
+          '<div style="font-size:32px;font-weight:800;color:#92400e;line-height:1.2;">' + countPagoInformado + '</div>' +
+          '<div style="font-size:12px;color:#92400e;font-weight:600;">⚠️ Urgente: ingresar pedidos pendientes</div>' +
+        '</div>' : '') +
+        (countUrgente48h > 0 ?
+        '<div style="flex:1;min-width:220px;background:#fef2f2;border:1px solid #fecaca;border-radius:10px;padding:14px 18px;">' +
+          '<div style="font-size:11px;font-weight:700;color:#991b1b;text-transform:uppercase;letter-spacing:.03em;">Pedidos +48 hrs sin gestión</div>' +
+          '<div style="font-size:32px;font-weight:800;color:#991b1b;line-height:1.2;">' + countUrgente48h + '</div>' +
+          '<div style="font-size:12px;color:#991b1b;font-weight:600;">🔴 Revisar hoy</div>' +
+        '</div>' : '') +
+      '</div>' : '') +
+      '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px;">' +
+        '<button class="btn-logout" style="' + (filtroUrgencia==='Todos' ? 'background:#1a1a1a;color:#fff;border-color:#1a1a1a;' : '') + '" onclick="filtroUrgencia=\'Todos\';renderDashboard();">Todos</button>' +
+        '<button class="btn-logout" style="' + (filtroUrgencia==='PagoInformado' ? 'background:#92400e;color:#fff;border-color:#92400e;' : '') + '" onclick="filtroUrgencia=\'PagoInformado\';renderDashboard();">🟡 Pagos por ingresar</button>' +
+        '<button class="btn-logout" style="' + (filtroUrgencia==='Urgente48h' ? 'background:#991b1b;color:#fff;border-color:#991b1b;' : '') + '" onclick="filtroUrgencia=\'Urgente48h\';renderDashboard();">🔴 +48 hrs sin gestión</button>' +
+        '<button class="btn-logout" style="' + (filtroUrgencia==='Gestionados' ? 'background:#065f46;color:#fff;border-color:#065f46;' : '') + '" onclick="filtroUrgencia=\'Gestionados\';renderDashboard();">✓ Ingresados / gestionados</button>' +
+      '</div>' +
       '<div class="toolbar">' +
         '<span class="stat-pill">' + visibles.length + ' de ' + cotizaciones.length + ' cotizaciones</span>' +
         '<div style="display:flex;gap:8px;flex-wrap:wrap;">' +
