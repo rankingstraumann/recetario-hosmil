@@ -150,7 +150,7 @@ function esObservador() { return !!(miPerfil && miPerfil.es_observador); }
 
 function institucionInfo(inst) {
   const s = (inst || '').toUpperCase();
-  if (s.indexOf('TEMUCO') !== -1) return { label: 'U Mayor Temuco', color: '#fdf4ff;color:#a21caf', despacho: 'U. Mayor Temuco — dirección pendiente de confirmar', responsable: 'Bethania', codigo: 'UMAYORT' };
+  if (s.indexOf('TEMUCO') !== -1) return { label: 'U Mayor Temuco', color: '#fdf4ff;color:#a21caf', despacho: 'U. Mayor Temuco — Avenida Alemania 0281, 2° piso, Odontología, Temuco', responsable: 'Bethania', codigo: 'UMAYORT' };
   if (s.indexOf('UNAB') !== -1) return { label: 'UNAB Stgo', color: '#eff6ff;color:#1d4ed8', despacho: 'UNAB Santiago — Echaurren 237', responsable: 'Nicole', codigo: 'UNAB' };
   if (s.indexOf('UDP') !== -1) return { label: 'UDP Stgo', color: '#f5f3ff;color:#6d28d9', despacho: 'UDP Santiago — Av. Ejército Libertador 219', responsable: 'Carla', codigo: 'UDP' };
   if (s.indexOf('MAYOR') !== -1) return { label: 'U Mayor Stgo', color: '#fdf4ff;color:#a21caf', despacho: 'U. Mayor Santiago — Av. Libertador Bernardo O\'Higgins 2013', responsable: 'Nicole', codigo: 'UMAYOR' };
