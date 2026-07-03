@@ -1,0 +1,419 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Solicitud Institucional · UC</title>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>
+  * { box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    background: #f4f5f7;
+    margin: 0;
+    color: #1a1a1a;
+  }
+  header {
+    background: #003DA5;
+    color: #fff;
+    padding: 20px 20px 24px;
+    text-align: center;
+  }
+  header h1 { font-size: 19px; margin: 0 0 4px; font-weight: 700; }
+  header p { font-size: 13px; margin: 0; opacity: 0.9; }
+
+  main { max-width: 560px; margin: -12px auto 40px; padding: 0 16px; }
+
+  .card {
+    background: #fff;
+    border-radius: 12px;
+    box-shadow: 0 2px 10px rgba(0,0,0,0.08);
+    padding: 20px;
+    margin-bottom: 16px;
+  }
+  .card h2 { font-size: 15px; margin: 0 0 14px; color: #333; }
+
+  label { display: block; font-size: 13px; font-weight: 600; color: #444; margin-bottom: 5px; margin-top: 14px; }
+  label:first-child { margin-top: 0; }
+  label .opt { font-weight: 400; color: #999; }
+
+  input[type="text"], input[type="email"], textarea, select {
+    width: 100%;
+    padding: 11px 12px;
+    border: 1px solid #d6d9de;
+    border-radius: 8px;
+    font-size: 14px;
+    font-family: inherit;
+    background: #fff;
+  }
+  input:focus, textarea:focus, select:focus {
+    outline: none;
+    border-color: #003DA5;
+    box-shadow: 0 0 0 3px rgba(0,61,165,0.12);
+  }
+  textarea { min-height: 64px; resize: vertical; }
+
+  .search-box { position: relative; margin-bottom: 12px; }
+  .search-box input { padding-left: 34px; }
+  .search-box::before {
+    content: "🔍";
+    position: absolute; left: 11px; top: 50%; transform: translateY(-50%);
+    font-size: 13px; opacity: 0.5;
+  }
+
+  .product-list { max-height: 320px; overflow-y: auto; border: 1px solid #eee; border-radius: 10px; }
+  .product-row {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 12px 14px; border-bottom: 1px solid #f0f0f0; gap: 10px;
+  }
+  .product-row:last-child { border-bottom: none; }
+  .product-info { flex: 1; min-width: 0; }
+  .product-info .desc { font-size: 13.5px; font-weight: 500; line-height: 1.35; }
+  .product-info .codigo { font-size: 11.5px; color: #999; margin-top: 2px; }
+
+  .stepper { display: flex; align-items: center; gap: 0; flex-shrink: 0; }
+  .stepper button {
+    width: 30px; height: 30px; border-radius: 8px; border: 1px solid #d6d9de;
+    background: #fafafa; font-size: 16px; line-height: 1; cursor: pointer;
+    display: flex; align-items: center; justify-content: center; color: #003DA5; font-weight: 700;
+  }
+  .stepper button:disabled { opacity: 0.35; cursor: default; }
+  .stepper .qty { width: 32px; text-align: center; font-size: 14px; font-weight: 600; }
+
+  .resumen-chip {
+    display: inline-flex; align-items: center; gap: 6px;
+    background: #eef2fb; color: #003DA5; font-size: 12.5px; font-weight: 600;
+    padding: 5px 10px; border-radius: 20px; margin: 3px 4px 3px 0;
+  }
+  .resumen-vacio { color: #999; font-size: 13px; }
+
+  #btnEnviar {
+    width: 100%; padding: 14px; background: #003DA5; color: #fff;
+    border: none; border-radius: 10px; font-size: 15px; font-weight: 700;
+    cursor: pointer; margin-top: 6px;
+  }
+  #btnEnviar:disabled { background: #b7c4e0; cursor: default; }
+
+  .error-msg { background: #f8d7da; color: #721c24; font-size: 13px; padding: 10px 12px; border-radius: 8px; margin-top: 12px; }
+
+  /* Confirmacion */
+  #successView { display: none; text-align: center; padding-top: 20px; }
+  .success-icon {
+    width: 64px; height: 64px; border-radius: 50%; background: #d4edda;
+    display: flex; align-items: center; justify-content: center; margin: 0 auto 16px;
+    font-size: 30px; color: #155724;
+  }
+  #successView h2 { font-size: 19px; margin: 0 0 8px; }
+  #successView p { font-size: 14px; color: #555; line-height: 1.5; margin: 0 0 20px; }
+  .numero-box {
+    background: #eef2fb; border-radius: 10px; padding: 16px; margin-bottom: 20px;
+  }
+  .numero-box .label { font-size: 12px; color: #666; }
+  .numero-box .numero { font-size: 24px; font-weight: 800; color: #003DA5; letter-spacing: 0.02em; }
+
+  .link-box {
+    display: flex; gap: 8px; align-items: center;
+    background: #f4f5f7; border-radius: 8px; padding: 10px 12px; margin-bottom: 16px;
+  }
+  .link-box input { border: none; background: transparent; font-size: 12.5px; color: #555; padding: 0; flex: 1; }
+  .link-box button {
+    background: #003DA5; color: #fff; border: none; border-radius: 6px;
+    padding: 8px 12px; font-size: 12.5px; font-weight: 600; cursor: pointer; flex-shrink: 0;
+  }
+  #btnVerEstado {
+    display: inline-block; padding: 12px 20px; background: #fff; color: #003DA5;
+    border: 1.5px solid #003DA5; border-radius: 8px; font-size: 14px; font-weight: 700;
+    text-decoration: none; margin-top: 4px;
+  }
+
+  .empty-state { color: #999; font-size: 13px; text-align: center; padding: 20px; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Solicitud Institucional</h1>
+  <p>Universidad Católica · Recetario Digital</p>
+</header>
+
+<main>
+  <!-- ============ FORMULARIO ============ -->
+  <div id="formView">
+    <div class="card">
+      <h2>Tus datos</h2>
+      <label for="inpNombre">Nombre completo</label>
+      <input type="text" id="inpNombre" placeholder="Nombre y apellido" autocomplete="name">
+
+      <label for="inpEmail">Correo</label>
+      <input type="email" id="inpEmail" placeholder="tu.correo@uc.cl" autocomplete="email">
+
+      <label for="inpCurso">Carrera / curso <span class="opt">(opcional)</span></label>
+      <input type="text" id="inpCurso" placeholder="Ej: Odontología 5to año">
+
+      <label for="inpDocente">Docente <span class="opt">(opcional)</span></label>
+      <input type="text" id="inpDocente" placeholder="Nombre del docente supervisor">
+
+      <label for="inpObservaciones">Observación <span class="opt">(opcional)</span></label>
+      <textarea id="inpObservaciones" placeholder="Contexto adicional para adquisiciones"></textarea>
+    </div>
+
+    <div class="card">
+      <h2>Productos</h2>
+      <div class="search-box">
+        <input type="text" id="inpBuscar" placeholder="Buscar producto...">
+      </div>
+      <div class="product-list" id="listaProductos"></div>
+    </div>
+
+    <div class="card">
+      <h2>Resumen de tu solicitud</h2>
+      <div id="resumenSeleccion"><span class="resumen-vacio">Aún no has seleccionado productos.</span></div>
+    </div>
+
+    <button id="btnEnviar">Enviar solicitud</button>
+    <div id="errorMsg"></div>
+  </div>
+
+  <!-- ============ CONFIRMACION ============ -->
+  <div id="successView">
+    <div class="success-icon">✓</div>
+    <h2>Tu solicitud fue enviada</h2>
+    <p>Será revisada por adquisiciones/stock. Te avisaremos por correo cuando haya novedades.</p>
+    <div class="numero-box">
+      <div class="label">Número de solicitud</div>
+      <div class="numero" id="numeroGenerado"></div>
+    </div>
+    <div class="link-box">
+      <input type="text" id="linkSeguimiento" readonly>
+      <button id="btnCopiarLink">Copiar</button>
+    </div>
+    <a id="btnVerEstado" href="#">Ver estado de mi solicitud</a>
+  </div>
+</main>
+
+<script>
+// ============================================================
+// Configuracion Supabase
+// ============================================================
+const SUPABASE_URL = 'https://gzimllusbxjorbsbtsse.supabase.co';
+const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imd6aW1sbHVzYnhqb3Jic2J0c3NlIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE5NDQ4NDcsImV4cCI6MjA5NzUyMDg0N30.DFq-_PY10hyr2QmMUXk-v8VW2LKYz3bAW37VCutwmzY';
+const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+// ============================================================
+// Catalogo de productos disponible para el alumno.
+// IMPORTANTE: NUNCA incluir precio aca, ni siquiera oculto.
+// Este arreglo solo tiene codigo/descripcion/familia -
+// estructuralmente no existe forma de que un precio viaje al
+// navegador del alumno porque el campo no esta declarado.
+// Lista inicial provisional (misma base ya usada/probada en
+// admin-uc.html) - completar con el catalogo UC definitivo.
+// ============================================================
+const PRODUCTS_ALUMNO = [
+  { codigo: "106.268", descripcion: "Cilindro Protec. Mini Pilar Conico Neo,Ti", familia: "REHABILITACIÓN" },
+  { codigo: "106.278", descripcion: "Cilindro Proteccion Mini Pilar Con Ancho", familia: "REHABILITACIÓN" },
+  { codigo: "105.137", descripcion: "Conexion Protesica Hex, StSt", familia: "REHABILITACIÓN" },
+  { codigo: "101.092", descripcion: "Analogo reposic. hibr. Mini Pilar,Ti 4.1", familia: "REHABILITACIÓN" },
+  { codigo: "118.382", descripcion: "CIL TITA MINI PIL CONI 4.1 AJUS PAS. NEO", familia: "REHABILITACIÓN" },
+  { codigo: "109.899", descripcion: "Implante Titamax GM,Ti, 3.75X7", familia: "NEOPOROS" },
+  { codigo: "106.207", descripcion: "Cicatrizador GM,Ti, 3.3X0.8", familia: "TAPAS - CICATRIZADORES" }
+  // TODO: completar con el catalogo UC real antes de uso productivo generalizado.
+];
+
+const seleccion = {}; // { codigo: cantidad }
+
+// ============================================================
+// Render de la lista de productos (con filtro de busqueda)
+// ============================================================
+function renderListaProductos(filtro) {
+  const cont = document.getElementById('listaProductos');
+  const term = (filtro || '').trim().toLowerCase();
+  const items = PRODUCTS_ALUMNO.filter(p =>
+    !term || p.descripcion.toLowerCase().includes(term) || p.codigo.toLowerCase().includes(term)
+  );
+
+  if (items.length === 0) {
+    cont.innerHTML = '<div class="empty-state">No se encontraron productos.</div>';
+    return;
+  }
+
+  cont.innerHTML = '';
+  items.forEach(prod => {
+    const cantidadActual = seleccion[prod.codigo] || 0;
+
+    const row = document.createElement('div');
+    row.className = 'product-row';
+
+    const info = document.createElement('div');
+    info.className = 'product-info';
+    info.innerHTML =
+      '<div class="desc">' + escapeHtml(prod.descripcion) + '</div>' +
+      '<div class="codigo">' + escapeHtml(prod.codigo) + '</div>';
+
+    const stepper = document.createElement('div');
+    stepper.className = 'stepper';
+
+    const btnMenos = document.createElement('button');
+    btnMenos.textContent = '−';
+    btnMenos.disabled = cantidadActual === 0;
+    btnMenos.addEventListener('click', () => cambiarCantidad(prod.codigo, -1));
+
+    const qtySpan = document.createElement('span');
+    qtySpan.className = 'qty';
+    qtySpan.textContent = cantidadActual;
+
+    const btnMas = document.createElement('button');
+    btnMas.textContent = '+';
+    btnMas.addEventListener('click', () => cambiarCantidad(prod.codigo, 1));
+
+    stepper.appendChild(btnMenos);
+    stepper.appendChild(qtySpan);
+    stepper.appendChild(btnMas);
+
+    row.appendChild(info);
+    row.appendChild(stepper);
+    cont.appendChild(row);
+  });
+}
+
+function cambiarCantidad(codigo, delta) {
+  const actual = seleccion[codigo] || 0;
+  const nueva = Math.max(0, Math.min(99, actual + delta));
+  if (nueva === 0) {
+    delete seleccion[codigo];
+  } else {
+    seleccion[codigo] = nueva;
+  }
+  renderListaProductos(document.getElementById('inpBuscar').value);
+  renderResumen();
+}
+
+function renderResumen() {
+  const cont = document.getElementById('resumenSeleccion');
+  const codigos = Object.keys(seleccion);
+
+  if (codigos.length === 0) {
+    cont.innerHTML = '<span class="resumen-vacio">Aún no has seleccionado productos.</span>';
+    return;
+  }
+
+  cont.innerHTML = '';
+  codigos.forEach(codigo => {
+    const prod = PRODUCTS_ALUMNO.find(p => p.codigo === codigo);
+    const chip = document.createElement('span');
+    chip.className = 'resumen-chip';
+    chip.textContent = (prod ? prod.descripcion : codigo) + ' × ' + seleccion[codigo];
+    cont.appendChild(chip);
+  });
+}
+
+document.getElementById('inpBuscar').addEventListener('input', (e) => renderListaProductos(e.target.value));
+
+// ============================================================
+// Envio de la solicitud
+// ============================================================
+document.getElementById('btnEnviar').addEventListener('click', async () => {
+  const errorDiv = document.getElementById('errorMsg');
+  errorDiv.innerHTML = '';
+
+  const nombre = document.getElementById('inpNombre').value.trim();
+  const email = document.getElementById('inpEmail').value.trim();
+  const curso = document.getElementById('inpCurso').value.trim() || null;
+  const docente = document.getElementById('inpDocente').value.trim() || null;
+  const observaciones = document.getElementById('inpObservaciones').value.trim() || null;
+
+  if (!nombre) {
+    errorDiv.innerHTML = '<div class="error-msg">Ingresa tu nombre completo.</div>';
+    return;
+  }
+  if (!email || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) {
+    errorDiv.innerHTML = '<div class="error-msg">Ingresa un correo válido.</div>';
+    return;
+  }
+  const codigosSeleccionados = Object.keys(seleccion);
+  if (codigosSeleccionados.length === 0) {
+    errorDiv.innerHTML = '<div class="error-msg">Selecciona al menos un producto.</div>';
+    return;
+  }
+
+  const items = codigosSeleccionados.map(codigo => {
+    const prod = PRODUCTS_ALUMNO.find(p => p.codigo === codigo);
+    return {
+      codigo: codigo,
+      familia: prod ? prod.familia : null,
+      descripcion: prod ? prod.descripcion : null,
+      cantidad: seleccion[codigo]
+      // Sin precio: este objeto nunca tuvo ese campo, no hay nada que omitir.
+    };
+  });
+
+  const btn = document.getElementById('btnEnviar');
+  btn.disabled = true;
+  btn.textContent = 'Enviando...';
+
+  const { data, error } = await sb.rpc('crear_solicitud_uc', {
+    p_alumno_nombre: nombre,
+    p_alumno_rut: null,
+    p_alumno_email: email,
+    p_items: items,
+    p_alumno_curso: curso,
+    p_docente: docente,
+    p_paciente: null,
+    p_paciente_rut: null,
+    p_observaciones: observaciones,
+    p_fecha_requerida: null
+  });
+
+  btn.disabled = false;
+  btn.textContent = 'Enviar solicitud';
+
+  if (error) {
+    console.warn('[solicitud-uc] Error crear_solicitud_uc:', error.message);
+    errorDiv.innerHTML = '<div class="error-msg">' + escapeHtml(error.message) + '</div>';
+    return;
+  }
+
+  const resultado = data && data[0];
+  if (!resultado) {
+    errorDiv.innerHTML = '<div class="error-msg">No se pudo confirmar el envío. Intenta nuevamente.</div>';
+    return;
+  }
+
+  mostrarConfirmacion(resultado.numero, resultado.token);
+});
+
+function mostrarConfirmacion(numero, token) {
+  document.getElementById('formView').style.display = 'none';
+  document.getElementById('successView').style.display = 'block';
+  document.getElementById('numeroGenerado').textContent = numero;
+
+  const url = new URL('estado-uc.html', window.location.href);
+  url.searchParams.set('t', token);
+  const linkFinal = url.toString();
+
+  document.getElementById('linkSeguimiento').value = linkFinal;
+  document.getElementById('btnVerEstado').href = linkFinal;
+
+  document.getElementById('btnCopiarLink').addEventListener('click', () => {
+    navigator.clipboard.writeText(linkFinal).then(() => {
+      const btn = document.getElementById('btnCopiarLink');
+      const original = btn.textContent;
+      btn.textContent = 'Copiado';
+      setTimeout(() => { btn.textContent = original; }, 1500);
+    });
+  });
+}
+
+// ============================================================
+// Utilidades
+// ============================================================
+function escapeHtml(str) {
+  if (str === null || str === undefined) return '';
+  return String(str)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#039;');
+}
+
+renderListaProductos('');
+</script>
+</body>
+</html>

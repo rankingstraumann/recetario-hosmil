@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Estado de tu solicitud · UC</title>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>
+  * { box-sizing: border-box; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    background: #f4f5f7;
+    margin: 0;
+    color: #1a1a1a;
+  }
+  header {
+    background: #003DA5;
+    color: #fff;
+    padding: 20px 20px 24px;
+    text-align: center;
+  }
+  header h1 { font-size: 19px; margin: 0 0 4px; font-weight: 700; }
+  header p { font-size: 13px; margin: 0; opacity: 0.9; }
+
+  main { max-width: 560px; margin: -12px auto 40px; padding: 0 16px; }
+
+  .card {
+    background: #fff;
+    border-radius: 12px;
+    box-shadow: 0 2px 10px rgba(0,0,0,0.08);
+    padding: 20px;
+    margin-bottom: 16px;
+  }
+  .card h2 { font-size: 15px; margin: 0 0 14px; color: #333; }
+
+  .numero-line { font-size: 13px; color: #666; margin-bottom: 4px; }
+  .numero-line strong { color: #1a1a1a; }
+
+  .badge {
+    display: inline-block; padding: 5px 12px; border-radius: 20px;
+    font-size: 13px; font-weight: 700; margin: 8px 0 4px;
+  }
+  .badge-enviada { background: #fff3cd; color: #856404; }
+  .badge-confirmado { background: #d4edda; color: #155724; }
+  .badge-parcial { background: #ffe5b4; color: #7a4a00; }
+  .badge-sinstock { background: #f8d7da; color: #721c24; }
+  .badge-progreso { background: #dbe6fb; color: #003DA5; }
+  .badge-final { background: #d4edda; color: #155724; }
+
+  .estado-mensaje { font-size: 13.5px; color: #555; line-height: 1.5; margin-top: 6px; }
+
+  table { width: 100%; border-collapse: collapse; font-size: 13.5px; }
+  th, td { text-align: left; padding: 8px 4px; border-bottom: 1px solid #f0f0f0; }
+  th { color: #888; font-weight: 600; font-size: 12px; }
+
+  .timeline-item { display: flex; gap: 10px; padding: 8px 0; }
+  .timeline-dot {
+    width: 10px; height: 10px; border-radius: 50%; background: #003DA5;
+    margin-top: 5px; flex-shrink: 0;
+  }
+  .timeline-dot.pendiente { background: #ddd; }
+  .timeline-text { font-size: 13.5px; }
+  .timeline-text .evento { font-weight: 600; }
+  .timeline-text .fecha { color: #999; font-size: 12px; display: block; }
+
+  .empty-state { color: #999; font-size: 13px; text-align: center; padding: 30px 16px; }
+  .error-box { text-align: center; padding: 40px 16px; }
+  .error-box .icon { font-size: 40px; margin-bottom: 12px; }
+  .error-box h2 { font-size: 16px; margin: 0 0 8px; }
+  .error-box p { font-size: 13.5px; color: #666; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>Estado de tu solicitud</h1>
+  <p>Universidad Católica · Recetario Digital</p>
+</header>
+
+<main id="main">
+  <div class="empty-state">Cargando...</div>
+</main>
+
+<script>
+const SUPABASE_URL = 'https://gzimllusbxjorbsbtsse.supabase.co';
+const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imd6aW1sbHVzYnhqb3Jic2J0c3NlIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE5NDQ4NDcsImV4cCI6MjA5NzUyMDg0N30.DFq-_PY10hyr2QmMUXk-v8VW2LKYz3bAW37VCutwmzY';
+const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+// Traduccion evento -> texto amigable para el alumno.
+// A proposito NUNCA se muestra el campo "comentario" crudo del historial:
+// para el evento "OC registrada" ese campo contiene el numero de OC
+// (ej. "OC OC-TEST-0001"), y no debe llegar a esta pantalla.
+const EVENTO_LABELS = {
+  'Solicitud enviada': 'Tu solicitud fue enviada',
+  'Stock confirmado': 'Disponibilidad confirmada',
+  'Stock parcial': 'Disponibilidad parcial confirmada',
+  'Sin stock': 'Sin stock disponible por el momento',
+  'OC registrada': 'Orden de compra en proceso',
+  'Enviado a Customer': 'Pedido en gestión de ingreso',
+  'Pedido confirmado': 'Pedido confirmado e ingresado'
+};
+
+const ESTADO_BADGE = {
+  'Solicitud enviada': { cls: 'badge-enviada', msg: 'Tu solicitud está pendiente de revisión de stock.' },
+  'Stock confirmado': { cls: 'badge-confirmado', msg: 'Hay disponibilidad confirmada. Tu solicitud sigue en proceso.' },
+  'Stock parcial': { cls: 'badge-parcial', msg: 'Hay disponibilidad parcial. Adquisiciones está gestionando tu solicitud.' },
+  'Sin stock': { cls: 'badge-sinstock', msg: 'No hay stock disponible por ahora. Te contactaremos con alternativas.' },
+  'OC registrada': { cls: 'badge-progreso', msg: 'Tu solicitud está en proceso de compra.' },
+  'Enviado a Customer': { cls: 'badge-progreso', msg: 'Tu pedido está siendo ingresado al sistema.' },
+  'Pedido confirmado': { cls: 'badge-final', msg: '¡Tu pedido fue confirmado e ingresado!' }
+};
+
+function getToken() {
+  const params = new URLSearchParams(window.location.search);
+  return params.get('t');
+}
+
+async function cargar() {
+  const main = document.getElementById('main');
+  const token = getToken();
+
+  if (!token) {
+    main.innerHTML = errorBox('Falta el link completo', 'Este enlace no incluye tu código de seguimiento. Revisa el link que recibiste al enviar tu solicitud.');
+    return;
+  }
+
+  const { data, error } = await sb.rpc('ver_solicitud_uc', { p_token: token });
+
+  if (error) {
+    console.warn('[estado-uc] Error ver_solicitud_uc:', error.message);
+    main.innerHTML = errorBox('No pudimos cargar tu solicitud', 'Intenta nuevamente en unos minutos. Si el problema persiste, contacta a adquisiciones.');
+    return;
+  }
+
+  const sol = data && data[0];
+  if (!sol) {
+    main.innerHTML = errorBox('No encontramos esa solicitud', 'Verifica que el link esté completo o contacta a adquisiciones.');
+    return;
+  }
+
+  render(sol);
+}
+
+function errorBox(titulo, texto) {
+  return '<div class="card"><div class="error-box"><div class="icon">🔎</div><h2>' +
+    escapeHtml(titulo) + '</h2><p>' + escapeHtml(texto) + '</p></div></div>';
+}
+
+function render(sol) {
+  const main = document.getElementById('main');
+  const badgeInfo = ESTADO_BADGE[sol.estado] || { cls: 'badge-enviada', msg: '' };
+
+  let html = '<div class="card">';
+  html += '<div class="numero-line">Solicitud <strong>' + escapeHtml(sol.numero) + '</strong> · ' + escapeHtml(sol.alumno_nombre) + '</div>';
+  html += '<span class="badge ' + badgeInfo.cls + '">' + escapeHtml(sol.estado) + '</span>';
+  html += '<div class="estado-mensaje">' + escapeHtml(badgeInfo.msg) + '</div>';
+  html += '</div>';
+
+  html += '<div class="card"><h2>Productos solicitados</h2>';
+  html += '<table><thead><tr><th>Código</th><th>Producto</th><th>Cantidad</th></tr></thead><tbody>';
+  (sol.items || []).forEach(item => {
+    html += '<tr><td>' + escapeHtml(item.codigo) + '</td><td>' + escapeHtml(item.descripcion || '') + '</td><td>' + escapeHtml(String(item.cantidad)) + '</td></tr>';
+  });
+  html += '</tbody></table></div>';
+
+  if (sol.observaciones) {
+    html += '<div class="card"><h2>Tu observación</h2><div class="estado-mensaje">' + escapeHtml(sol.observaciones) + '</div></div>';
+  }
+
+  html += '<div class="card"><h2>Seguimiento</h2>';
+  const historial = sol.historial || [];
+  if (historial.length === 0) {
+    html += '<div class="empty-state">Sin novedades todavía.</div>';
+  } else {
+    historial.forEach(ev => {
+      const label = EVENTO_LABELS[ev.evento] || ev.evento;
+      html += '<div class="timeline-item">' +
+        '<div class="timeline-dot"></div>' +
+        '<div class="timeline-text"><span class="evento">' + escapeHtml(label) + '</span>' +
+        '<span class="fecha">' + formatFecha(ev.fecha) + '</span></div>' +
+        '</div>';
+    });
+  }
+  html += '</div>';
+
+  main.innerHTML = html;
+}
+
+function escapeHtml(str) {
+  if (str === null || str === undefined) return '';
+  return String(str)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#039;');
+}
+
+function formatFecha(iso) {
+  if (!iso) return '';
+  const d = new Date(iso);
+  return d.toLocaleString('es-CL', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' });
+}
+
+cargar();
+</script>
+</body>
+</html>
