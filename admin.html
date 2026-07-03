@@ -966,6 +966,8 @@ function renderDashboard() {
   });
   const countPagoInformado = universoIndicadores.filter(esPagoInformadoPendiente).length;
   const countUrgente48h = universoIndicadores.filter(esUrgente48h).length;
+  const countGestionados = universoIndicadores.filter(estaGestionado).length;
+  const countTodosIndicador = universoIndicadores.length;
 
   let filasHtml = '';
   if (visibles.length === 0) {
@@ -1072,10 +1074,10 @@ function renderDashboard() {
         '</div>' : '') +
       '</div>' : '') +
       '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:14px;">' +
-        '<button class="btn-logout" style="' + (filtroUrgencia==='Todos' ? 'background:#1a1a1a;color:#fff;border-color:#1a1a1a;' : '') + '" onclick="filtroUrgencia=\'Todos\';renderDashboard();">Todos</button>' +
-        '<button class="btn-logout" style="' + (filtroUrgencia==='PagoInformado' ? 'background:#92400e;color:#fff;border-color:#92400e;' : '') + '" onclick="filtroUrgencia=\'PagoInformado\';renderDashboard();">🟡 Pagos por ingresar</button>' +
-        '<button class="btn-logout" style="' + (filtroUrgencia==='Urgente48h' ? 'background:#991b1b;color:#fff;border-color:#991b1b;' : '') + '" onclick="filtroUrgencia=\'Urgente48h\';renderDashboard();">🔴 +48 hrs sin gestión</button>' +
-        '<button class="btn-logout" style="' + (filtroUrgencia==='Gestionados' ? 'background:#065f46;color:#fff;border-color:#065f46;' : '') + '" onclick="filtroUrgencia=\'Gestionados\';renderDashboard();">✓ Ingresados / gestionados</button>' +
+        '<button class="btn-logout" style="' + (filtroUrgencia==='Todos' ? 'background:#1a1a1a;color:#fff;border-color:#1a1a1a;' : '') + '" onclick="filtroUrgencia=\'Todos\';renderDashboard();">Todos (' + countTodosIndicador + ')</button>' +
+        '<button class="btn-logout" style="' + (filtroUrgencia==='PagoInformado' ? 'background:#92400e;color:#fff;border-color:#92400e;' : '') + '" onclick="filtroUrgencia=\'PagoInformado\';renderDashboard();">🟡 Pagos por ingresar (' + countPagoInformado + ')</button>' +
+        '<button class="btn-logout" style="' + (filtroUrgencia==='Urgente48h' ? 'background:#991b1b;color:#fff;border-color:#991b1b;' : '') + '" onclick="filtroUrgencia=\'Urgente48h\';renderDashboard();">🔴 +48 hrs sin gestión (' + countUrgente48h + ')</button>' +
+        '<button class="btn-logout" style="' + (filtroUrgencia==='Gestionados' ? 'background:#065f46;color:#fff;border-color:#065f46;' : '') + '" onclick="filtroUrgencia=\'Gestionados\';renderDashboard();">✓ Ingresados / gestionados (' + countGestionados + ')</button>' +
       '</div>' +
       '<div class="toolbar">' +
         '<span class="stat-pill">' + visibles.length + ' de ' + cotizaciones.length + ' cotizaciones</span>' +
