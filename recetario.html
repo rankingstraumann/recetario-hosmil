@@ -281,6 +281,7 @@ const state = {
   view: 'recetario',
   activeQuote: null,
   errorMsg: '', sendError: '', notifMsg: '', savingQuote: false,
+  enviandoAuto: false,
   copiado: '',
   institucionCodigo: 'HOSMIL'
 };
@@ -733,6 +734,39 @@ async function enviarAlPacienteWhatsapp() {
   state.notifMsg = 'Se abrió WhatsApp con el link de la cotización para el paciente. WhatsApp no permite copiar a Nicole automáticamente — avísale aparte con los botones de abajo si usas este canal.';
   renderCompartir();
 }
+async function enviarAutomaticamente() {
+  const q = state.activeQuote; if (!q) return;
+  if (!q.pacienteEmail) { state.sendError = 'Esta cotización no tiene correo del paciente.'; renderCompartir(); return; }
+  if (!q.dbId) { state.sendError = 'Esta cotización no quedó guardada en el sistema. Usa "Copiar link" o los botones manuales de abajo.'; renderCompartir(); return; }
+
+  state.sendError = ''; state.notifMsg = ''; state.enviandoAuto = true;
+  renderCompartir();
+
+  try {
+    const { data, error } = await sb.functions.invoke('enviar-cotizacion', {
+      body: { cotizacion_id: q.dbId }
+    });
+
+    if (error || !data || data.ok !== true) {
+      const msg = (data && data.error) || (error && error.message) || 'No se pudo enviar el correo automáticamente.';
+      state.sendError = msg + ' Puedes usar "Copiar link" o los botones manuales de abajo mientras tanto.';
+      state.enviandoAuto = false;
+      renderCompartir();
+      return;
+    }
+
+    q.estado = 'Enviada al paciente';
+    q.historial.push({ estado: 'Enviada al paciente', fecha: new Date().toISOString(), canal: 'automatico' });
+    state.notifMsg = 'Correo enviado automáticamente al paciente desde cotizaciones@recetariostra.cl.';
+    state.enviandoAuto = false;
+    renderCompartir();
+  } catch (e) {
+    state.sendError = 'Error de red al intentar el envío automático. Puedes usar "Copiar link" o los botones manuales de abajo mientras tanto.';
+    state.enviandoAuto = false;
+    renderCompartir();
+  }
+}
+
 function limpiarFormulario() {
   state.paciente = ''; state.rut = ''; state.pacienteEmail = ''; state.pacienteWhatsapp = '';
   state.pacienteDireccion = ''; state.obs = ''; state.doctorSel = ''; state.doctorOtro = '';
@@ -793,10 +827,15 @@ function renderCompartir() {
         (q.dbError ? '<div style="text-align:left;background:#fef2f2;border:1px solid #fecaca;border-radius:8px;padding:10px 12px;margin-bottom:14px;font-size:11px;color:#991b1b;word-break:break-word;"><strong>Aviso técnico (no afecta el link del paciente):</strong> no se guardó en el panel de Nicole/Admin. Detalle: ' + esc(q.dbError) + '</div>' : '') +
         msgsHtml +
         '<div class="send-buttons">' +
-          '<button class="btn-solid-red" onclick="enviarAlPaciente()">✉️ Por correo (copia a Nicole)</button>' +
+          '<button class="btn-solid-red" onclick="enviarAutomaticamente()"' + (state.enviandoAuto ? ' disabled' : '') + '>' +
+            (state.enviandoAuto ? '⏳ Enviando...' : '📨 Enviar automáticamente al paciente') +
+          '</button>' +
+        '</div>' +
+        '<div class="send-buttons" style="margin-top:6px;">' +
+          '<button class="btn-outline" onclick="enviarAlPaciente()">✉️ Por correo (manual, copia a Nicole)</button>' +
           '<button class="btn-outline" onclick="enviarAlPacienteWhatsapp()">💬 Por WhatsApp</button>' +
         '</div>' +
-        '<p class="hint">El correo copia a Nicole automáticamente. Por WhatsApp avísale aparte con los botones de abajo.</p>' +
+        '<p class="hint">El envío automático llega directo al paciente sin depender de tu correo o celular. Los botones manuales quedan como respaldo si lo prefieres.</p>' +
       '</div>' +
 
       '<div style="background:var(--amber-bg);border:2px solid var(--amber-border);border-radius:14px;padding:20px;text-align:left;margin-bottom:16px;">' +
