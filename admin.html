@@ -318,7 +318,7 @@ async function copiarLinkComprobante(path, btn) {
   btn.textContent = 'Generando…';
   btn.disabled = true;
   try {
-    const { data, error } = await sb.storage.from('comprobantes').createSignedUrl(path, 3600);
+    const { data, error } = await sb.storage.from('comprobantes').createSignedUrl(path, 604800); // 7 días — link para compartir por correo, uso diferido
     if (error || !data || !data.signedUrl) throw error || new Error('sin url');
     if (navigator.clipboard) { await navigator.clipboard.writeText(data.signedUrl); }
     btn.textContent = '✓ Link copiado';
@@ -359,7 +359,7 @@ async function copiarGestionCompleta(id, btn) {
   let comprobanteEsLink = false;
   if (c.comprobante_path) {
     try {
-      const { data, error } = await sb.storage.from('comprobantes').createSignedUrl(c.comprobante_path, 3600);
+      const { data, error } = await sb.storage.from('comprobantes').createSignedUrl(c.comprobante_path, 604800); // 7 días — link va dentro de correo a Nicole/Customer
       if (error || !data || !data.signedUrl) throw error || new Error('sin url');
       comprobanteTxt = data.signedUrl;
       comprobanteEsLink = true;
