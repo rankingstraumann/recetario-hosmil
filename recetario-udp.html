@@ -231,6 +231,67 @@ const COBRANZA_EMAIL = 'cobranza.cl@straumann.com';
 const WEBPAY_LINK = 'https://www.webpay.cl/form-pay/33930';
 const PATIENT_LINK_BASE = 'https://recetario-udp.vercel.app/';
 
+// ============================================================
+// FASE 3.6D -- Modo prueba: carga opcional desde catálogo maestro.
+// Activado SOLO con ?catalogoMaestro=1 en la URL. Por defecto, esta
+// función ni se ejecuta y PRODUCTS sigue siendo el array embebido de
+// siempre. No reemplaza la declaración de PRODUCTS/PRODUCTS_BLT de arriba,
+// solo puede mutar su contenido en memoria si el flag está activo Y la
+// carga tiene éxito. No se activa como default en esta fase. No corrige
+// la ambigüedad conocida de state.cart/PRODUCTS.find por codigo (ver nota
+// de diseño Fase 3.6D) -- ese comportamiento se hereda igual, sin cambios.
+// ============================================================
+const usarCatalogoMaestro = new URLSearchParams(window.location.search).get('catalogoMaestro') === '1';
+
+function calcularPreviewLocal(familia, precioLista) {
+  const DESCUENTOS_PREVIEW = {
+    'ACQUA': 0.35, 'NEOPOROS': 0.35, 'BASES DE TITANIO': 0.40, 'REHABILITACIÓN': 0.40,
+    'TAPAS - CICATRIZADORES': 0.30, 'LINEA DE BIOMATERIALES': 0.25,
+    'STRAUMANN — IMPLANTES BLC/BLX': 0.32, 'STRAUMANN — PILARES ANATÓMICOS': 0.20,
+    'STRAUMANN — PILARES PROVISIONALES': 0.30, 'STRAUMANN — REHABILITACIÓN': 0.30,
+    'STRAUMANN — SOBREDENTADURA': 0.30, 'STRAUMANN — TOMA DE IMPRESIÓN': 0.30,
+    'BLT — IMPLANTES SLA': 0.30, 'BLT — IMPLANTES SLActive': 0.30, 'BLT — CALCINABLES': 0.30,
+    'BLT — PILARES ATORNILLADOS': 0.30, 'BLT — REHABILITACIÓN': 0.30, 'BLT — SOBREDENTADURA': 0.30,
+    'BLT — TOMA DE IMPRESIÓN': 0.30, 'BLT — VARIOBASE': 0.30,
+  };
+  const d = DESCUENTOS_PREVIEW[familia] !== undefined ? DESCUENTOS_PREVIEW[familia] : 0.30;
+  return Math.round(precioLista * (1 - d));
+}
+
+async function cargarCatalogoMaestro() {
+  if (!usarCatalogoMaestro) return;
+
+  try {
+    const { data, error } = await sb.rpc('obtener_catalogo_institucion', { p_institucion_codigo: 'UDP' });
+
+    if (error) throw error;
+    if (!Array.isArray(data) || data.length === 0) {
+      throw new Error('Catálogo maestro devolvió una lista vacía');
+    }
+    if (data.length < 831) {
+      throw new Error('Catálogo maestro devolvió ' + data.length + ' productos, se esperaban 831');
+    }
+
+    const nuevos = data.map(function(p) {
+      return {
+        codigo: p.codigo,
+        descripcion: p.descripcion,
+        familia: p.familia,
+        precioLista: p.precioLista,
+        precioFinal: calcularPreviewLocal(p.familia, p.precioLista),
+      };
+    });
+
+    PRODUCTS.length = 0;
+    PRODUCTS.push.apply(PRODUCTS, nuevos);
+    renderProductList();
+
+    console.info('[catalogoMaestro] ACTIVO — ' + nuevos.length + ' productos cargados desde catálogo maestro.');
+  } catch (e) {
+    console.warn('[catalogoMaestro] FALLBACK — no se pudo cargar el catálogo maestro, se mantiene el catálogo embebido.', e);
+  }
+}
+
 // Regla de negocio: por cada implante (ACQUA o NEOPOROS) debe ir 1 tapa de cierre o
 // pilar de cicatrización al 99% de descuento (sobre precio de lista). Si faltan, se
 // autocompleta con 117.021. Si sobran, el excedente queda a precio normal.
@@ -385,8 +446,8 @@ function agruparPorFamilia(items) {
   return ordered;
 }
 function cartItemsList() {
-  return Object.entries(state.cart).map(function ([codigo, cantidad]) {
-    const p = PRODUCTS.find(function (x) { return x.codigo === codigo; });
+  return Object.entries(state.cart).map(function ([key, cantidad]) {
+    const p = PRODUCTS.find(function (x) { return claveItem(x.codigo, x.familia) === key; });
     return p ? Object.assign({}, p, { cantidad: cantidad }) : null;
   }).filter(Boolean);
 }
@@ -413,10 +474,10 @@ function construirLineasCotizacion() {
       creditoRestante -= conDescuento;
       if (conDescuento > 0) {
         const precioEspecial = Math.round(it.precioLista * (1 - DESCUENTO_CIERRE));
-        lineas.push({ codigo: it.codigo, descripcion: it.descripcion + ' (precio especial por implante)', cantidad: conDescuento, precioUnitario: precioEspecial, subtotal: precioEspecial * conDescuento, especial: true, precioLista: it.precioLista, descuento: DESCUENTO_CIERRE });
+        lineas.push({ codigo: it.codigo, familia: it.familia, descripcion: it.descripcion + ' (precio especial por implante)', cantidad: conDescuento, precioUnitario: precioEspecial, subtotal: precioEspecial * conDescuento, especial: true, precioLista: it.precioLista, descuento: DESCUENTO_CIERRE });
       }
       if (sinDescuento > 0) {
-        lineas.push({ codigo: it.codigo, descripcion: it.descripcion, cantidad: sinDescuento, precioUnitario: it.precioFinal, subtotal: it.precioFinal * sinDescuento, especial: false, precioLista: it.precioLista, descuento: it.descuento });
+        lineas.push({ codigo: it.codigo, familia: it.familia, descripcion: it.descripcion, cantidad: sinDescuento, precioUnitario: it.precioFinal, subtotal: it.precioFinal * sinDescuento, especial: false, precioLista: it.precioLista, descuento: it.descuento });
       }
     });
 
@@ -424,14 +485,14 @@ function construirLineasCotizacion() {
       const def = PRODUCTS.find(function (p) { return p.codigo === grupo.defaultCode; });
       if (def) {
         const precioEspecial = Math.round(def.precioLista * (1 - DESCUENTO_CIERRE));
-        lineas.push({ codigo: def.codigo, descripcion: def.descripcion + ' (agregado automático por implante)', cantidad: creditoRestante, precioUnitario: precioEspecial, subtotal: precioEspecial * creditoRestante, especial: true, auto: true, precioLista: def.precioLista, descuento: DESCUENTO_CIERRE });
+        lineas.push({ codigo: def.codigo, familia: def.familia, descripcion: def.descripcion + ' (agregado automático por implante)', cantidad: creditoRestante, precioUnitario: precioEspecial, subtotal: precioEspecial * creditoRestante, especial: true, auto: true, precioLista: def.precioLista, descuento: DESCUENTO_CIERRE });
       }
     }
   });
 
   rawItems.forEach(function (it) {
     if (CIERRE_CODES.indexOf(it.codigo) !== -1) return; // ya procesado arriba por su grupo
-    lineas.push({ codigo: it.codigo, descripcion: it.descripcion, cantidad: it.cantidad, precioUnitario: it.precioFinal, subtotal: it.precioFinal * it.cantidad, especial: false, precioLista: it.precioLista, descuento: it.descuento });
+    lineas.push({ codigo: it.codigo, familia: it.familia, descripcion: it.descripcion, cantidad: it.cantidad, precioUnitario: it.precioFinal, subtotal: it.precioFinal * it.cantidad, especial: false, precioLista: it.precioLista, descuento: it.descuento });
   });
 
 
@@ -439,7 +500,7 @@ function construirLineasCotizacion() {
   const FAMILIAS_IMPLANTE = ['ACQUA','NEOPOROS','STRAUMANN — IMPLANTES BLC/BLX','BLT — IMPLANTES SLA','BLT — IMPLANTES SLActive'];
   const FAMILIAS_CIERRE_ORD = ['TAPAS - CICATRIZADORES','STRAUMANN — TAPAS Y CICATRIZADORES','BLT — TAPAS Y CICATRIZADORES'];
   lineas.sort(function(a,b){
-    function ord(l){ var p=PRODUCTS.find(function(x){return x.codigo===l.codigo;}); var f=p?p.familia:'';
+    function ord(l){ var f = l.familia || ''; // Fase 3.6E: ya no busca en PRODUCTS, usa la familia ya correcta de la linea
       if(FAMILIAS_IMPLANTE.indexOf(f)!==-1) return 0;
       if(FAMILIAS_CIERRE_ORD.indexOf(f)!==-1||l.especial) return 1; return 2; }
     var oa=ord(a),ob=ord(b); if(oa!==ob) return oa-ob;
@@ -448,9 +509,10 @@ function construirLineasCotizacion() {
   return lineas;
 }
 
-function addToCart(codigo) { state.errorMsg=''; state.cart[codigo] = (state.cart[codigo]||0) + 1; renderCart(); renderFloating(); }
-function setQty(codigo, qty) { if (qty<=0) delete state.cart[codigo]; else state.cart[codigo]=qty; renderCart(); renderFloating(); }
-function removeFromCart(codigo) { delete state.cart[codigo]; renderCart(); renderFloating(); }
+function claveItem(codigo, familia) { return codigo + '||' + familia; } // Fase 3.6E: clave compuesta para distinguir variantes con mismo codigo
+function addToCart(codigo, familia) { state.errorMsg=''; const key = claveItem(codigo, familia); state.cart[key] = (state.cart[key]||0) + 1; renderCart(); renderFloating(); }
+function setQty(codigo, familia, qty) { const key = claveItem(codigo, familia); if (qty<=0) delete state.cart[key]; else state.cart[key]=qty; renderCart(); renderFloating(); }
+function removeFromCart(codigo, familia) { delete state.cart[claveItem(codigo, familia)]; renderCart(); renderFloating(); }
 function vaciarCarrito() { state.cart={}; renderCart(); renderFloating(); }
 
 function renderDoctorField() {
@@ -493,7 +555,7 @@ function renderProductList() {
             '<span class="prod-price-new">' + fmt(p.precioFinal) + '</span>' +
           '</div>' +
         '</div>' +
-        '<button class="btn-add" onclick="addToCart(\'' + p.codigo + '\')">+ Agregar</button>' +
+        '<button class="btn-add" onclick="addToCart(\'' + p.codigo + '\', \'' + p.familia + '\')">+ Agregar</button>' +
         '</div>';
     });
   });
@@ -514,13 +576,13 @@ function renderCart() {
       html += '<div class="cart-item">' +
         '<div class="cart-item-top">' +
           '<div><div class="cart-item-code">' + esc(it.codigo) + '</div><div class="cart-item-desc">' + esc(it.descripcion) + '</div></div>' +
-          '<button class="remove-btn" onclick="removeFromCart(\'' + it.codigo + '\')">✕</button>' +
+          '<button class="remove-btn" onclick="removeFromCart(\'' + it.codigo + '\', \'' + it.familia + '\')">✕</button>' +
         '</div>' +
         '<div class="cart-item-bottom">' +
           '<div class="qty-stepper">' +
-            '<button onclick="setQty(\'' + it.codigo + '\', ' + (it.cantidad-1) + ')">−</button>' +
+            '<button onclick="setQty(\'' + it.codigo + '\', \'' + it.familia + '\', ' + (it.cantidad-1) + ')">−</button>' +
             '<span class="qty-val">' + it.cantidad + '</span>' +
-            '<button onclick="setQty(\'' + it.codigo + '\', ' + (it.cantidad+1) + ')">+</button>' +
+            '<button onclick="setQty(\'' + it.codigo + '\', \'' + it.familia + '\', ' + (it.cantidad+1) + ')">+</button>' +
           '</div>' +
           '<span style="font-size:12px;font-weight:600;">' + fmt(it.precioFinal * it.cantidad) + '</span>' +
         '</div></div>';
@@ -537,6 +599,7 @@ function renderCart() {
     if (!porCodigo[l.codigo]) {
       porCodigo[l.codigo] = {
         codigo: l.codigo,
+        familia: l.familia,
         descripcion: l.descripcion.replace(' (precio especial por implante)', '').replace(' (agregado automático por implante)', ''),
         especialQty: 0, especialSubtotal: 0, normalQty: 0, normalSubtotal: 0, auto: false
       };
@@ -561,11 +624,11 @@ function renderCart() {
       }
       let controles = '';
       if (!g.auto) {
-        const totalEnCarrito = state.cart[g.codigo] || 0;
+        const totalEnCarrito = state.cart[claveItem(g.codigo, g.familia)] || 0;
         controles = '<div class="qty-stepper">' +
-          '<button onclick="setQty(\'' + g.codigo + '\', ' + (totalEnCarrito - 1) + ')">−</button>' +
+          '<button onclick="setQty(\'' + g.codigo + '\', \'' + g.familia + '\', ' + (totalEnCarrito - 1) + ')">−</button>' +
           '<span class="qty-val">' + totalEnCarrito + '</span>' +
-          '<button onclick="setQty(\'' + g.codigo + '\', ' + (totalEnCarrito + 1) + ')">+</button>' +
+          '<button onclick="setQty(\'' + g.codigo + '\', \'' + g.familia + '\', ' + (totalEnCarrito + 1) + ')">+</button>' +
           '</div>';
       } else {
         controles = '<span style="font-size:10px;color:#a1a1aa;">se agrega solo</span>';
@@ -646,8 +709,7 @@ async function generarCotizacion() {
   let itemsNormalesValidados = [];
   if (lineasNormales.length > 0) {
     const itemsParaRPC = lineasNormales.map(function(l) {
-      const prod = PRODUCTS.find(function(p) { return p.codigo === l.codigo; });
-      return { codigo: l.codigo, descripcion: l.descripcion, familia: prod ? prod.familia : '', precioLista: l.precioLista, cantidad: l.cantidad };
+      return { codigo: l.codigo, descripcion: l.descripcion, familia: l.familia, precioLista: l.precioLista, cantidad: l.cantidad };
     });
     let calcError = null; let calcData = null;
     try {
@@ -965,6 +1027,8 @@ renderDoctorField();
 renderProductList();
 renderCart();
 renderFloating();
+
+cargarCatalogoMaestro(); // Fase 3.6D: no-op salvo ?catalogoMaestro=1
 
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', function () {
