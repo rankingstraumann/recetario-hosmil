@@ -162,6 +162,16 @@ let matrizCargando = false;
 let matrizFiltro = { texto: '', marca: 'Todas', familia: 'Todas', soloOverride: false, soloDuplicado: false };
 let matrizFiltroTextoFoco = false; // para no perder el foco del input al re-renderizar
 
+// Fase 4.2B -- estado de las 4 secciones nuevas, todas de solo lectura.
+let matrizSubTab = 'catalogo'; // 'catalogo' | 'descuentos' | 'duplicados' | 'overrides' | 'comparador' | 'auditoria'
+let matrizDuplicadosRows = [];
+let matrizOverridesRows = [];
+let matrizComparadorRows = [];
+let matrizComparadorCargado = false; // evita volver a llamar la RPC cada vez que se abre el sub-tab
+let matrizComparadorFiltro = { texto: '', soloDiferencias: false };
+let matrizAuditoriaRows = [];
+let matrizAuditoriaCargada = false;
+
 function institucionInfo(inst) {
   const s = (inst || '').toUpperCase();
   if (s.indexOf('TEMUCO') !== -1) return { label: 'U Mayor Temuco', color: '#fdf4ff;color:#a21caf', despacho: 'U. Mayor Temuco — Avenida Alemania 0281, 2° piso, Odontología, Temuco', responsable: 'Bethania', codigo: 'UMAYORT' };
@@ -1185,25 +1195,46 @@ async function seleccionarInstitucionMatriz(codigo) {
   matrizFiltro = { texto: '', marca: 'Todas', familia: 'Todas', soloOverride: false, soloDuplicado: false };
   matrizCatalogoRows = [];
   matrizDescuentosRows = [];
+  matrizDuplicadosRows = [];
+  matrizOverridesRows = [];
   matrizCargando = true;
   renderMatrizInstitucional();
   try {
+    // FASE 4.2B -- MODIFICACION JUSTIFICADA: se agregan matriz_codigos_duplicados
+    // y matriz_overrides_precio a esta misma carga (antes, en Fase 4.2A, solo
+    // cargaba catalogo+descuentos). Motivo: mantener un unico punto de carga por
+    // institucion en vez de fragmentar la logica en cada sub-tab nuevo -- cambiar
+    // de institucion sigue disparando exactamente 1 ciclo de carga (ahora de 4
+    // llamadas en paralelo en vez de 2), y cambiar entre los sub-tabs Catalogo/
+    // Descuentos/Duplicados/Overrides para la MISMA institucion ya seleccionada
+    // no vuelve a llamar a Supabase.
     const resultados = await Promise.all([
       sb.rpc('matriz_catalogo_institucion', { p_institucion_codigo: codigo }),
-      sb.rpc('matriz_descuentos_institucion', { p_institucion_codigo: codigo })
+      sb.rpc('matriz_descuentos_institucion', { p_institucion_codigo: codigo }),
+      sb.rpc('matriz_codigos_duplicados', { p_institucion_codigo: codigo }),
+      sb.rpc('matriz_overrides_precio', { p_institucion_codigo: codigo })
     ]);
     matrizCatalogoRows = (!resultados[0].error && resultados[0].data) ? resultados[0].data : [];
     matrizDescuentosRows = (!resultados[1].error && resultados[1].data) ? resultados[1].data : [];
+    matrizDuplicadosRows = (!resultados[2].error && resultados[2].data) ? resultados[2].data : [];
+    matrizOverridesRows = (!resultados[3].error && resultados[3].data) ? resultados[3].data : [];
   } catch (e) {
     matrizCatalogoRows = [];
     matrizDescuentosRows = [];
+    matrizDuplicadosRows = [];
+    matrizOverridesRows = [];
   }
   matrizCargando = false;
   renderMatrizInstitucional();
 }
 
 function refrescarMatriz() {
+  // FASE 4.2B -- MODIFICACION JUSTIFICADA: si el sub-tab activo es Comparador o
+  // Auditoria (secciones que no dependen de institucion seleccionada), refrescar
+  // debe recargar esa seccion en vez de no hacer nada o recargar solo el resumen.
   if (matrizInstitucionSel) { seleccionarInstitucionMatriz(matrizInstitucionSel); }
+  else if (matrizSubTab === 'comparador') { cargarMatrizComparador(); }
+  else if (matrizSubTab === 'auditoria') { cargarMatrizAuditoria(); }
   else { cargarMatrizResumen(); }
 }
 
@@ -1240,6 +1271,55 @@ function exportarMatrizExcel(rows, columnas, nombreHoja, nombreArchivoBase) {
   const pad2 = function (n) { return String(n).padStart(2, '0'); };
   const fechaArchivo = ahora.getFullYear() + pad2(ahora.getMonth() + 1) + pad2(ahora.getDate());
   XLSX.writeFile(wb, nombreArchivoBase + '_' + fechaArchivo + '.xlsx');
+}
+
+// --- Fase 4.2B: Comparador de descuentos y Auditoria reciente ---
+// Ambas secciones son independientes de la institucion seleccionada, por eso
+// se cargan de forma perezosa (solo la primera vez que se abre el sub-tab) en
+// vez de junto con seleccionarInstitucionMatriz().
+
+async function cargarMatrizComparador() {
+  matrizCargando = true;
+  renderMatrizInstitucional();
+  try {
+    const { data, error } = await sb.rpc('matriz_comparador_descuentos');
+    matrizComparadorRows = (!error && data) ? data : [];
+  } catch (e) {
+    matrizComparadorRows = [];
+  }
+  matrizComparadorCargado = true;
+  matrizCargando = false;
+  renderMatrizInstitucional();
+}
+
+async function cargarMatrizAuditoria() {
+  matrizCargando = true;
+  renderMatrizInstitucional();
+  try {
+    const { data, error } = await sb.rpc('matriz_auditoria_reciente', { p_limite: 100 });
+    matrizAuditoriaRows = (!error && data) ? data : [];
+  } catch (e) {
+    matrizAuditoriaRows = [];
+  }
+  matrizAuditoriaCargada = true;
+  matrizCargando = false;
+  renderMatrizInstitucional();
+}
+
+function cambiarSubTabMatriz(tab) {
+  matrizSubTab = tab;
+  if (tab === 'comparador' && !matrizComparadorCargado) { cargarMatrizComparador(); return; }
+  if (tab === 'auditoria' && !matrizAuditoriaCargada) { cargarMatrizAuditoria(); return; }
+  renderMatrizInstitucional();
+}
+
+function matrizComparadorFiltrado() {
+  const t = (matrizComparadorFiltro.texto || '').trim().toLowerCase();
+  return matrizComparadorRows.filter(function (r) {
+    if (t && (r.familia || '').toLowerCase().indexOf(t) === -1) return false;
+    if (matrizComparadorFiltro.soloDiferencias && !r.diferencia_detectada) return false;
+    return true;
+  });
 }
 
 function renderMatrizInstitucional() {
@@ -1315,13 +1395,23 @@ function renderMatrizInstitucional() {
       '<select id="matriz-selector-institucion" style="padding:7px 10px;border-radius:7px;border:1px solid var(--border);font-size:13px;">' + opcionesSel + '</select>' +
     '</div>';
 
-  // --- Secciones Catálogo y Descuentos (requieren institución seleccionada) ---
-  let seccionesHtml = '';
-  if (!matrizInstitucionSel) {
-    seccionesHtml = '<div style="color:var(--muted);padding:16px 10px;font-size:13px;">Selecciona una institución arriba (o una card) para ver su catálogo y sus descuentos.</div>';
-  } else if (matrizCargando) {
-    seccionesHtml = '<div style="color:var(--muted);padding:16px 10px;font-size:13px;">Cargando datos de ' + esc(matrizInstitucionSel) + '...</div>';
-  } else {
+  // --- Fase 4.2B: sub-tabs internos de la Matriz ---
+  const SUBTABS = [
+    { id: 'catalogo', label: 'Catálogo' },
+    { id: 'descuentos', label: 'Descuentos' },
+    { id: 'duplicados', label: 'Duplicados' },
+    { id: 'overrides', label: 'Overrides' },
+    { id: 'comparador', label: 'Comparador' },
+    { id: 'auditoria', label: 'Auditoría' }
+  ];
+  const subTabsHtml =
+    '<div style="display:flex;gap:6px;flex-wrap:wrap;margin:16px 0 10px;border-bottom:1px solid var(--border);padding-bottom:10px;">' +
+    SUBTABS.map(function (t) {
+      return '<button class="btn-logout" style="' + (matrizSubTab === t.id ? 'background:#1a1a1a;color:#fff;border-color:#1a1a1a;' : '') + '" onclick="cambiarSubTabMatriz(\'' + t.id + '\')">' + esc(t.label) + '</button>';
+    }).join('') +
+    '</div>';
+
+  function construirTablaCatalogo() {
     const filasCat = matrizCatalogoFiltrado();
     const marcasDisponibles = Array.from(new Set(matrizCatalogoRows.map(function (r) { return r.marca; }))).filter(Boolean).sort();
     const familiasDisponibles = Array.from(new Set(matrizCatalogoRows.map(function (r) { return r.familia; }))).filter(Boolean).sort();
@@ -1342,59 +1432,218 @@ function renderMatrizInstitucional() {
       '</tr>';
     });
 
-    const tablaCatalogoHtml =
-      '<div class="dash-section" style="margin-top:18px;">' +
-        '<div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;">' +
-          '<h3 style="margin:0;">Catálogo — ' + esc(matrizInstitucionSel) + ' <span class="dash-badge">' + filasCat.length + ' de ' + matrizCatalogoRows.length + '</span></h3>' +
-          '<div style="display:flex;gap:8px;flex-wrap:wrap;">' +
-            '<button class="btn-logout" onclick="limpiarFiltrosMatrizCatalogo()">Limpiar filtros</button>' +
-            '<button class="btn-logout" onclick="exportarMatrizExcel(matrizCatalogoFiltrado(), [' +
-              '{label:\'Código\',key:\'codigo\'},{label:\'Marca\',key:\'marca\'},{label:\'Familia\',key:\'familia\'},' +
-              '{label:\'Descripción\',key:\'descripcion\'},{label:\'Precio lista\',key:\'precioLista\'},' +
-              '{label:\'Descuento aplicado\',value:function(r){return r.descuento_aplicado!=null?Math.round(r.descuento_aplicado*100)+\'%\':\'-\';}},' +
-              '{label:\'Precio final\',key:\'precioFinal\'},' +
-              '{label:\'Override\',value:function(r){return r.tiene_override?\'Sí\':\'No\';}},' +
-              '{label:\'Duplicado\',value:function(r){return r.es_codigo_duplicado?\'Sí\':\'No\';}}' +
-              '], \'Catálogo\', \'Matriz_Catalogo_' + matrizInstitucionSel + '\')">📊 Exportar</button>' +
-          '</div>' +
+    return '<div class="dash-section" style="margin-top:8px;">' +
+      '<div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;">' +
+        '<h3 style="margin:0;">Catálogo — ' + esc(matrizInstitucionSel) + ' <span class="dash-badge">' + filasCat.length + ' de ' + matrizCatalogoRows.length + '</span></h3>' +
+        '<div style="display:flex;gap:8px;flex-wrap:wrap;">' +
+          '<button class="btn-logout" onclick="limpiarFiltrosMatrizCatalogo()">Limpiar filtros</button>' +
+          '<button class="btn-logout" onclick="exportarMatrizExcel(matrizCatalogoFiltrado(), [' +
+            '{label:\'Código\',key:\'codigo\'},{label:\'Marca\',key:\'marca\'},{label:\'Familia\',key:\'familia\'},' +
+            '{label:\'Descripción\',key:\'descripcion\'},{label:\'Precio lista\',key:\'precioLista\'},' +
+            '{label:\'Descuento aplicado\',value:function(r){return r.descuento_aplicado!=null?Math.round(r.descuento_aplicado*100)+\'%\':\'-\';}},' +
+            '{label:\'Precio final\',key:\'precioFinal\'},' +
+            '{label:\'Override\',value:function(r){return r.tiene_override?\'Sí\':\'No\';}},' +
+            '{label:\'Duplicado\',value:function(r){return r.es_codigo_duplicado?\'Sí\':\'No\';}}' +
+            '], \'Catálogo\', \'Matriz_Catalogo_' + matrizInstitucionSel + '\')">📊 Exportar</button>' +
         '</div>' +
-        '<div style="display:flex;gap:8px;flex-wrap:wrap;margin:10px 0;">' +
-          '<input id="matriz-filtro-texto" type="text" placeholder="Buscar código o descripción..." value="' + esc(matrizFiltro.texto) + '" style="padding:7px 10px;border-radius:7px;border:1px solid var(--border);font-size:13px;flex:1;min-width:180px;">' +
-          '<select id="matriz-filtro-marca" style="padding:7px 10px;border-radius:7px;border:1px solid var(--border);font-size:13px;">' +
-            '<option value="Todas">Todas las marcas</option>' +
-            marcasDisponibles.map(function (m) { return '<option value="' + esc(m) + '"' + (matrizFiltro.marca === m ? ' selected' : '') + '>' + esc(m) + '</option>'; }).join('') +
-          '</select>' +
-          '<select id="matriz-filtro-familia" style="padding:7px 10px;border-radius:7px;border:1px solid var(--border);font-size:13px;">' +
-            '<option value="Todas">Todas las familias</option>' +
-            familiasDisponibles.map(function (f) { return '<option value="' + esc(f) + '"' + (matrizFiltro.familia === f ? ' selected' : '') + '>' + esc(f) + '</option>'; }).join('') +
-          '</select>' +
-          '<label style="font-size:12px;display:flex;align-items:center;gap:4px;"><input type="checkbox" id="matriz-filtro-override"' + (matrizFiltro.soloOverride ? ' checked' : '') + '> Solo con override</label>' +
-          '<label style="font-size:12px;display:flex;align-items:center;gap:4px;"><input type="checkbox" id="matriz-filtro-duplicado"' + (matrizFiltro.soloDuplicado ? ' checked' : '') + '> Solo duplicados</label>' +
-        '</div>' +
-        '<div style="overflow-x:auto;">' +
-        '<table class="dash-table"><thead><tr>' +
-          '<th>Código</th><th>Marca</th><th>Familia</th><th>Descripción</th><th class="num">Precio lista</th><th class="num">Dscto.</th><th class="num">Precio final</th><th>Override</th><th>Duplicado</th>' +
-        '</tr></thead><tbody>' + (filasCatHtml || '<tr><td colspan="9" style="color:var(--muted);padding:16px 10px">Sin resultados con los filtros actuales.</td></tr>') + '</tbody></table>' +
-        '</div>' +
-      '</div>';
+      '</div>' +
+      '<div style="display:flex;gap:8px;flex-wrap:wrap;margin:10px 0;">' +
+        '<input id="matriz-filtro-texto" type="text" placeholder="Buscar código o descripción..." value="' + esc(matrizFiltro.texto) + '" style="padding:7px 10px;border-radius:7px;border:1px solid var(--border);font-size:13px;flex:1;min-width:180px;">' +
+        '<select id="matriz-filtro-marca" style="padding:7px 10px;border-radius:7px;border:1px solid var(--border);font-size:13px;">' +
+          '<option value="Todas">Todas las marcas</option>' +
+          marcasDisponibles.map(function (m) { return '<option value="' + esc(m) + '"' + (matrizFiltro.marca === m ? ' selected' : '') + '>' + esc(m) + '</option>'; }).join('') +
+        '</select>' +
+        '<select id="matriz-filtro-familia" style="padding:7px 10px;border-radius:7px;border:1px solid var(--border);font-size:13px;">' +
+          '<option value="Todas">Todas las familias</option>' +
+          familiasDisponibles.map(function (f) { return '<option value="' + esc(f) + '"' + (matrizFiltro.familia === f ? ' selected' : '') + '>' + esc(f) + '</option>'; }).join('') +
+        '</select>' +
+        '<label style="font-size:12px;display:flex;align-items:center;gap:4px;"><input type="checkbox" id="matriz-filtro-override"' + (matrizFiltro.soloOverride ? ' checked' : '') + '> Solo con override</label>' +
+        '<label style="font-size:12px;display:flex;align-items:center;gap:4px;"><input type="checkbox" id="matriz-filtro-duplicado"' + (matrizFiltro.soloDuplicado ? ' checked' : '') + '> Solo duplicados</label>' +
+      '</div>' +
+      '<div style="overflow-x:auto;">' +
+      '<table class="dash-table"><thead><tr>' +
+        '<th>Código</th><th>Marca</th><th>Familia</th><th>Descripción</th><th class="num">Precio lista</th><th class="num">Dscto.</th><th class="num">Precio final</th><th>Override</th><th>Duplicado</th>' +
+      '</tr></thead><tbody>' + (filasCatHtml || '<tr><td colspan="9" style="color:var(--muted);padding:16px 10px">Sin resultados con los filtros actuales.</td></tr>') + '</tbody></table>' +
+      '</div>' +
+    '</div>';
+  }
 
+  function construirTablaDescuentos() {
     let filasDto = '';
     matrizDescuentosRows.forEach(function (r) {
       filasDto += '<tr><td>' + esc(r.familia) + '</td><td class="num">' + (r.descuento != null ? Math.round(r.descuento * 100) + '%' : '-') + '</td></tr>';
     });
-    const tablaDescuentosHtml =
-      '<div class="dash-section" style="margin-top:18px;">' +
-        '<div style="display:flex;align-items:center;justify-content:space-between;">' +
-          '<h3 style="margin:0;">Descuentos — ' + esc(matrizInstitucionSel) + '</h3>' +
-          '<button class="btn-logout" onclick="exportarMatrizExcel(matrizDescuentosRows, [' +
-            '{label:\'Familia\',key:\'familia\'},{label:\'Descuento\',value:function(r){return r.descuento!=null?Math.round(r.descuento*100)+\'%\':\'-\';}}' +
-            '], \'Descuentos\', \'Matriz_Descuentos_' + matrizInstitucionSel + '\')">📊 Exportar</button>' +
-        '</div>' +
-        '<table class="dash-table"><thead><tr><th>Familia</th><th class="num">Descuento</th></tr></thead>' +
-        '<tbody>' + (filasDto || '<tr><td colspan="2" style="color:var(--muted);padding:16px 10px">Sin datos</td></tr>') + '</tbody></table>' +
-      '</div>';
+    return '<div class="dash-section" style="margin-top:8px;">' +
+      '<div style="display:flex;align-items:center;justify-content:space-between;">' +
+        '<h3 style="margin:0;">Descuentos — ' + esc(matrizInstitucionSel) + '</h3>' +
+        '<button class="btn-logout" onclick="exportarMatrizExcel(matrizDescuentosRows, [' +
+          '{label:\'Familia\',key:\'familia\'},{label:\'Descuento\',value:function(r){return r.descuento!=null?Math.round(r.descuento*100)+\'%\':\'-\';}}' +
+          '], \'Descuentos\', \'Matriz_Descuentos_' + matrizInstitucionSel + '\')">📊 Exportar</button>' +
+      '</div>' +
+      '<table class="dash-table"><thead><tr><th>Familia</th><th class="num">Descuento</th></tr></thead>' +
+      '<tbody>' + (filasDto || '<tr><td colspan="2" style="color:var(--muted);padding:16px 10px">Sin datos</td></tr>') + '</tbody></table>' +
+    '</div>';
+  }
 
-    seccionesHtml = tablaCatalogoHtml + tablaDescuentosHtml;
+  function construirTablaDuplicados() {
+    let filas = '';
+    matrizDuplicadosRows.forEach(function (r) {
+      const variantesTxt = (r.variantes || []).map(function (v) {
+        return esc(v.marca) + ' / ' + esc(v.familia) + ': ' + fmt(v.precioFinal);
+      }).join('<br>');
+      const badgeEstado = r.estado === 'unificado'
+        ? '<span style="font-size:10px;font-weight:700;background:#d1fae5;color:#065f46;border-radius:5px;padding:2px 8px;">✓ Unificado</span>'
+        : r.estado === 'sin_unificar'
+          ? '<span style="font-size:10px;font-weight:700;background:#fef3c7;color:#92400e;border-radius:5px;padding:2px 8px;">⚠️ Sin unificar</span>'
+          : '<span style="font-size:10px;font-weight:700;background:#f4f4f5;color:#3f3f46;border-radius:5px;padding:2px 8px;">= Coincide igual</span>';
+      const badgePrecioCompartido = r.tiene_precio_compartido
+        ? '<span style="font-size:10px;font-weight:700;background:#dbeafe;color:#1d4ed8;border-radius:5px;padding:2px 8px;margin-left:4px;">🔒 Precio compartido</span>' : '';
+      filas += '<tr' + (r.estado === 'sin_unificar' ? ' style="background:#fffbeb;"' : '') + '>' +
+        '<td class="mono" style="font-weight:700;">' + esc(r.codigo) + '</td>' +
+        '<td class="num">' + r.cantidad_variantes + '</td>' +
+        '<td style="font-size:11px;">' + variantesTxt + '</td>' +
+        '<td style="font-size:11px;">' + (r.precios_finales || []).map(function (p) { return fmt(p); }).join(' / ') + '</td>' +
+        '<td>' + badgeEstado + badgePrecioCompartido + '</td>' +
+        '<td style="font-size:11px;color:var(--muted);">' + esc(r.observacion || '') + '</td>' +
+      '</tr>';
+    });
+    return '<div class="dash-section" style="margin-top:8px;">' +
+      '<div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;">' +
+        '<h3 style="margin:0;">Códigos duplicados — ' + esc(matrizInstitucionSel) + ' <span class="dash-badge">' + matrizDuplicadosRows.length + '</span></h3>' +
+        '<button class="btn-logout" onclick="exportarMatrizExcel(matrizDuplicadosRows, [' +
+          '{label:\'Código\',key:\'codigo\'},{label:\'Cantidad variantes\',key:\'cantidad_variantes\'},' +
+          '{label:\'Precios finales\',value:function(r){return (r.precios_finales||[]).join(\' / \');}},' +
+          '{label:\'Precio compartido\',value:function(r){return r.tiene_precio_compartido?\'Sí\':\'No\';}},' +
+          '{label:\'Estado\',key:\'estado\'},{label:\'Observación\',key:\'observacion\'}' +
+          '], \'Duplicados\', \'Matriz_Duplicados_' + matrizInstitucionSel + '\')">📊 Exportar</button>' +
+      '</div>' +
+      (matrizDuplicadosRows.length === 0
+        ? '<div style="color:var(--muted);padding:16px 10px;font-size:13px;">Esta institución no tiene códigos duplicados en su catálogo.</div>'
+        : '<div style="overflow-x:auto;"><table class="dash-table"><thead><tr>' +
+          '<th>Código</th><th class="num">Variantes</th><th>Detalle variantes</th><th>Precios finales</th><th>Estado</th><th>Observación</th>' +
+          '</tr></thead><tbody>' + filas + '</tbody></table></div>') +
+    '</div>';
+  }
+
+  function construirTablaOverrides() {
+    let filas = '';
+    matrizOverridesRows.forEach(function (r) {
+      filas += '<tr>' +
+        '<td style="font-weight:700;">' + esc(r.institucion_codigo) + '</td>' +
+        '<td class="mono">' + esc(r.codigo) + '</td>' +
+        '<td style="font-size:11px;">' + esc(r.tipo_override) + '</td>' +
+        '<td class="num">' + (r.precio_final_override != null ? fmt(r.precio_final_override) : '-') + '</td>' +
+        '<td class="num">' + (r.descuento_override != null ? Math.round(r.descuento_override * 100) + '%' : '-') + '</td>' +
+        '<td>' + (r.activo ? '<span style="font-size:10px;font-weight:700;background:#d1fae5;color:#065f46;border-radius:5px;padding:2px 8px;">Activo</span>' : '<span style="font-size:10px;font-weight:700;background:#f4f4f5;color:#3f3f46;border-radius:5px;padding:2px 8px;">Inactivo</span>') + '</td>' +
+        '<td style="font-size:11px;color:var(--muted);max-width:260px;">' + esc(r.motivo || '') + '</td>' +
+        '<td style="font-size:11px;">' + esc(r.creado_por || '-') + '</td>' +
+        '<td style="font-size:11px;white-space:nowrap;">' + (r.creado_en ? fechaCorta(r.creado_en) : '-') + '</td>' +
+        '<td style="font-size:11px;white-space:nowrap;">' + (r.actualizado_en ? fechaCorta(r.actualizado_en) : '-') + '</td>' +
+      '</tr>';
+    });
+    return '<div class="dash-section" style="margin-top:8px;">' +
+      '<div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;">' +
+        '<h3 style="margin:0;">Overrides de precio — ' + esc(matrizInstitucionSel) + ' <span class="dash-badge">' + matrizOverridesRows.length + '</span></h3>' +
+        '<button class="btn-logout" onclick="exportarMatrizExcel(matrizOverridesRows, [' +
+          '{label:\'Institución\',key:\'institucion_codigo\'},{label:\'Código\',key:\'codigo\'},{label:\'Tipo override\',key:\'tipo_override\'},' +
+          '{label:\'Precio final override\',key:\'precio_final_override\'},{label:\'Descuento override\',key:\'descuento_override\'},' +
+          '{label:\'Activo\',value:function(r){return r.activo?\'Sí\':\'No\';}},{label:\'Motivo\',key:\'motivo\'},' +
+          '{label:\'Creado por\',key:\'creado_por\'},{label:\'Creado en\',key:\'creado_en\'},{label:\'Actualizado en\',key:\'actualizado_en\'}' +
+          '], \'Overrides\', \'Matriz_Overrides_' + matrizInstitucionSel + '\')">📊 Exportar</button>' +
+      '</div>' +
+      (matrizOverridesRows.length === 0
+        ? '<div style="color:var(--muted);padding:16px 10px;font-size:13px;">No hay overrides activos para esta institución.</div>'
+        : '<div style="overflow-x:auto;"><table class="dash-table"><thead><tr>' +
+          '<th>Institución</th><th>Código</th><th>Tipo</th><th class="num">Precio final</th><th class="num">Descuento</th><th>Activo</th><th>Motivo</th><th>Creado por</th><th>Creado en</th><th>Actualizado en</th>' +
+          '</tr></thead><tbody>' + filas + '</tbody></table></div>') +
+    '</div>';
+  }
+
+  function construirTablaComparador() {
+    const filasFiltradas = matrizComparadorFiltrado();
+    const cols = ['UDP', 'UNAB', 'UMAYOR', 'ARMADA', 'HOSMIL', 'UMAYORT'];
+    let filas = '';
+    filasFiltradas.forEach(function (r) {
+      filas += '<tr' + (r.diferencia_detectada ? ' style="background:#fff7ed;"' : '') + '>' +
+        '<td style="font-weight:700;">' + esc(r.familia) + '</td>' +
+        cols.map(function (c) { return '<td class="num">' + (r[c] != null ? Math.round(r[c] * 100) + '%' : '-') + '</td>'; }).join('') +
+        '<td>' + (r.diferencia_detectada ? '<span style="font-size:10px;font-weight:700;background:#ffedd5;color:#9a3412;border-radius:5px;padding:2px 8px;">⚠️ Diferencia</span>' : '') + '</td>' +
+        '<td style="font-size:11px;color:var(--muted);">' + esc(r.observacion || '') + '</td>' +
+      '</tr>';
+    });
+    return '<div class="dash-section" style="margin-top:8px;">' +
+      '<div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;">' +
+        '<h3 style="margin:0;">Comparador de descuentos <span class="dash-badge">' + filasFiltradas.length + ' de ' + matrizComparadorRows.length + '</span></h3>' +
+        '<button class="btn-logout" onclick="exportarMatrizExcel(matrizComparadorFiltrado(), [' +
+          '{label:\'Familia\',key:\'familia\'},' +
+          cols.map(function (c) { return '{label:\'' + c + '\',value:function(r){return r[\'' + c + '\']!=null?Math.round(r[\'' + c + '\']*100)+\'%\':\'-\';}}'; }).join(',') + ',' +
+          '{label:\'Diferencia detectada\',value:function(r){return r.diferencia_detectada?\'Sí\':\'No\';}},{label:\'Observación\',key:\'observacion\'}' +
+          '], \'Comparador\', \'Matriz_Comparador_Descuentos\')">📊 Exportar</button>' +
+      '</div>' +
+      '<div style="display:flex;gap:8px;flex-wrap:wrap;margin:10px 0;">' +
+        '<input id="matriz-comparador-texto" type="text" placeholder="Buscar familia..." value="' + esc(matrizComparadorFiltro.texto) + '" style="padding:7px 10px;border-radius:7px;border:1px solid var(--border);font-size:13px;flex:1;min-width:180px;">' +
+        '<label style="font-size:12px;display:flex;align-items:center;gap:4px;"><input type="checkbox" id="matriz-comparador-solo-diferencias"' + (matrizComparadorFiltro.soloDiferencias ? ' checked' : '') + '> Solo diferencias</label>' +
+      '</div>' +
+      '<div style="overflow-x:auto;"><table class="dash-table"><thead><tr>' +
+        '<th>Familia</th>' + cols.map(function (c) { return '<th class="num">' + c + '</th>'; }).join('') + '<th>Diferencia</th><th>Observación</th>' +
+      '</tr></thead><tbody>' + (filas || '<tr><td colspan="9" style="color:var(--muted);padding:16px 10px">Sin resultados con los filtros actuales.</td></tr>') + '</tbody></table></div>' +
+    '</div>';
+  }
+
+  function construirTablaAuditoria() {
+    let filas = '';
+    matrizAuditoriaRows.forEach(function (r) {
+      filas += '<tr>' +
+        '<td style="font-size:11px;white-space:nowrap;">' + (r.fecha ? fechaCorta(r.fecha) : '-') + '</td>' +
+        '<td style="font-size:11px;">' + esc(r.usuario || '-') + '</td>' +
+        '<td style="font-size:11px;">' + esc(r.entidad || '-') + '</td>' +
+        '<td style="font-size:11px;">' + esc(r.institucion_codigo || '-') + '</td>' +
+        '<td style="font-size:11px;">' + esc(r.accion || '-') + '</td>' +
+        '<td class="mono" style="font-size:11px;">' + esc(r.campo || '-') + '</td>' +
+        '<td style="font-size:11px;color:#991b1b;">' + esc(r.valor_anterior != null ? String(r.valor_anterior) : '-') + '</td>' +
+        '<td style="font-size:11px;color:#065f46;">' + esc(r.valor_nuevo != null ? String(r.valor_nuevo) : '-') + '</td>' +
+      '</tr>';
+    });
+    return '<div class="dash-section" style="margin-top:8px;">' +
+      '<div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;">' +
+        '<h3 style="margin:0;">Auditoría reciente <span class="dash-badge">últimos ' + matrizAuditoriaRows.length + ' cambios</span></h3>' +
+        '<button class="btn-logout" onclick="exportarMatrizExcel(matrizAuditoriaRows, [' +
+          '{label:\'Fecha\',key:\'fecha\'},{label:\'Usuario\',key:\'usuario\'},{label:\'Entidad\',key:\'entidad\'},' +
+          '{label:\'Institución\',key:\'institucion_codigo\'},{label:\'Acción\',key:\'accion\'},{label:\'Campo\',key:\'campo\'},' +
+          '{label:\'Valor anterior\',key:\'valor_anterior\'},{label:\'Valor nuevo\',key:\'valor_nuevo\'}' +
+          '], \'Auditoría\', \'Matriz_Auditoria_Reciente\')">📊 Exportar</button>' +
+      '</div>' +
+      (matrizAuditoriaRows.length === 0
+        ? '<div style="color:var(--muted);padding:16px 10px;font-size:13px;">No hay auditoría reciente disponible.</div>'
+        : '<div style="overflow-x:auto;"><table class="dash-table"><thead><tr>' +
+          '<th>Fecha</th><th>Usuario</th><th>Entidad</th><th>Institución</th><th>Acción</th><th>Campo</th><th>Valor anterior</th><th>Valor nuevo</th>' +
+          '</tr></thead><tbody>' + filas + '</tbody></table></div>') +
+    '</div>';
+  }
+
+  // --- Contenido del sub-tab activo ---
+  let seccionesHtml = '';
+  const requiereInstitucion = (matrizSubTab === 'catalogo' || matrizSubTab === 'descuentos' || matrizSubTab === 'duplicados' || matrizSubTab === 'overrides');
+  if (requiereInstitucion && !matrizInstitucionSel) {
+    seccionesHtml = '<div style="color:var(--muted);padding:16px 10px;font-size:13px;">Selecciona una institución arriba (o una card) para ver esta sección.</div>';
+  } else if (requiereInstitucion && matrizCargando) {
+    seccionesHtml = '<div style="color:var(--muted);padding:16px 10px;font-size:13px;">Cargando datos de ' + esc(matrizInstitucionSel) + '...</div>';
+  } else if (matrizSubTab === 'catalogo') {
+    seccionesHtml = construirTablaCatalogo();
+  } else if (matrizSubTab === 'descuentos') {
+    seccionesHtml = construirTablaDescuentos();
+  } else if (matrizSubTab === 'duplicados') {
+    seccionesHtml = construirTablaDuplicados();
+  } else if (matrizSubTab === 'overrides') {
+    seccionesHtml = construirTablaOverrides();
+  } else if (matrizSubTab === 'comparador') {
+    seccionesHtml = (matrizCargando && !matrizComparadorCargado)
+      ? '<div style="color:var(--muted);padding:16px 10px;font-size:13px;">Cargando comparador...</div>'
+      : construirTablaComparador();
+  } else if (matrizSubTab === 'auditoria') {
+    seccionesHtml = (matrizCargando && !matrizAuditoriaCargada)
+      ? '<div style="color:var(--muted);padding:16px 10px;font-size:13px;">Cargando auditoría...</div>'
+      : construirTablaAuditoria();
   }
 
   v.innerHTML =
@@ -1410,6 +1659,7 @@ function renderMatrizInstitucional() {
     cardsHtml +
     tablaResumenHtml +
     selectorHtml +
+    subTabsHtml +
     seccionesHtml +
     '</main>';
 
@@ -1435,6 +1685,20 @@ function renderMatrizInstitucional() {
   if (fo) fo.addEventListener('change', function (e) { matrizFiltro.soloOverride = e.target.checked; renderMatrizInstitucional(); });
   const fd = document.getElementById('matriz-filtro-duplicado');
   if (fd) fd.addEventListener('change', function (e) { matrizFiltro.soloDuplicado = e.target.checked; renderMatrizInstitucional(); });
+
+  // Fase 4.2B -- filtros del Comparador (mismo patron de "no perder foco" que
+  // el filtro de texto de Catalogo, adaptado a esta seccion nueva).
+  const ct = document.getElementById('matriz-comparador-texto');
+  if (ct) {
+    ct.addEventListener('input', function (e) { matrizComparadorFiltro.texto = e.target.value; matrizFiltroTextoFoco = true; renderMatrizInstitucional(); });
+    if (matrizFiltroTextoFoco) {
+      ct.focus();
+      const p = ct.value.length;
+      try { ct.setSelectionRange(p, p); } catch (e) {}
+    }
+  }
+  const cd = document.getElementById('matriz-comparador-solo-diferencias');
+  if (cd) cd.addEventListener('change', function (e) { matrizComparadorFiltro.soloDiferencias = e.target.checked; renderMatrizInstitucional(); });
 }
 
 sb.auth.onAuthStateChange(function (event, session) {
