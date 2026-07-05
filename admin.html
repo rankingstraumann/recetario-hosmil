@@ -277,6 +277,23 @@ async function doLogout() {
   await sb.auth.signOut();
 }
 
+// FASE 4.3 -- Antes: cargarCotizaciones() siempre llamaba renderDashboard(),
+// sin importar la vista activa. Si Realtime disparaba una actualizacion
+// mientras el usuario estaba en Dashboard Piloto o en la Matriz
+// Institucional, la UI lo devolvia a la vista de Cotizaciones sin que el
+// usuario lo pidiera. Esta funcion centraliza que renderizar segun
+// vistaActiva, respetando en que vista esta el usuario. No cambia ningun
+// dato ni logica comercial -- solo decide que funcion de render llamar.
+function renderVistaActiva() {
+  if (vistaActiva === 'dashboard') {
+    renderDashboardPiloto();
+  } else if (vistaActiva === 'matriz') {
+    renderMatrizInstitucional();
+  } else {
+    renderDashboard();
+  }
+}
+
 async function cargarCotizaciones() {
   try {
     const { data, error } = await sb.from('cotizaciones').select('*').is('deleted_at', null).order('created_at', { ascending: false });
@@ -308,7 +325,7 @@ async function cargarCotizaciones() {
     // NO limpiar cotizaciones
     errorConexion = true;
   }
-  renderDashboard();
+  renderVistaActiva(); // FASE 4.3: antes renderDashboard() incondicional
 }
 
 function suscribirRealtime() {
