@@ -278,7 +278,13 @@ async function cargarCatalogoMaestro() {
         descripcion: p.descripcion,
         familia: p.familia,
         precioLista: p.precioLista,
-        precioFinal: calcularPreviewLocal(p.familia, p.precioLista),
+        // Fase 3.6K: precioFinal ya viene calculado server-side (incluye
+        // precio_compartido_override si aplica). calcularPreviewLocal queda
+        // SOLO como fallback defensivo si la RPC no trajera el campo por
+        // algún motivo -- no se duplica la lógica de override aquí.
+        precioFinal: (p.precioFinal !== undefined && p.precioFinal !== null)
+          ? p.precioFinal
+          : calcularPreviewLocal(p.familia, p.precioLista),
       };
     });
 
