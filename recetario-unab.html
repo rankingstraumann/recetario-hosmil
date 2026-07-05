@@ -231,6 +231,72 @@ const COBRANZA_EMAIL = 'cobranza.cl@straumann.com';
 const WEBPAY_LINK = 'https://www.webpay.cl/form-pay/33930';
 const PATIENT_LINK_BASE = 'https://recetario-unab.vercel.app/';
 
+// ============================================================
+// FASE 3.7D -- Modo prueba: carga opcional desde catálogo maestro.
+// Activado SOLO con ?catalogoMaestro=1 en la URL. Por defecto, esta
+// función ni se ejecuta y PRODUCTS sigue siendo el array embebido de
+// siempre. No reemplaza la declaración de PRODUCTS/PRODUCTS_BLT de arriba,
+// solo puede mutar su contenido en memoria si el flag está activo Y la
+// carga tiene éxito. No se activa como default en esta fase. No toca el
+// carrito por código+familia de Fase 3.7C -- ese comportamiento se hereda
+// igual, sin cambios.
+// ============================================================
+const usarCatalogoMaestro = new URLSearchParams(window.location.search).get('catalogoMaestro') === '1';
+
+function calcularPreviewLocal(familia, precioLista) {
+  const DESCUENTOS_PREVIEW = {
+    'ACQUA': 0.40, 'NEOPOROS': 0.40, 'BASES DE TITANIO': 0.40, 'REHABILITACIÓN': 0.40,
+    'TAPAS - CICATRIZADORES': 0.30, 'LINEA DE BIOMATERIALES': 0.25,
+    'STRAUMANN — IMPLANTES BLC/BLX': 0.32, 'STRAUMANN — PILARES ANATÓMICOS': 0.20,
+    'STRAUMANN — PILARES PROVISIONALES': 0.30, 'STRAUMANN — REHABILITACIÓN': 0.30,
+    'STRAUMANN — SOBREDENTADURA': 0.30, 'STRAUMANN — TOMA DE IMPRESIÓN': 0.30,
+    'BLT — IMPLANTES SLA': 0.30, 'BLT — IMPLANTES SLActive': 0.30, 'BLT — CALCINABLES': 0.30,
+    'BLT — PILARES ATORNILLADOS': 0.30, 'BLT — REHABILITACIÓN': 0.30, 'BLT — SOBREDENTADURA': 0.30,
+    'BLT — TOMA DE IMPRESIÓN': 0.30, 'BLT — VARIOBASE': 0.30,
+  };
+  const d = DESCUENTOS_PREVIEW[familia] !== undefined ? DESCUENTOS_PREVIEW[familia] : 0.30;
+  return Math.round(precioLista * (1 - d));
+}
+
+async function cargarCatalogoMaestro() {
+  if (!usarCatalogoMaestro) return; // comportamiento por defecto: no hace nada
+
+  try {
+    const { data, error } = await sb.rpc('obtener_catalogo_institucion', { p_institucion_codigo: 'UNAB' });
+
+    if (error) throw error;
+    if (!Array.isArray(data) || data.length === 0) {
+      throw new Error('Catálogo maestro devolvió una lista vacía');
+    }
+    if (data.length < 831) {
+      throw new Error('Catálogo maestro devolvió ' + data.length + ' productos, se esperaban 831');
+    }
+
+    const nuevos = data.map(function(p) {
+      return {
+        codigo: p.codigo,
+        descripcion: p.descripcion,
+        familia: p.familia,
+        precioLista: p.precioLista,
+        // precioFinal ya viene calculado server-side (incluye precio_compartido_override
+        // si aplica). calcularPreviewLocal queda SOLO como fallback defensivo si la RPC
+        // no trajera el campo por algún motivo -- no se duplica la lógica de override aquí.
+        precioFinal: (p.precioFinal !== undefined && p.precioFinal !== null)
+          ? p.precioFinal
+          : calcularPreviewLocal(p.familia, p.precioLista),
+      };
+    });
+
+    PRODUCTS.length = 0;
+    PRODUCTS.push.apply(PRODUCTS, nuevos);
+    renderProductList();
+
+    console.info('[catalogoMaestro] ACTIVO — ' + nuevos.length + ' productos cargados desde catálogo maestro.');
+  } catch (e) {
+    console.warn('[catalogoMaestro] FALLBACK — no se pudo cargar el catálogo maestro, se mantiene el catálogo embebido.', e);
+  }
+}
+
 // Regla de negocio: por cada implante (ACQUA o NEOPOROS) debe ir 1 tapa de cierre o
 // pilar de cicatrización al 99% de descuento (sobre precio de lista). Si faltan, se
 // autocompleta con 117.021. Si sobran, el excedente queda a precio normal.
@@ -953,6 +1019,8 @@ renderDoctorField();
 renderProductList();
 renderCart();
 renderFloating();
+
+cargarCatalogoMaestro(); // Fase 3.7D: no-op salvo ?catalogoMaestro=1
 
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', function () {
