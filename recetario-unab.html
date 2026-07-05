@@ -241,7 +241,8 @@ const PATIENT_LINK_BASE = 'https://recetario-unab.vercel.app/';
 // carrito por código+familia de Fase 3.7C -- ese comportamiento se hereda
 // igual, sin cambios.
 // ============================================================
-const usarCatalogoMaestro = new URLSearchParams(window.location.search).get('catalogoMaestro') === '1';
+const forzarEmbebido = new URLSearchParams(window.location.search).get('catalogoEmbebido') === '1';
+const usarCatalogoMaestro = !forzarEmbebido;
 
 function calcularPreviewLocal(familia, precioLista) {
   const DESCUENTOS_PREVIEW = {
@@ -259,7 +260,10 @@ function calcularPreviewLocal(familia, precioLista) {
 }
 
 async function cargarCatalogoMaestro() {
-  if (!usarCatalogoMaestro) return; // comportamiento por defecto: no hace nada
+  if (!usarCatalogoMaestro) {
+    console.info('[catalogoMaestro] Modo embebido forzado por parámetro (?catalogoEmbebido=1).');
+    return;
+  }
 
   try {
     const { data, error } = await sb.rpc('obtener_catalogo_institucion', { p_institucion_codigo: 'UNAB' });
