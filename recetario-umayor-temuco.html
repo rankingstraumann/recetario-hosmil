@@ -231,7 +231,8 @@ PRODUCTS.push.apply(PRODUCTS, PRODUCTS_BLT);
 // solo puede mutar su contenido en memoria si el flag está activo Y la
 // carga tiene éxito.
 // ============================================================
-const usarCatalogoMaestro = new URLSearchParams(window.location.search).get('catalogoMaestro') === '1';
+const forzarEmbebido = new URLSearchParams(window.location.search).get('catalogoEmbebido') === '1';
+const usarCatalogoMaestro = !forzarEmbebido;
 
 function calcularPreviewLocal(familia, precioLista) {
   const DESCUENTOS_PREVIEW = {
@@ -245,7 +246,10 @@ function calcularPreviewLocal(familia, precioLista) {
 }
 
 async function cargarCatalogoMaestro() {
-  if (!usarCatalogoMaestro) return; // comportamiento por defecto: no hace nada
+  if (!usarCatalogoMaestro) {
+    console.info('[catalogoMaestro] Modo embebido forzado por parámetro (?catalogoEmbebido=1).');
+    return; // comportamiento forzado: no hace nada, usa el catálogo embebido
+  }
 
   try {
     const { data, error } = await sb.rpc('obtener_catalogo_institucion', { p_institucion_codigo: 'UMAYORT' });
@@ -272,9 +276,9 @@ async function cargarCatalogoMaestro() {
     PRODUCTS.push.apply(PRODUCTS, nuevos);
     renderProductList();
 
-    console.info('[catalogoMaestro] Cargado desde RPC obtener_catalogo_institucion: ' + nuevos.length + ' productos.');
+    console.info('[catalogoMaestro] ACTIVO — ' + nuevos.length + ' productos cargados desde catálogo maestro.');
   } catch (e) {
-    console.warn('[catalogoMaestro] No se pudo cargar el catálogo maestro, se mantiene el catálogo embebido.', e);
+    console.warn('[catalogoMaestro] FALLBACK — no se pudo cargar el catálogo maestro, se mantiene el catálogo embebido.', e);
   }
 }
 const FAMILIA_ORDEN = ["STRAUMANN — IMPLANTES BLC/BLX", "BLT — IMPLANTES SLActive", "BLT — IMPLANTES SLA", "STRAUMANN — TAPAS Y CICATRIZADORES", "BLT — TAPAS Y CICATRIZADORES", "STRAUMANN — REHABILITACIÓN", "STRAUMANN — TOMA DE IMPRESIÓN", "STRAUMANN — PILARES PROVISIONALES", "STRAUMANN — SOBREDENTADURA", "STRAUMANN — PILARES ANATÓMICOS", "BLT — VARIOBASE", "BLT — TOMA DE IMPRESIÓN", "BLT — PILARES ATORNILLADOS", "BLT — SOBREDENTADURA", "BLT — REHABILITACIÓN", "BLT — CALCINABLES", "LINEA DE BIOMATERIALES"];
