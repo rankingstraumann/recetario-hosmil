@@ -144,9 +144,23 @@ function comparaPrioridadUrgencia(a, b) {
   }
   return 0; // el resto conserva el orden ya existente (created_at desc)
 }
-let vistaActiva = 'cotizaciones'; // 'cotizaciones' | 'dashboard'
+let vistaActiva = 'cotizaciones'; // 'cotizaciones' | 'dashboard' | 'matriz'
 let dashFiltro = 'todo'; // 'hoy' | '7d' | '30d' | 'todo'
 function esObservador() { return !!(miPerfil && miPerfil.es_observador); }
+
+// ============================================================
+// FASE 4.2A -- Matriz Institucional (modo lectura). Ningun estado ni
+// funcion de esta seccion ejecuta INSERT/UPDATE/DELETE. Solo consume
+// las 7 funciones de solo lectura ya creadas en Fase 4.1 (matriz_*).
+// ============================================================
+const MATRIZ_INSTITUCIONES = ['UMAYORT', 'HOSMIL', 'UDP', 'UNAB', 'UMAYOR', 'ARMADA'];
+let matrizInstitucionSel = ''; // codigo de institucion seleccionada, '' = ninguna
+let matrizResumenRows = [];
+let matrizCatalogoRows = [];
+let matrizDescuentosRows = [];
+let matrizCargando = false;
+let matrizFiltro = { texto: '', marca: 'Todas', familia: 'Todas', soloOverride: false, soloDuplicado: false };
+let matrizFiltroTextoFoco = false; // para no perder el foco del input al re-renderizar
 
 function institucionInfo(inst) {
   const s = (inst || '').toUpperCase();
@@ -832,6 +846,7 @@ function renderDashboardPiloto() {
     '<div class="view-tabs">' +
     '<button class="view-tab" onclick="vistaActiva=&quot;cotizaciones&quot;;renderDashboard()">📋 Cotizaciones</button>' +
     '<button class="view-tab active">📊 Dashboard Piloto</button>' +
+    '<button class="view-tab" onclick="vistaActiva=&quot;matriz&quot;;cargarMatrizResumen()">🏛️ Matriz Institucional</button>' +
     '</div>';
 
   var filtrosHtml =
@@ -1085,7 +1100,11 @@ function renderDashboard() {
     '<div style="display:flex;align-items:center;gap:12px;"><span style="font-size:10px;color:#a1a1aa;">by Daniel Jordán</span><button class="btn-logout" id="btn-logout">Cerrar sesión</button></div></header>' +
     (errorConexion ? '<div style="background:#fff3cd;border:1px solid #fde68a;border-radius:10px;padding:14px 18px;margin:16px;text-align:center;font-size:13px;">⚠️ ' + (errorConexionMsg || 'Sin conexión con el servidor.') + ' Los datos mostrados pueden no estar actualizados.<br><button onclick="errorConexion=false;errorConexionMsg=\'\';cargarCotizaciones();" style="margin-top:8px;padding:7px 18px;background:#1a1a1a;color:#fff;border:none;border-radius:7px;cursor:pointer;font-size:13px;">🔄 Reintentar</button></div>' : '') +
     '<main>' +
-      (esSuperAdmin() ? '<div class="view-tabs"><button class="view-tab active">📋 Cotizaciones</button><button class="view-tab" onclick="vistaActiva=\'dashboard\';renderDashboardPiloto()">📊 Dashboard Piloto</button></div>' : '') +
+      ((esSuperAdmin() || esObservador()) ?
+        '<div class="view-tabs"><button class="view-tab active">📋 Cotizaciones</button>' +
+        (esSuperAdmin() ? '<button class="view-tab" onclick="vistaActiva=\'dashboard\';renderDashboardPiloto()">📊 Dashboard Piloto</button>' : '') +
+        '<button class="view-tab" onclick="vistaActiva=\'matriz\';cargarMatrizResumen()">🏛️ Matriz Institucional</button></div>'
+        : '') +
       '<h2 style="margin:0 0 4px;">Cotizaciones</h2>' +
       '<p style="font-size:12px;color:#a1a1aa;margin:0 0 18px;">Se actualiza en vivo a medida que se generan cotizaciones.</p>' +
       (countPagoInformado > 0 || countUrgente48h > 0 ?
@@ -1139,6 +1158,283 @@ function renderDashboard() {
   sel.addEventListener('change', function (e) { estadoFiltro = e.target.value; renderDashboard(); });
   document.getElementById('btn-logout').addEventListener('click', doLogout);
   document.getElementById('btn-exportar').addEventListener('click', function () { exportarExcel(visibles); });
+}
+
+// ============================================================
+// FASE 4.2A -- Matriz Institucional (modo lectura). Todas las llamadas
+// a continuacion usan sb.rpc(...) contra funciones SELECT-only ya
+// validadas en Fase 4.1. Ninguna funcion de esta seccion realiza
+// INSERT, UPDATE ni DELETE.
+// ============================================================
+
+async function cargarMatrizResumen() {
+  matrizCargando = true;
+  renderMatrizInstitucional();
+  try {
+    const { data, error } = await sb.rpc('matriz_resumen_instituciones');
+    matrizResumenRows = (!error && data) ? data : [];
+  } catch (e) {
+    matrizResumenRows = [];
+  }
+  matrizCargando = false;
+  renderMatrizInstitucional();
+}
+
+async function seleccionarInstitucionMatriz(codigo) {
+  matrizInstitucionSel = codigo;
+  matrizFiltro = { texto: '', marca: 'Todas', familia: 'Todas', soloOverride: false, soloDuplicado: false };
+  matrizCatalogoRows = [];
+  matrizDescuentosRows = [];
+  matrizCargando = true;
+  renderMatrizInstitucional();
+  try {
+    const resultados = await Promise.all([
+      sb.rpc('matriz_catalogo_institucion', { p_institucion_codigo: codigo }),
+      sb.rpc('matriz_descuentos_institucion', { p_institucion_codigo: codigo })
+    ]);
+    matrizCatalogoRows = (!resultados[0].error && resultados[0].data) ? resultados[0].data : [];
+    matrizDescuentosRows = (!resultados[1].error && resultados[1].data) ? resultados[1].data : [];
+  } catch (e) {
+    matrizCatalogoRows = [];
+    matrizDescuentosRows = [];
+  }
+  matrizCargando = false;
+  renderMatrizInstitucional();
+}
+
+function refrescarMatriz() {
+  if (matrizInstitucionSel) { seleccionarInstitucionMatriz(matrizInstitucionSel); }
+  else { cargarMatrizResumen(); }
+}
+
+function limpiarFiltrosMatrizCatalogo() {
+  matrizFiltro = { texto: '', marca: 'Todas', familia: 'Todas', soloOverride: false, soloDuplicado: false };
+  renderMatrizInstitucional();
+}
+
+function matrizCatalogoFiltrado() {
+  const t = (matrizFiltro.texto || '').trim().toLowerCase();
+  return matrizCatalogoRows.filter(function (r) {
+    if (t && (r.codigo || '').toLowerCase().indexOf(t) === -1 && (r.descripcion || '').toLowerCase().indexOf(t) === -1) return false;
+    if (matrizFiltro.marca !== 'Todas' && r.marca !== matrizFiltro.marca) return false;
+    if (matrizFiltro.familia !== 'Todas' && r.familia !== matrizFiltro.familia) return false;
+    if (matrizFiltro.soloOverride && !r.tiene_override) return false;
+    if (matrizFiltro.soloDuplicado && !r.es_codigo_duplicado) return false;
+    return true;
+  });
+}
+
+// Exportacion generica reutilizando XLSX (ya cargado por CDN) -- misma
+// libreria que usa exportarExcel(), sin agregar ninguna dependencia nueva.
+function exportarMatrizExcel(rows, columnas, nombreHoja, nombreArchivoBase) {
+  if (!rows || !rows.length) { alert('No hay datos para exportar con los filtros actuales.'); return; }
+  const hoja = rows.map(function (r) {
+    const obj = {};
+    columnas.forEach(function (c) { obj[c.label] = (typeof c.value === 'function') ? c.value(r) : r[c.key]; });
+    return obj;
+  });
+  const wb = XLSX.utils.book_new();
+  const ws = XLSX.utils.json_to_sheet(hoja);
+  XLSX.utils.book_append_sheet(wb, ws, nombreHoja);
+  const ahora = new Date();
+  const pad2 = function (n) { return String(n).padStart(2, '0'); };
+  const fechaArchivo = ahora.getFullYear() + pad2(ahora.getMonth() + 1) + pad2(ahora.getDate());
+  XLSX.writeFile(wb, nombreArchivoBase + '_' + fechaArchivo + '.xlsx');
+}
+
+function renderMatrizInstitucional() {
+  document.getElementById('login-view').style.display = 'none';
+  const v = document.getElementById('dashboard-view');
+  v.style.display = 'block';
+
+  const tabsHtml =
+    '<div class="view-tabs"><button class="view-tab" onclick="vistaActiva=\'cotizaciones\';renderDashboard()">📋 Cotizaciones</button>' +
+    (esSuperAdmin() ? '<button class="view-tab" onclick="vistaActiva=\'dashboard\';renderDashboardPiloto()">📊 Dashboard Piloto</button>' : '') +
+    '<button class="view-tab active">🏛️ Matriz Institucional</button></div>';
+
+  // --- Cards resumen ---
+  let cardsHtml = '<div class="dash-grid">';
+  if (matrizCargando && matrizResumenRows.length === 0) {
+    cardsHtml += '<div style="color:var(--muted);padding:16px 10px;">Cargando resumen...</div>';
+  } else if (matrizResumenRows.length === 0) {
+    cardsHtml += '<div style="color:var(--muted);padding:16px 10px;">Sin datos todavía. Prueba refrescar.</div>';
+  } else {
+    matrizResumenRows.forEach(function (r) {
+      const seleccionada = r.institucion_codigo === matrizInstitucionSel;
+      cardsHtml +=
+        '<div class="dash-card' + (seleccionada ? ' highlight' : '') + '" style="cursor:pointer;" onclick="seleccionarInstitucionMatriz(\'' + esc(r.institucion_codigo) + '\')">' +
+          '<div class="dc-label">' + esc(r.institucion_codigo) + '</div>' +
+          '<div class="dc-value">' + (r.filas_catalogo != null ? r.filas_catalogo : '-') + '</div>' +
+          '<div class="dc-sub">' + (r.codigos_unicos != null ? r.codigos_unicos + ' códigos únicos' : '') + '</div>' +
+          '<div style="margin-top:6px;display:flex;gap:6px;flex-wrap:wrap;">' +
+            (r.cantidad_overrides_activos > 0 ? '<span style="font-size:10px;font-weight:700;background:#d1fae5;color:#065f46;border-radius:5px;padding:2px 6px;">🔒 ' + r.cantidad_overrides_activos + ' override' + (r.cantidad_overrides_activos > 1 ? 's' : '') + '</span>' : '') +
+            (r.cantidad_codigos_duplicados > 0 ? '<span style="font-size:10px;font-weight:700;background:#dbeafe;color:#1d4ed8;border-radius:5px;padding:2px 6px;">Duplicados: ' + r.cantidad_codigos_duplicados + '</span>' : '') +
+          '</div>' +
+        '</div>';
+    });
+  }
+  cardsHtml += '</div>';
+
+  // --- Tabla resumen instituciones ---
+  let filasResumen = '';
+  matrizResumenRows.forEach(function (r) {
+    filasResumen += '<tr' + (r.institucion_codigo === matrizInstitucionSel ? ' style="background:var(--bg);"' : '') + '>' +
+      '<td style="font-weight:700;">' + esc(r.institucion_codigo) + '</td>' +
+      '<td class="num">' + (r.filas_catalogo != null ? r.filas_catalogo : '-') + '</td>' +
+      '<td class="num">' + (r.codigos_unicos != null ? r.codigos_unicos : '-') + '</td>' +
+      '<td class="num">' + (r.cantidad_overrides_activos != null ? r.cantidad_overrides_activos : '-') + '</td>' +
+      '<td class="num">' + (r.cantidad_codigos_duplicados != null ? r.cantidad_codigos_duplicados : '-') + '</td>' +
+      '<td><span style="font-size:10px;font-weight:700;background:#f0fdf4;color:#166534;border-radius:5px;padding:2px 8px;">' + esc(r.estado_catalogo || '-') + '</span></td>' +
+      '<td style="font-size:11px;color:var(--muted);max-width:280px;">' + esc(r.observacion || '') + '</td>' +
+    '</tr>';
+  });
+  const tablaResumenHtml =
+    '<div class="dash-section" style="margin-top:18px;">' +
+      '<div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;">' +
+        '<h3 style="margin:0;">Resumen instituciones</h3>' +
+        '<button class="btn-logout" onclick="exportarMatrizExcel(matrizResumenRows, [' +
+          '{label:\'Institución\',key:\'institucion_codigo\'},{label:\'Filas catálogo\',key:\'filas_catalogo\'},' +
+          '{label:\'Códigos únicos\',key:\'codigos_unicos\'},{label:\'Overrides activos\',key:\'cantidad_overrides_activos\'},' +
+          '{label:\'Códigos duplicados\',key:\'cantidad_codigos_duplicados\'},{label:\'Estado catálogo\',key:\'estado_catalogo\'},' +
+          '{label:\'Observación\',key:\'observacion\'}], \'Resumen\', \'Matriz_Resumen_Instituciones\')">📊 Exportar</button>' +
+      '</div>' +
+      '<table class="dash-table"><thead><tr>' +
+        '<th>Institución</th><th class="num">Filas catálogo</th><th class="num">Códigos únicos</th>' +
+        '<th class="num">Overrides activos</th><th class="num">Códigos duplicados</th><th>Estado catálogo</th><th>Observación</th>' +
+      '</tr></thead><tbody>' + (filasResumen || '<tr><td colspan="7" style="color:var(--muted);padding:16px 10px">Sin datos</td></tr>') + '</tbody></table>' +
+    '</div>';
+
+  // --- Selector institución ---
+  let opcionesSel = '<option value="">Selecciona una institución...</option>';
+  MATRIZ_INSTITUCIONES.forEach(function (cod) {
+    opcionesSel += '<option value="' + cod + '"' + (matrizInstitucionSel === cod ? ' selected' : '') + '>' + cod + '</option>';
+  });
+  const selectorHtml =
+    '<div class="dash-section" style="margin-top:18px;">' +
+      '<label style="font-size:12px;font-weight:600;color:var(--muted);margin-right:8px;">Institución:</label>' +
+      '<select id="matriz-selector-institucion" style="padding:7px 10px;border-radius:7px;border:1px solid var(--border);font-size:13px;">' + opcionesSel + '</select>' +
+    '</div>';
+
+  // --- Secciones Catálogo y Descuentos (requieren institución seleccionada) ---
+  let seccionesHtml = '';
+  if (!matrizInstitucionSel) {
+    seccionesHtml = '<div style="color:var(--muted);padding:16px 10px;font-size:13px;">Selecciona una institución arriba (o una card) para ver su catálogo y sus descuentos.</div>';
+  } else if (matrizCargando) {
+    seccionesHtml = '<div style="color:var(--muted);padding:16px 10px;font-size:13px;">Cargando datos de ' + esc(matrizInstitucionSel) + '...</div>';
+  } else {
+    const filasCat = matrizCatalogoFiltrado();
+    const marcasDisponibles = Array.from(new Set(matrizCatalogoRows.map(function (r) { return r.marca; }))).filter(Boolean).sort();
+    const familiasDisponibles = Array.from(new Set(matrizCatalogoRows.map(function (r) { return r.familia; }))).filter(Boolean).sort();
+
+    let filasCatHtml = '';
+    filasCat.forEach(function (r) {
+      const pctDto = (r.descuento_aplicado != null) ? Math.round(r.descuento_aplicado * 100) + '%' : '-';
+      filasCatHtml += '<tr>' +
+        '<td class="mono">' + esc(r.codigo) + '</td>' +
+        '<td>' + esc(r.marca) + '</td>' +
+        '<td style="font-size:11px;">' + esc(r.familia) + '</td>' +
+        '<td>' + esc(r.descripcion) + '</td>' +
+        '<td class="num">' + fmt(r.precioLista) + '</td>' +
+        '<td class="num">' + pctDto + '</td>' +
+        '<td class="num" style="font-weight:700;">' + fmt(r.precioFinal) + '</td>' +
+        '<td>' + (r.tiene_override ? '<span style="font-size:10px;font-weight:700;background:#d1fae5;color:#065f46;border-radius:5px;padding:2px 6px;">🔒 Override</span>' : '') + '</td>' +
+        '<td>' + (r.es_codigo_duplicado ? '<span style="font-size:10px;font-weight:700;background:#dbeafe;color:#1d4ed8;border-radius:5px;padding:2px 6px;">Duplicado</span>' : '') + '</td>' +
+      '</tr>';
+    });
+
+    const tablaCatalogoHtml =
+      '<div class="dash-section" style="margin-top:18px;">' +
+        '<div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;">' +
+          '<h3 style="margin:0;">Catálogo — ' + esc(matrizInstitucionSel) + ' <span class="dash-badge">' + filasCat.length + ' de ' + matrizCatalogoRows.length + '</span></h3>' +
+          '<div style="display:flex;gap:8px;flex-wrap:wrap;">' +
+            '<button class="btn-logout" onclick="limpiarFiltrosMatrizCatalogo()">Limpiar filtros</button>' +
+            '<button class="btn-logout" onclick="exportarMatrizExcel(matrizCatalogoFiltrado(), [' +
+              '{label:\'Código\',key:\'codigo\'},{label:\'Marca\',key:\'marca\'},{label:\'Familia\',key:\'familia\'},' +
+              '{label:\'Descripción\',key:\'descripcion\'},{label:\'Precio lista\',key:\'precioLista\'},' +
+              '{label:\'Descuento aplicado\',value:function(r){return r.descuento_aplicado!=null?Math.round(r.descuento_aplicado*100)+\'%\':\'-\';}},' +
+              '{label:\'Precio final\',key:\'precioFinal\'},' +
+              '{label:\'Override\',value:function(r){return r.tiene_override?\'Sí\':\'No\';}},' +
+              '{label:\'Duplicado\',value:function(r){return r.es_codigo_duplicado?\'Sí\':\'No\';}}' +
+              '], \'Catálogo\', \'Matriz_Catalogo_' + matrizInstitucionSel + '\')">📊 Exportar</button>' +
+          '</div>' +
+        '</div>' +
+        '<div style="display:flex;gap:8px;flex-wrap:wrap;margin:10px 0;">' +
+          '<input id="matriz-filtro-texto" type="text" placeholder="Buscar código o descripción..." value="' + esc(matrizFiltro.texto) + '" style="padding:7px 10px;border-radius:7px;border:1px solid var(--border);font-size:13px;flex:1;min-width:180px;">' +
+          '<select id="matriz-filtro-marca" style="padding:7px 10px;border-radius:7px;border:1px solid var(--border);font-size:13px;">' +
+            '<option value="Todas">Todas las marcas</option>' +
+            marcasDisponibles.map(function (m) { return '<option value="' + esc(m) + '"' + (matrizFiltro.marca === m ? ' selected' : '') + '>' + esc(m) + '</option>'; }).join('') +
+          '</select>' +
+          '<select id="matriz-filtro-familia" style="padding:7px 10px;border-radius:7px;border:1px solid var(--border);font-size:13px;">' +
+            '<option value="Todas">Todas las familias</option>' +
+            familiasDisponibles.map(function (f) { return '<option value="' + esc(f) + '"' + (matrizFiltro.familia === f ? ' selected' : '') + '>' + esc(f) + '</option>'; }).join('') +
+          '</select>' +
+          '<label style="font-size:12px;display:flex;align-items:center;gap:4px;"><input type="checkbox" id="matriz-filtro-override"' + (matrizFiltro.soloOverride ? ' checked' : '') + '> Solo con override</label>' +
+          '<label style="font-size:12px;display:flex;align-items:center;gap:4px;"><input type="checkbox" id="matriz-filtro-duplicado"' + (matrizFiltro.soloDuplicado ? ' checked' : '') + '> Solo duplicados</label>' +
+        '</div>' +
+        '<div style="overflow-x:auto;">' +
+        '<table class="dash-table"><thead><tr>' +
+          '<th>Código</th><th>Marca</th><th>Familia</th><th>Descripción</th><th class="num">Precio lista</th><th class="num">Dscto.</th><th class="num">Precio final</th><th>Override</th><th>Duplicado</th>' +
+        '</tr></thead><tbody>' + (filasCatHtml || '<tr><td colspan="9" style="color:var(--muted);padding:16px 10px">Sin resultados con los filtros actuales.</td></tr>') + '</tbody></table>' +
+        '</div>' +
+      '</div>';
+
+    let filasDto = '';
+    matrizDescuentosRows.forEach(function (r) {
+      filasDto += '<tr><td>' + esc(r.familia) + '</td><td class="num">' + (r.descuento != null ? Math.round(r.descuento * 100) + '%' : '-') + '</td></tr>';
+    });
+    const tablaDescuentosHtml =
+      '<div class="dash-section" style="margin-top:18px;">' +
+        '<div style="display:flex;align-items:center;justify-content:space-between;">' +
+          '<h3 style="margin:0;">Descuentos — ' + esc(matrizInstitucionSel) + '</h3>' +
+          '<button class="btn-logout" onclick="exportarMatrizExcel(matrizDescuentosRows, [' +
+            '{label:\'Familia\',key:\'familia\'},{label:\'Descuento\',value:function(r){return r.descuento!=null?Math.round(r.descuento*100)+\'%\':\'-\';}}' +
+            '], \'Descuentos\', \'Matriz_Descuentos_' + matrizInstitucionSel + '\')">📊 Exportar</button>' +
+        '</div>' +
+        '<table class="dash-table"><thead><tr><th>Familia</th><th class="num">Descuento</th></tr></thead>' +
+        '<tbody>' + (filasDto || '<tr><td colspan="2" style="color:var(--muted);padding:16px 10px">Sin datos</td></tr>') + '</tbody></table>' +
+      '</div>';
+
+    seccionesHtml = tablaCatalogoHtml + tablaDescuentosHtml;
+  }
+
+  v.innerHTML =
+    '<header class="topbar"><div><div class="brand-name">STRAUMANN</div><div class="brand-sub">GROUP CHILE · NEODENT</div></div>' +
+    '<div style="display:flex;align-items:center;gap:12px;"><span style="font-size:10px;color:#a1a1aa;">by Daniel Jordán</span><button class="btn-logout" id="btn-logout">Cerrar sesión</button></div></header>' +
+    '<main>' +
+    tabsHtml +
+    '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;flex-wrap:wrap;gap:8px;">' +
+      '<h2 style="margin:0;font-size:18px;">Matriz Institucional</h2>' +
+      '<button class="btn-logout" onclick="refrescarMatriz()">🔄 Refrescar</button>' +
+    '</div>' +
+    '<p style="margin:0 0 18px;font-size:12px;color:var(--muted);">🔒 Vista de solo lectura. Ningún control de esta pantalla modifica precios, descuentos, productos, overrides ni el catálogo — para cambios, contactar a Daniel.</p>' +
+    cardsHtml +
+    tablaResumenHtml +
+    selectorHtml +
+    seccionesHtml +
+    '</main>';
+
+  document.getElementById('btn-logout').addEventListener('click', doLogout);
+
+  const selInst = document.getElementById('matriz-selector-institucion');
+  if (selInst) selInst.addEventListener('change', function (e) { seleccionarInstitucionMatriz(e.target.value); });
+
+  const ft = document.getElementById('matriz-filtro-texto');
+  if (ft) {
+    ft.addEventListener('input', function (e) { matrizFiltro.texto = e.target.value; matrizFiltroTextoFoco = true; renderMatrizInstitucional(); });
+    if (matrizFiltroTextoFoco) {
+      ft.focus();
+      const p = ft.value.length;
+      try { ft.setSelectionRange(p, p); } catch (e) {}
+    }
+  }
+  const fm = document.getElementById('matriz-filtro-marca');
+  if (fm) fm.addEventListener('change', function (e) { matrizFiltro.marca = e.target.value; renderMatrizInstitucional(); });
+  const ff = document.getElementById('matriz-filtro-familia');
+  if (ff) ff.addEventListener('change', function (e) { matrizFiltro.familia = e.target.value; renderMatrizInstitucional(); });
+  const fo = document.getElementById('matriz-filtro-override');
+  if (fo) fo.addEventListener('change', function (e) { matrizFiltro.soloOverride = e.target.checked; renderMatrizInstitucional(); });
+  const fd = document.getElementById('matriz-filtro-duplicado');
+  if (fd) fd.addEventListener('change', function (e) { matrizFiltro.soloDuplicado = e.target.checked; renderMatrizInstitucional(); });
 }
 
 sb.auth.onAuthStateChange(function (event, session) {
