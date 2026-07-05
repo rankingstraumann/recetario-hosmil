@@ -266,6 +266,63 @@ const COBRANZA_EMAIL = 'cobranza.cl@straumann.com';
 const WEBPAY_LINK = 'https://www.webpay.cl/form-pay/33930';
 const PATIENT_LINK_BASE = 'https://recetario-hosmil.vercel.app/';
 
+// ============================================================
+// FASE 3.5B -- Modo prueba: carga opcional desde catálogo maestro.
+// Activado SOLO con ?catalogoMaestro=1 en la URL. Por defecto, esta
+// función ni se ejecuta y PRODUCTS sigue siendo el array embebido de
+// siempre. No reemplaza la declaración de PRODUCTS de arriba, solo puede
+// mutar su contenido en memoria si el flag está activo Y la carga tiene
+// éxito. No se activa como default en esta fase.
+// ============================================================
+const usarCatalogoMaestro = new URLSearchParams(window.location.search).get('catalogoMaestro') === '1';
+
+function calcularPreviewLocal(familia, precioLista) {
+  const DESCUENTOS_PREVIEW = {
+    'ACQUA': 0.44,
+    'NEOPOROS': 0.44,
+    'BASES DE TITANIO': 0.30,
+    'REHABILITACIÓN': 0.30,
+    'LINEA DE BIOMATERIALES': 0.25,
+    'TAPAS - CICATRIZADORES': 0.30,
+  };
+  const d = DESCUENTOS_PREVIEW[familia] !== undefined ? DESCUENTOS_PREVIEW[familia] : 0.30;
+  return Math.round(precioLista * (1 - d));
+}
+
+async function cargarCatalogoMaestro() {
+  if (!usarCatalogoMaestro) return; // comportamiento por defecto: no hace nada
+
+  try {
+    const { data, error } = await sb.rpc('obtener_catalogo_institucion', { p_institucion_codigo: 'HOSMIL' });
+
+    if (error) throw error;
+    if (!Array.isArray(data) || data.length === 0) {
+      throw new Error('Catálogo maestro devolvió una lista vacía');
+    }
+    if (data.length < 504) {
+      throw new Error('Catálogo maestro devolvió ' + data.length + ' productos, se esperaban 504');
+    }
+
+    const nuevos = data.map(function(p) {
+      return {
+        codigo: p.codigo,
+        descripcion: p.descripcion,
+        familia: p.familia,
+        precioLista: p.precioLista,
+        precioFinal: calcularPreviewLocal(p.familia, p.precioLista),
+      };
+    });
+
+    PRODUCTS.length = 0;
+    PRODUCTS.push.apply(PRODUCTS, nuevos);
+    renderProductList();
+
+    console.info('[catalogoMaestro] ACTIVO — ' + nuevos.length + ' productos cargados desde catálogo maestro.');
+  } catch (e) {
+    console.warn('[catalogoMaestro] FALLBACK — no se pudo cargar el catálogo maestro, se mantiene el catálogo embebido.', e);
+  }
+}
+
 // Regla de negocio: por cada implante (ACQUA o NEOPOROS) debe ir 1 tapa de cierre o
 // pilar de cicatrización al 99% de descuento (sobre precio de lista). Si faltan, se
 // autocompleta con 117.021. Si sobran, el excedente queda a precio normal.
@@ -902,6 +959,8 @@ renderDoctorField();
 renderProductList();
 renderCart();
 renderFloating();
+
+cargarCatalogoMaestro(); // Fase 3.5B: no-op salvo ?catalogoMaestro=1
 
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', function () {
