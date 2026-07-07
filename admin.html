@@ -183,6 +183,17 @@ let matrizSimuladorDetalle = [];
 let matrizSimuladorCargando = false;
 let matrizSimuladorErrorValidacion = '';
 
+// Fase 5.3 -- Crear solicitud desde una simulacion ya ejecutada. Inserta UNA
+// fila en solicitudes_cambio_precio con estado='simulada' -- nunca aplica
+// ningun cambio real a productos/descuentos_institucionales/
+// precio_compartido_override/reglas_cierre_institucional/cotizaciones.
+let matrizSolicitudModalAbierto = false;
+let matrizSolicitudMotivo = '';
+let matrizSolicitudMotivoFoco = false;
+let matrizSolicitudGuardando = false;
+let matrizSolicitudError = '';
+let matrizSolicitudExito = null; // fila devuelta por el INSERT, para mostrar confirmacion
+
 function institucionInfo(inst) {
   const s = (inst || '').toUpperCase();
   if (s.indexOf('TEMUCO') !== -1) return { label: 'U Mayor Temuco', color: '#fdf4ff;color:#a21caf', despacho: 'U. Mayor Temuco — Avenida Alemania 0281, 2° piso, Odontología, Temuco', responsable: 'Bethania', codigo: 'UMAYORT' };
@@ -1367,6 +1378,12 @@ async function ejecutarSimulacionMatriz() {
   matrizSimuladorCargando = true;
   matrizSimuladorResumen = null;
   matrizSimuladorDetalle = [];
+  // FASE 5.3 -- MODIFICACION JUSTIFICADA: se limpia cualquier confirmacion de
+  // solicitud previa al lanzar una nueva simulacion. Motivo: una confirmacion
+  // de "solicitud creada" de una simulacion anterior seria enganosa si se
+  // muestra junto a un resultado de simulacion distinto.
+  matrizSolicitudExito = null;
+  matrizSolicitudError = '';
   renderMatrizInstitucional();
 
   try {
@@ -1389,6 +1406,107 @@ async function ejecutarSimulacionMatriz() {
   }
   matrizSimuladorCargando = false;
   renderMatrizInstitucional();
+}
+
+// --- Fase 5.3: Crear solicitud desde una simulacion ya ejecutada ---
+// Inserta UNA fila en solicitudes_cambio_precio, siempre con estado='simulada'
+// (nunca 'pendiente_aprobacion' -- ese flujo queda para una fase futura).
+// No modifica productos, descuentos_institucionales, precio_compartido_override,
+// reglas_cierre_institucional, cotizaciones ni auditoria_cambios.
+
+function abrirModalSolicitud() {
+  if (!matrizSimuladorResumen) return; // defensivo -- el boton solo existe si hay resumen
+  matrizSolicitudModalAbierto = true;
+  matrizSolicitudMotivo = '';
+  matrizSolicitudError = '';
+  renderMatrizInstitucional();
+}
+
+function cerrarModalSolicitud() {
+  matrizSolicitudModalAbierto = false;
+  matrizSolicitudError = '';
+  renderMatrizInstitucional();
+}
+
+async function crearSolicitudCambio() {
+  const motivoEl = document.getElementById('solicitud-motivo');
+  const motivo = motivoEl ? motivoEl.value.trim() : '';
+
+  if (!motivo) {
+    matrizSolicitudError = 'El motivo es obligatorio para crear una solicitud.';
+    renderMatrizInstitucional();
+    return;
+  }
+  if (!matrizSimuladorResumen || !matrizInstitucionSel || !matrizSimuladorFamilia) {
+    matrizSolicitudError = 'No hay una simulación válida para convertir en solicitud.';
+    renderMatrizInstitucional();
+    return;
+  }
+
+  matrizSolicitudMotivo = motivo;
+  matrizSolicitudGuardando = true;
+  matrizSolicitudError = '';
+  renderMatrizInstitucional();
+
+  try {
+    const { data: userData } = await sb.auth.getUser();
+    const uid = (userData && userData.user) ? userData.user.id : null;
+    const r = matrizSimuladorResumen;
+
+    // Mapeo (Fase 5.1, seccion 10): impacto_estimado <- resumen agregado;
+    // validacion_previa <- detalle por producto usado para calcular ese resumen.
+    const payload = {
+      tipo_cambio: 'descuento_familia',
+      institucion_codigo: matrizInstitucionSel,
+      familia_nombre: matrizSimuladorFamilia,
+      descripcion: 'Cambio de descuento base de "' + matrizSimuladorFamilia + '" en ' + matrizInstitucionSel,
+      valor_actual: { porcentaje: r.promedio_descuento_actual },
+      valor_propuesto: { porcentaje: r.descuento_nuevo },
+      impacto_estimado: r,
+      productos_afectados: r.total_productos_afectados,
+      motivo: motivo,
+      estado: 'simulada',
+      solicitado_por: uid,
+      origen: 'matriz_admin',
+      validacion_previa: { detalle: matrizSimuladorDetalle }
+    };
+
+    const { data, error } = await sb.from('solicitudes_cambio_precio').insert(payload).select().single();
+    if (error) {
+      matrizSolicitudError = 'No se pudo crear la solicitud: ' + error.message;
+    } else {
+      matrizSolicitudExito = data;
+      matrizSolicitudModalAbierto = false;
+      matrizSolicitudMotivo = '';
+    }
+  } catch (e) {
+    matrizSolicitudError = 'Error de red al crear la solicitud.';
+  }
+  matrizSolicitudGuardando = false;
+  renderMatrizInstitucional();
+}
+
+function construirModalSolicitud() {
+  if (!matrizSolicitudModalAbierto) return '';
+  const r = matrizSimuladorResumen;
+  return '<div style="position:fixed;inset:0;background:rgba(0,0,0,0.5);display:flex;align-items:center;justify-content:center;z-index:1000;" onclick="if(event.target===this){cerrarModalSolicitud();}">' +
+    '<div style="background:#fff;border-radius:12px;padding:24px;max-width:480px;width:90%;box-shadow:0 10px 40px rgba(0,0,0,0.25);">' +
+      '<h3 style="margin:0 0 6px;">📝 Crear solicitud de cambio</h3>' +
+      '<p style="margin:0 0 10px;font-size:12px;color:var(--muted);">' +
+        'Institución: <b>' + esc(matrizInstitucionSel) + '</b> · Familia: <b>' + esc(matrizSimuladorFamilia) + '</b> · ' +
+        'Descuento propuesto: <b>' + (r ? Math.round(r.descuento_nuevo * 100) : '-') + '%</b> · ' +
+        'Productos afectados: <b>' + (r ? r.total_productos_afectados : '-') + '</b>' +
+      '</p>' +
+      '<p style="margin:0 0 14px;font-size:12px;color:var(--muted);">🔒 Esto NO aplica ningún cambio real. Solo queda registrada la solicitud, en estado <code>simulada</code>, para revisión posterior.</p>' +
+      '<label style="font-size:12px;font-weight:600;display:block;margin-bottom:4px;">Motivo del cambio (obligatorio)</label>' +
+      '<textarea id="solicitud-motivo" rows="3" placeholder="Explica por qué se propone este cambio..." style="width:100%;padding:8px 10px;border-radius:7px;border:1px solid var(--border);font-size:13px;box-sizing:border-box;font-family:inherit;">' + esc(matrizSolicitudMotivo) + '</textarea>' +
+      (matrizSolicitudError ? '<div style="background:#fef2f2;color:#991b1b;border:1px solid #fecaca;border-radius:8px;padding:8px 12px;font-size:12px;margin-top:8px;">⚠️ ' + esc(matrizSolicitudError) + '</div>' : '') +
+      '<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px;">' +
+        '<button class="btn-logout" onclick="cerrarModalSolicitud()">Cancelar</button>' +
+        '<button class="btn-logout" onclick="crearSolicitudCambio()"' + (matrizSolicitudGuardando ? ' disabled' : '') + ' style="background:#1a1a1a;color:#fff;">' + (matrizSolicitudGuardando ? 'Guardando...' : 'Crear solicitud') + '</button>' +
+      '</div>' +
+    '</div>' +
+  '</div>';
 }
 
 async function cargarMatrizComparador() {
@@ -1818,13 +1936,29 @@ function renderMatrizInstitucional() {
         '<th class="num">Diferencia</th><th>Override</th><th>Regla automática</th><th>Observación</th>' +
       '</tr></thead><tbody>' + (filasDetalle || '<tr><td colspan="12" style="color:var(--muted);padding:16px 10px">Sin productos</td></tr>') + '</tbody></table></div>';
 
-      // Boton deshabilitado, marcado explicitamente como "Proximamente" -- ningun
-      // flujo de escritura conectado en esta fase (Fase 5.2B es solo lectura).
+      // FASE 5.3 -- MODIFICACION JUSTIFICADA respecto a Fase 5.2B: el boton que
+      // antes estaba SIEMPRE disabled ("Proximamente") ahora esta habilitado --
+      // al hacer click abre el modal de motivo (construirModalSolicitud), no
+      // inserta nada directamente. Sigue sin existir ningun boton "Guardar
+      // cambio" ni "Aplicar cambio" en toda la Matriz.
       html += '<div style="margin-top:14px;">' +
-        '<button class="btn-logout" disabled title="Disponible en una fase futura" style="opacity:0.5;cursor:not-allowed;">📝 Crear solicitud (Próximamente)</button>' +
+        '<button class="btn-logout" onclick="abrirModalSolicitud()" style="background:#1a1a1a;color:#fff;">📝 Crear solicitud</button>' +
       '</div>';
+
+      if (matrizSolicitudExito) {
+        html += '<div style="background:#f0fdf4;color:#166534;border:1px solid #bbf7d0;border-radius:8px;padding:12px 16px;font-size:13px;margin-top:12px;">' +
+          '✅ Solicitud creada correctamente -- estado <code>simulada</code>. ' +
+          'ID: <span class="mono">' + esc(matrizSolicitudExito.id) + '</span>' +
+          (matrizSolicitudExito.solicitado_en ? ' · ' + fechaCorta(matrizSolicitudExito.solicitado_en) : '') +
+          '. No se aplicó ningún cambio real -- esta solicitud queda pendiente de una fase futura de aprobación.' +
+        '</div>';
+      }
+      if (matrizSolicitudError && !matrizSolicitudModalAbierto) {
+        html += '<div style="background:#fef2f2;color:#991b1b;border:1px solid #fecaca;border-radius:8px;padding:12px 16px;font-size:13px;margin-top:12px;">⚠️ ' + esc(matrizSolicitudError) + '</div>';
+      }
     }
 
+    html += construirModalSolicitud();
     html += '</div>';
     return html;
   }
@@ -1915,6 +2049,18 @@ function renderMatrizInstitucional() {
   // llamada ocurre unicamente al hacer click en "Simular impacto".
   const sf = document.getElementById('simulador-familia');
   if (sf) sf.addEventListener('change', function (e) { matrizSimuladorFamilia = e.target.value; });
+
+  // Fase 5.3 -- textarea de motivo dentro del modal, mismo patron de
+  // preservacion de foco ya usado en los filtros de texto de la Matriz.
+  const sm = document.getElementById('solicitud-motivo');
+  if (sm) {
+    sm.addEventListener('input', function (e) { matrizSolicitudMotivo = e.target.value; matrizSolicitudMotivoFoco = true; renderMatrizInstitucional(); });
+    if (matrizSolicitudMotivoFoco) {
+      sm.focus();
+      const p = sm.value.length;
+      try { sm.setSelectionRange(p, p); } catch (e) {}
+    }
+  }
 }
 
 sb.auth.onAuthStateChange(function (event, session) {
