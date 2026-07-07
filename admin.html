@@ -204,6 +204,17 @@ let matrizSolicitudesFiltroInstitucion = 'todas';
 let matrizSolicitudDetalleAbierta = null; // fila completa mostrada en el modal de detalle
 let matrizMiUsuarioId = null; // cacheado para mostrar "Tú" en solicitado_por cuando corresponde
 
+// Fase 5.5 -- Gestion de estado de solicitudes (UPDATE controlado, solo
+// super_admin, solo hacia los estados simulada/pendiente_aprobacion/anulada/
+// rechazada -- nunca aprobada/ejecutada/revertida en esta fase). Solo toca
+// las columnas estado/observaciones -- nunca aprobado_por/aprobado_en/
+// validacion_posterior. Ningun cambio comercial real.
+let matrizSolicitudAccionAbierta = null; // { id, accion, institucion, familia, estadoActual }
+let matrizSolicitudAccionMotivo = '';
+let matrizSolicitudAccionMotivoFoco = false;
+let matrizSolicitudAccionGuardando = false;
+let matrizSolicitudAccionError = '';
+
 function institucionInfo(inst) {
   const s = (inst || '').toUpperCase();
   if (s.indexOf('TEMUCO') !== -1) return { label: 'U Mayor Temuco', color: '#fdf4ff;color:#a21caf', despacho: 'U. Mayor Temuco — Avenida Alemania 0281, 2° piso, Odontología, Temuco', responsable: 'Bethania', codigo: 'UMAYORT' };
@@ -1466,6 +1477,30 @@ async function crearSolicitudCambio() {
     const uid = (userData && userData.user) ? userData.user.id : null;
     const r = matrizSimuladorResumen;
 
+    // FASE 5.6A -- Plan de reversa estructurado (NO SQL ejecutable). Se
+    // guarda como texto JSON en la columna rollback_sql (columna ya
+    // existente desde Fase 5.1, tipo text -- no requiere cambio de esquema).
+    // Es solo informativo/de referencia: ninguna funcion de este archivo lo
+    // interpreta ni lo ejecuta. Hoy este simulador solo crea solicitudes de
+    // tipo 'descuento_familia', por eso el plan siempre usa esa forma.
+    const planReversa = {
+      tipo: 'plan_reversa',
+      accion: 'restaurar_descuento_familia',
+      institucion_codigo: matrizInstitucionSel,
+      familia_nombre: matrizSimuladorFamilia,
+      valor_anterior: Math.round((r.promedio_descuento_actual || 0) * 100),
+      valor_propuesto: Math.round((r.descuento_nuevo || 0) * 100),
+      tabla_objetivo: 'descuentos_institucionales',
+      descripcion: 'Si este cambio se ejecuta en el futuro, la reversa consistiría en restaurar el descuento base anterior de la familia para la institución indicada.',
+      validacion_posterior_sugerida: [
+        'Verificar matriz_catalogo_institucion para la institución y familia afectada',
+        'Validar precio final de producto de referencia',
+        'Confirmar que reglas automáticas no fueron modificadas',
+        'Confirmar que cotizaciones históricas no fueron alteradas'
+      ],
+      advertencia: 'Este plan no ejecuta reversa automáticamente. Es una guía de control previo.'
+    };
+
     // Mapeo (Fase 5.1, seccion 10): impacto_estimado <- resumen agregado;
     // validacion_previa <- detalle por producto usado para calcular ese resumen.
     const payload = {
@@ -1481,7 +1516,8 @@ async function crearSolicitudCambio() {
       estado: 'simulada',
       solicitado_por: uid,
       origen: 'matriz_admin',
-      validacion_previa: { detalle: matrizSimuladorDetalle }
+      validacion_previa: { detalle: matrizSimuladorDetalle },
+      rollback_sql: JSON.stringify(planReversa)
     };
 
     const { data, error } = await sb.from('solicitudes_cambio_precio').insert(payload).select().single();
@@ -1603,6 +1639,84 @@ function badgeEstadoSolicitud(estado) {
   };
   const estilo = estilos[estado] || estilos.borrador;
   return '<span style="font-size:10px;font-weight:700;' + estilo + 'border-radius:5px;padding:2px 8px;">' + esc(estado) + '</span>';
+}
+
+// --- Fase 5.5: gestion de estado de solicitudes (UPDATE controlado) ---
+// Transiciones permitidas en esta fase: simulada->pendiente_aprobacion,
+// simulada->anulada, pendiente_aprobacion->anulada, pendiente_aprobacion->
+// rechazada. Nunca aprobada/ejecutada/revertida -- ademas bloqueado a nivel
+// de base de datos por el WITH CHECK de la politica RLS (Fase 5.5, SQL).
+
+function abrirAccionSolicitud(id, accion) {
+  const fila = matrizSolicitudesRows.find(function (s) { return s.id === id; });
+  if (!fila) return;
+  matrizSolicitudAccionAbierta = { id: id, accion: accion, institucion: fila.institucion_codigo, familia: fila.familia_nombre, estadoActual: fila.estado };
+  matrizSolicitudAccionMotivo = '';
+  matrizSolicitudAccionError = '';
+  renderMatrizInstitucional();
+}
+
+function cerrarAccionSolicitud() {
+  matrizSolicitudAccionAbierta = null;
+  matrizSolicitudAccionError = '';
+  renderMatrizInstitucional();
+}
+
+async function confirmarAccionSolicitud() {
+  if (!matrizSolicitudAccionAbierta) return;
+  const id = matrizSolicitudAccionAbierta.id;
+  const accion = matrizSolicitudAccionAbierta.accion;
+  const motivoEl = document.getElementById('accion-solicitud-motivo');
+  const motivo = motivoEl ? motivoEl.value.trim() : '';
+
+  const requiereMotivo = (accion === 'anular' || accion === 'rechazar');
+  if (requiereMotivo && !motivo) {
+    matrizSolicitudAccionError = 'El motivo es obligatorio para ' + (accion === 'anular' ? 'anular' : 'rechazar') + ' una solicitud.';
+    renderMatrizInstitucional();
+    return;
+  }
+
+  let nuevoEstado, observacionesTexto;
+  if (accion === 'enviar_aprobacion') {
+    nuevoEstado = 'pendiente_aprobacion';
+    observacionesTexto = 'Enviada a aprobación desde Matriz Admin.' + (motivo ? ' ' + motivo : '');
+  } else if (accion === 'anular') {
+    nuevoEstado = 'anulada';
+    observacionesTexto = 'Anulada desde Matriz Admin. Motivo: ' + motivo;
+  } else if (accion === 'rechazar') {
+    nuevoEstado = 'rechazada';
+    observacionesTexto = 'Rechazada desde Matriz Admin. Motivo: ' + motivo;
+  } else {
+    return; // accion desconocida -- defensivo, no deberia ocurrir
+  }
+
+  matrizSolicitudAccionGuardando = true;
+  matrizSolicitudAccionError = '';
+  renderMatrizInstitucional();
+
+  try {
+    // FASE 5.5 -- unicamente se actualizan estado/observaciones. NUNCA
+    // aprobado_por/aprobado_en/validacion_posterior en esta fase (quedan
+    // para el flujo de aprobacion real, todavia no implementado). Ningun
+    // cambio a productos/descuentos_institucionales/precio_compartido_override/
+    // reglas_cierre_institucional/cotizaciones/auditoria_cambios.
+    const { data, error } = await sb.from('solicitudes_cambio_precio')
+      .update({ estado: nuevoEstado, observaciones: observacionesTexto })
+      .eq('id', id)
+      .select()
+      .single();
+    if (error) {
+      matrizSolicitudAccionError = 'No se pudo actualizar la solicitud: ' + error.message;
+    } else {
+      matrizSolicitudesRows = matrizSolicitudesRows.map(function (s) { return s.id === id ? data : s; });
+      matrizSolicitudAccionAbierta = null;
+      matrizSolicitudAccionMotivo = '';
+    }
+  } catch (e) {
+    matrizSolicitudAccionError = 'Error de red al actualizar la solicitud.';
+  }
+  matrizSolicitudAccionGuardando = false;
+  renderMatrizInstitucional();
 }
 
 async function cargarMatrizComparador() {
@@ -2083,13 +2197,28 @@ function renderMatrizInstitucional() {
         '<td>' + badgeEstadoSolicitud(s.estado) + '</td>' +
         '<td style="font-size:11px;">' + esc(solicitante) + '</td>' +
         '<td style="font-size:11px;color:var(--muted);max-width:220px;">' + esc(s.motivo || '-') + '</td>' +
-        '<td><button class="btn-logout" onclick="abrirDetalleSolicitud(\'' + esc(s.id) + '\')">Ver detalle</button></td>' +
+        '<td style="white-space:nowrap;">' + (function () {
+          let acciones = '<button class="btn-logout" onclick="abrirDetalleSolicitud(\'' + esc(s.id) + '\')">Ver detalle</button>';
+          // FASE 5.5 -- los botones de accion (cambiar estado) solo se
+          // muestran para esSuperAdmin() -- un observador nunca los ve,
+          // ni siquiera deshabilitados.
+          if (esSuperAdmin()) {
+            if (s.estado === 'simulada') {
+              acciones += ' <button class="btn-logout" onclick="abrirAccionSolicitud(\'' + esc(s.id) + '\', \'enviar_aprobacion\')">Enviar a aprobación</button>' +
+                ' <button class="btn-logout" style="color:#991b1b;" onclick="abrirAccionSolicitud(\'' + esc(s.id) + '\', \'anular\')">Anular</button>';
+            } else if (s.estado === 'pendiente_aprobacion') {
+              acciones += ' <button class="btn-logout" style="color:#991b1b;" onclick="abrirAccionSolicitud(\'' + esc(s.id) + '\', \'anular\')">Anular</button>' +
+                ' <button class="btn-logout" style="color:#991b1b;" onclick="abrirAccionSolicitud(\'' + esc(s.id) + '\', \'rechazar\')">Rechazar</button>';
+            }
+          }
+          return acciones;
+        })() + '</td>' +
       '</tr>';
     });
 
     return '<div class="dash-section" style="margin-top:8px;">' +
       '<h3 style="margin:0 0 6px;">📋 Solicitudes de cambio</h3>' +
-      '<p style="margin:0 0 12px;font-size:12px;color:var(--muted);">🔒 Solo lectura -- esta bandeja sirve para revisar trazabilidad. No permite aprobar, rechazar, ejecutar ni editar ninguna solicitud.</p>' +
+      '<p style="margin:0 0 12px;font-size:12px;color:var(--muted);">🔒 <b>super_admin</b> puede cambiar el estado de una solicitud (enviarla a aprobación, anularla o rechazarla) -- <b>observador</b> solo puede ver. Ningún botón de esta pantalla aprueba, ejecuta ni aplica un cambio comercial real: precios, descuentos, productos, overrides, reglas de cierre y cotizaciones no se tocan nunca desde aquí.</p>' +
       '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px;">' +
         '<div><label style="font-size:11px;font-weight:600;color:var(--muted);display:block;margin-bottom:3px;">Estado</label>' +
           '<select id="solicitudes-filtro-estado" style="padding:7px 10px;border-radius:7px;border:1px solid var(--border);font-size:13px;">' +
@@ -2145,6 +2274,36 @@ function renderMatrizInstitucional() {
     '</div>';
   }
 
+  function construirModalAccionSolicitud() {
+    if (!matrizSolicitudAccionAbierta) return '';
+    const a = matrizSolicitudAccionAbierta;
+    const requiereMotivo = (a.accion === 'anular' || a.accion === 'rechazar');
+    const etiquetas = {
+      enviar_aprobacion: { titulo: 'Enviar a aprobación', boton: 'Enviar a aprobación', color: '#1a1a1a' },
+      anular: { titulo: 'Anular solicitud', boton: 'Anular', color: '#991b1b' },
+      rechazar: { titulo: 'Rechazar solicitud', boton: 'Rechazar', color: '#991b1b' }
+    };
+    const info = etiquetas[a.accion] || etiquetas.enviar_aprobacion;
+    return '<div style="position:fixed;inset:0;background:rgba(0,0,0,0.5);display:flex;align-items:center;justify-content:center;z-index:1001;" onclick="if(event.target===this){cerrarAccionSolicitud();}">' +
+      '<div style="background:#fff;border-radius:12px;padding:24px;max-width:460px;width:90%;box-shadow:0 10px 40px rgba(0,0,0,0.25);">' +
+        '<h3 style="margin:0 0 6px;">' + esc(info.titulo) + '</h3>' +
+        '<p style="margin:0 0 10px;font-size:12px;color:var(--muted);">' +
+          'Institución: <b>' + esc(a.institucion) + '</b> · Familia: <b>' + esc(a.familia || '-') + '</b> · Estado actual: ' + badgeEstadoSolicitud(a.estadoActual) +
+        '</p>' +
+        '<p style="margin:0 0 14px;font-size:12px;color:var(--muted);">🔒 Esto SOLO cambia el estado de la solicitud. No aplica ningún cambio comercial real -- precios, descuentos, productos, overrides, reglas de cierre y cotizaciones no se tocan.</p>' +
+        (requiereMotivo
+          ? '<label style="font-size:12px;font-weight:600;display:block;margin-bottom:4px;">Motivo (obligatorio)</label>' +
+            '<textarea id="accion-solicitud-motivo" rows="3" placeholder="Explica por qué..." style="width:100%;padding:8px 10px;border-radius:7px;border:1px solid var(--border);font-size:13px;box-sizing:border-box;font-family:inherit;">' + esc(matrizSolicitudAccionMotivo) + '</textarea>'
+          : '') +
+        (matrizSolicitudAccionError ? '<div style="background:#fef2f2;color:#991b1b;border:1px solid #fecaca;border-radius:8px;padding:8px 12px;font-size:12px;margin-top:8px;">⚠️ ' + esc(matrizSolicitudAccionError) + '</div>' : '') +
+        '<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px;">' +
+          '<button class="btn-logout" onclick="cerrarAccionSolicitud()">Cancelar</button>' +
+          '<button class="btn-logout" onclick="confirmarAccionSolicitud()"' + (matrizSolicitudAccionGuardando ? ' disabled' : '') + ' style="background:' + info.color + ';color:#fff;">' + (matrizSolicitudAccionGuardando ? 'Guardando...' : info.boton) + '</button>' +
+        '</div>' +
+      '</div>' +
+    '</div>';
+  }
+
   // --- Contenido del sub-tab activo ---
   let seccionesHtml = '';
   const requiereInstitucion = (matrizSubTab === 'catalogo' || matrizSubTab === 'descuentos' || matrizSubTab === 'duplicados' || matrizSubTab === 'overrides' || matrizSubTab === 'simulador');
@@ -2173,7 +2332,7 @@ function renderMatrizInstitucional() {
   } else if (matrizSubTab === 'solicitudes') {
     seccionesHtml = (matrizCargando && !matrizSolicitudesCargadas)
       ? '<div style="color:var(--muted);padding:16px 10px;font-size:13px;">Cargando solicitudes...</div>'
-      : construirBandejaSolicitudes() + construirModalDetalleSolicitud();
+      : construirBandejaSolicitudes() + construirModalDetalleSolicitud() + construirModalAccionSolicitud();
   }
 
   v.innerHTML =
@@ -2254,6 +2413,19 @@ function renderMatrizInstitucional() {
   if (sfe) sfe.addEventListener('change', function (e) { matrizSolicitudesFiltroEstado = e.target.value; renderMatrizInstitucional(); });
   const sfi = document.getElementById('solicitudes-filtro-institucion');
   if (sfi) sfi.addEventListener('change', function (e) { matrizSolicitudesFiltroInstitucion = e.target.value; renderMatrizInstitucional(); });
+
+  // Fase 5.5 -- textarea de motivo dentro del modal de accion (Anular/
+  // Rechazar), mismo patron de preservacion de foco ya usado en el resto
+  // de la Matriz.
+  const asm = document.getElementById('accion-solicitud-motivo');
+  if (asm) {
+    asm.addEventListener('input', function (e) { matrizSolicitudAccionMotivo = e.target.value; matrizSolicitudAccionMotivoFoco = true; renderMatrizInstitucional(); });
+    if (matrizSolicitudAccionMotivoFoco) {
+      asm.focus();
+      const p = asm.value.length;
+      try { asm.setSelectionRange(p, p); } catch (e) {}
+    }
+  }
 }
 
 sb.auth.onAuthStateChange(function (event, session) {
