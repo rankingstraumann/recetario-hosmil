@@ -2252,6 +2252,46 @@ function renderMatrizInstitucional() {
       return '<div style="margin-top:10px;"><label style="font-size:11px;font-weight:600;color:var(--muted);display:block;margin-bottom:3px;">' + esc(titulo) + '</label>' +
         '<pre style="background:var(--bg);border:1px solid var(--border);border-radius:7px;padding:10px 12px;font-size:11px;overflow-x:auto;white-space:pre-wrap;word-break:break-word;margin:0;">' + esc(JSON.stringify(obj, null, 2)) + '</pre></div>';
     };
+    // Fase 5.6B -- bloque legible del plan de reversa guardado en
+    // rollback_sql (Fase 5.6A). Solo lectura -- ningun boton de ejecucion,
+    // aplicacion ni aprobacion. rollback_sql se guarda como TEXTO (columna
+    // text), por eso siempre llega como string desde Supabase y hay que
+    // parsearlo aqui -- nunca se interpreta ni se ejecuta, solo se muestra.
+    const construirBloquePlanReversa = function (rollbackSqlRaw) {
+      if (!rollbackSqlRaw) {
+        return '<div style="margin-top:14px;background:#f4f4f5;border:1px solid var(--border);border-radius:8px;padding:12px 16px;">' +
+          '<h4 style="margin:0 0 4px;font-size:13px;">🔄 Plan de reversa</h4>' +
+          '<p style="margin:0;font-size:12px;color:var(--muted);">Plan de reversa no generado para esta solicitud. Probablemente fue creada antes de Fase 5.6A.</p>' +
+        '</div>';
+      }
+      let plan;
+      try {
+        plan = JSON.parse(rollbackSqlRaw);
+      } catch (e) {
+        return '<div style="margin-top:14px;background:#fef2f2;border:1px solid #fecaca;border-radius:8px;padding:12px 16px;">' +
+          '<h4 style="margin:0 0 4px;font-size:13px;color:#991b1b;">🔄 Plan de reversa</h4>' +
+          '<p style="margin:0;font-size:12px;color:#991b1b;">No fue posible leer el plan de reversa. Revisar formato técnico.</p>' +
+        '</div>';
+      }
+      const validaciones = Array.isArray(plan.validacion_posterior_sugerida) && plan.validacion_posterior_sugerida.length > 0
+        ? '<ul style="margin:4px 0 0;padding-left:18px;">' + plan.validacion_posterior_sugerida.map(function (v) { return '<li style="margin-bottom:2px;">' + esc(v) + '</li>'; }).join('') + '</ul>'
+        : ' -';
+      return '<div style="margin-top:14px;background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;padding:12px 16px;">' +
+        '<h4 style="margin:0 0 8px;font-size:13px;color:#1d4ed8;">🔄 Plan de reversa</h4>' +
+        '<div style="font-size:12px;line-height:1.7;color:#1e3a5f;">' +
+          '<b>Tipo:</b> ' + esc(plan.tipo || '-') + '<br>' +
+          '<b>Acción:</b> ' + esc(plan.accion || '-') + '<br>' +
+          '<b>Institución:</b> ' + esc(plan.institucion_codigo || '-') + '<br>' +
+          '<b>Familia:</b> ' + esc(plan.familia_nombre || '-') + '<br>' +
+          '<b>Tabla objetivo:</b> ' + esc(plan.tabla_objetivo || '-') + '<br>' +
+          '<b>Valor anterior:</b> ' + (plan.valor_anterior != null ? esc(String(plan.valor_anterior)) + '%' : '-') + '<br>' +
+          '<b>Valor propuesto:</b> ' + (plan.valor_propuesto != null ? esc(String(plan.valor_propuesto)) + '%' : '-') + '<br>' +
+          '<b>Descripción:</b> ' + esc(plan.descripcion || '-') + '<br>' +
+          '<b>Validación posterior sugerida:</b>' + validaciones +
+          '<div style="margin-top:8px;padding-top:8px;border-top:1px solid #bfdbfe;">⚠️ ' + esc(plan.advertencia || 'Este plan es solo de referencia.') + '</div>' +
+        '</div>' +
+      '</div>';
+    };
     return '<div style="position:fixed;inset:0;background:rgba(0,0,0,0.5);display:flex;align-items:center;justify-content:center;z-index:1000;" onclick="if(event.target===this){cerrarDetalleSolicitud();}">' +
       '<div style="background:#fff;border-radius:12px;padding:24px;max-width:640px;width:92%;max-height:85vh;overflow-y:auto;box-shadow:0 10px 40px rgba(0,0,0,0.25);">' +
         '<div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:6px;">' +
@@ -2273,7 +2313,8 @@ function renderMatrizInstitucional() {
         bloqueJson('valor_propuesto', s.valor_propuesto) +
         bloqueJson('impacto_estimado', s.impacto_estimado) +
         bloqueJson('validacion_previa', s.validacion_previa) +
-        (s.rollback_sql ? bloqueJson('rollback_sql (referencia, no ejecutable desde aquí)', s.rollback_sql) : '') +
+        construirBloquePlanReversa(s.rollback_sql) +
+        (s.rollback_sql ? bloqueJson('rollback_sql (JSON técnico crudo, referencia -- no ejecutable desde aquí)', (function () { try { return JSON.parse(s.rollback_sql); } catch (e) { return s.rollback_sql; } })()) : '') +
         '<div style="display:flex;justify-content:flex-end;margin-top:16px;">' +
           '<button class="btn-logout" onclick="cerrarDetalleSolicitud()">Cerrar</button>' +
         '</div>' +
