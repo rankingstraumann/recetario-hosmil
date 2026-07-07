@@ -194,6 +194,16 @@ let matrizSolicitudGuardando = false;
 let matrizSolicitudError = '';
 let matrizSolicitudExito = null; // fila devuelta por el INSERT, para mostrar confirmacion
 
+// Fase 5.4 -- Bandeja de solicitudes (solo lectura). Consulta
+// solicitudes_cambio_precio via SELECT (politica RLS de Fase 5.3, sin
+// UPDATE/DELETE/INSERT nuevo). No aprueba, no rechaza, no ejecuta nada.
+let matrizSolicitudesRows = [];
+let matrizSolicitudesCargadas = false;
+let matrizSolicitudesFiltroEstado = 'todos';
+let matrizSolicitudesFiltroInstitucion = 'todas';
+let matrizSolicitudDetalleAbierta = null; // fila completa mostrada en el modal de detalle
+let matrizMiUsuarioId = null; // cacheado para mostrar "Tú" en solicitado_por cuando corresponde
+
 function institucionInfo(inst) {
   const s = (inst || '').toUpperCase();
   if (s.indexOf('TEMUCO') !== -1) return { label: 'U Mayor Temuco', color: '#fdf4ff;color:#a21caf', despacho: 'U. Mayor Temuco — Avenida Alemania 0281, 2° piso, Odontología, Temuco', responsable: 'Bethania', codigo: 'UMAYORT' };
@@ -1281,9 +1291,12 @@ function refrescarMatriz() {
   // FASE 4.2B -- MODIFICACION JUSTIFICADA: si el sub-tab activo es Comparador o
   // Auditoria (secciones que no dependen de institucion seleccionada), refrescar
   // debe recargar esa seccion en vez de no hacer nada o recargar solo el resumen.
+  // FASE 5.4 -- se agrega 'solicitudes' al mismo patron (tambien independiente
+  // de institucion seleccionada).
   if (matrizInstitucionSel) { seleccionarInstitucionMatriz(matrizInstitucionSel); }
   else if (matrizSubTab === 'comparador') { cargarMatrizComparador(); }
   else if (matrizSubTab === 'auditoria') { cargarMatrizAuditoria(); }
+  else if (matrizSubTab === 'solicitudes') { cargarMatrizSolicitudes(); }
   else { cargarMatrizResumen(); }
 }
 
@@ -1509,6 +1522,74 @@ function construirModalSolicitud() {
   '</div>';
 }
 
+// --- Fase 5.4: Bandeja de solicitudes (solo lectura) ---
+// SELECT puro contra solicitudes_cambio_precio, usando la politica RLS
+// solicitudes_select_admin ya creada en Fase 5.3 (super_admin U observador).
+// No hay INSERT/UPDATE/DELETE en esta funcion.
+async function cargarMatrizSolicitudes() {
+  matrizCargando = true;
+  renderMatrizInstitucional();
+  try {
+    if (matrizMiUsuarioId === null) {
+      const { data: userData } = await sb.auth.getUser();
+      matrizMiUsuarioId = (userData && userData.user) ? userData.user.id : '';
+    }
+    const { data, error } = await sb.from('solicitudes_cambio_precio')
+      .select('*')
+      .order('solicitado_en', { ascending: false });
+    matrizSolicitudesRows = (!error && data) ? data : [];
+  } catch (e) {
+    matrizSolicitudesRows = [];
+  }
+  matrizSolicitudesCargadas = true;
+  matrizCargando = false;
+  renderMatrizInstitucional();
+}
+
+function matrizSolicitudesFiltradas() {
+  return matrizSolicitudesRows.filter(function (s) {
+    if (matrizSolicitudesFiltroEstado !== 'todos' && s.estado !== matrizSolicitudesFiltroEstado) return false;
+    if (matrizSolicitudesFiltroInstitucion !== 'todas' && s.institucion_codigo !== matrizSolicitudesFiltroInstitucion) return false;
+    return true;
+  });
+}
+
+function abrirDetalleSolicitud(id) {
+  matrizSolicitudDetalleAbierta = matrizSolicitudesRows.find(function (s) { return s.id === id; }) || null;
+  renderMatrizInstitucional();
+}
+
+function cerrarDetalleSolicitud() {
+  matrizSolicitudDetalleAbierta = null;
+  renderMatrizInstitucional();
+}
+
+// Helper de solo presentacion -- no interpreta ni modifica el jsonb, solo
+// intenta mostrar un resumen legible de valor_actual/valor_propuesto.
+function resumenValorSolicitud(valorJson) {
+  if (!valorJson) return '-';
+  if (valorJson.porcentaje != null) return Math.round(valorJson.porcentaje * 100) + '%';
+  if (valorJson.precio != null) return fmt(valorJson.precio);
+  const claves = Object.keys(valorJson);
+  if (claves.length === 0) return '-';
+  return claves.map(function (k) { return k + ': ' + valorJson[k]; }).join(', ');
+}
+
+function badgeEstadoSolicitud(estado) {
+  const estilos = {
+    borrador: 'background:#f4f4f5;color:#3f3f46;',
+    simulada: 'background:#eff6ff;color:#1d4ed8;',
+    pendiente_aprobacion: 'background:#fffbeb;color:#92400e;',
+    aprobada: 'background:#f0fdf4;color:#166534;',
+    rechazada: 'background:#fef2f2;color:#991b1b;',
+    ejecutada: 'background:#ecfdf5;color:#065f46;',
+    revertida: 'background:#fff7ed;color:#9a3412;',
+    anulada: 'background:#f4f4f5;color:#71717a;'
+  };
+  const estilo = estilos[estado] || estilos.borrador;
+  return '<span style="font-size:10px;font-weight:700;' + estilo + 'border-radius:5px;padding:2px 8px;">' + esc(estado) + '</span>';
+}
+
 async function cargarMatrizComparador() {
   matrizCargando = true;
   renderMatrizInstitucional();
@@ -1541,6 +1622,7 @@ function cambiarSubTabMatriz(tab) {
   matrizSubTab = tab;
   if (tab === 'comparador' && !matrizComparadorCargado) { cargarMatrizComparador(); return; }
   if (tab === 'auditoria' && !matrizAuditoriaCargada) { cargarMatrizAuditoria(); return; }
+  if (tab === 'solicitudes' && !matrizSolicitudesCargadas) { cargarMatrizSolicitudes(); return; }
   renderMatrizInstitucional();
 }
 
@@ -1634,7 +1716,8 @@ function renderMatrizInstitucional() {
     { id: 'overrides', label: 'Overrides' },
     { id: 'comparador', label: 'Comparador' },
     { id: 'auditoria', label: 'Auditoría' },
-    { id: 'simulador', label: '🔍 Simulador de impacto' }
+    { id: 'simulador', label: '🔍 Simulador de impacto' },
+    { id: 'solicitudes', label: '📋 Solicitudes' }
   ];
   const subTabsHtml =
     '<div style="display:flex;gap:6px;flex-wrap:wrap;margin:16px 0 10px;border-bottom:1px solid var(--border);padding-bottom:10px;">' +
@@ -1963,6 +2046,89 @@ function renderMatrizInstitucional() {
     return html;
   }
 
+  function construirBandejaSolicitudes() {
+    const filtradas = matrizSolicitudesFiltradas();
+    const ESTADOS = ['todos', 'borrador', 'simulada', 'pendiente_aprobacion', 'aprobada', 'rechazada', 'ejecutada', 'revertida', 'anulada'];
+
+    let filas = '';
+    filtradas.forEach(function (s) {
+      const riesgo = (s.impacto_estimado && s.impacto_estimado.nivel_riesgo) ? s.impacto_estimado.nivel_riesgo : '-';
+      const solicitante = s.solicitado_por ? (s.solicitado_por === matrizMiUsuarioId ? 'Tú' : s.solicitado_por.slice(0, 8) + '…') : '-';
+      filas += '<tr>' +
+        '<td style="font-size:11px;white-space:nowrap;">' + (s.solicitado_en ? fechaCorta(s.solicitado_en) : '-') + '</td>' +
+        '<td style="font-weight:700;">' + esc(s.institucion_codigo) + '</td>' +
+        '<td style="font-size:11px;">' + esc(s.tipo_cambio) + '</td>' +
+        '<td style="font-size:11px;">' + esc(s.familia_nombre || '-') + '</td>' +
+        '<td class="mono" style="font-size:11px;">' + esc(s.codigo_producto || '-') + '</td>' +
+        '<td class="num">' + resumenValorSolicitud(s.valor_actual) + '</td>' +
+        '<td class="num">' + resumenValorSolicitud(s.valor_propuesto) + '</td>' +
+        '<td class="num">' + (s.productos_afectados != null ? s.productos_afectados : '-') + '</td>' +
+        '<td style="font-size:11px;text-transform:uppercase;">' + esc(riesgo) + '</td>' +
+        '<td>' + badgeEstadoSolicitud(s.estado) + '</td>' +
+        '<td style="font-size:11px;">' + esc(solicitante) + '</td>' +
+        '<td style="font-size:11px;color:var(--muted);max-width:220px;">' + esc(s.motivo || '-') + '</td>' +
+        '<td><button class="btn-logout" onclick="abrirDetalleSolicitud(\'' + esc(s.id) + '\')">Ver detalle</button></td>' +
+      '</tr>';
+    });
+
+    return '<div class="dash-section" style="margin-top:8px;">' +
+      '<h3 style="margin:0 0 6px;">📋 Solicitudes de cambio</h3>' +
+      '<p style="margin:0 0 12px;font-size:12px;color:var(--muted);">🔒 Solo lectura -- esta bandeja sirve para revisar trazabilidad. No permite aprobar, rechazar, ejecutar ni editar ninguna solicitud.</p>' +
+      '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px;">' +
+        '<div><label style="font-size:11px;font-weight:600;color:var(--muted);display:block;margin-bottom:3px;">Estado</label>' +
+          '<select id="solicitudes-filtro-estado" style="padding:7px 10px;border-radius:7px;border:1px solid var(--border);font-size:13px;">' +
+            ESTADOS.map(function (e) { return '<option value="' + e + '"' + (matrizSolicitudesFiltroEstado === e ? ' selected' : '') + '>' + (e === 'todos' ? 'Todos' : esc(e)) + '</option>'; }).join('') +
+          '</select></div>' +
+        '<div><label style="font-size:11px;font-weight:600;color:var(--muted);display:block;margin-bottom:3px;">Institución</label>' +
+          '<select id="solicitudes-filtro-institucion" style="padding:7px 10px;border-radius:7px;border:1px solid var(--border);font-size:13px;">' +
+            '<option value="todas"' + (matrizSolicitudesFiltroInstitucion === 'todas' ? ' selected' : '') + '>Todas</option>' +
+            MATRIZ_INSTITUCIONES.map(function (cod) { return '<option value="' + cod + '"' + (matrizSolicitudesFiltroInstitucion === cod ? ' selected' : '') + '>' + cod + '</option>'; }).join('') +
+          '</select></div>' +
+      '</div>' +
+      '<div style="overflow-x:auto;"><table class="dash-table"><thead><tr>' +
+        '<th>Fecha</th><th>Institución</th><th>Tipo cambio</th><th>Familia</th><th>Código</th>' +
+        '<th class="num">Actual</th><th class="num">Propuesto</th><th class="num">Productos</th><th>Riesgo</th><th>Estado</th><th>Solicitado por</th><th>Motivo</th><th></th>' +
+      '</tr></thead><tbody>' + (filas || '<tr><td colspan="13" style="color:var(--muted);padding:16px 10px">Sin solicitudes' + (matrizSolicitudesFiltroEstado !== 'todos' || matrizSolicitudesFiltroInstitucion !== 'todas' ? ' con los filtros actuales.' : ' todavía.') + '</td></tr>') + '</tbody></table></div>' +
+    '</div>';
+  }
+
+  function construirModalDetalleSolicitud() {
+    if (!matrizSolicitudDetalleAbierta) return '';
+    const s = matrizSolicitudDetalleAbierta;
+    const bloqueJson = function (titulo, obj) {
+      if (obj === null || obj === undefined) return '';
+      return '<div style="margin-top:10px;"><label style="font-size:11px;font-weight:600;color:var(--muted);display:block;margin-bottom:3px;">' + esc(titulo) + '</label>' +
+        '<pre style="background:var(--bg);border:1px solid var(--border);border-radius:7px;padding:10px 12px;font-size:11px;overflow-x:auto;white-space:pre-wrap;word-break:break-word;margin:0;">' + esc(JSON.stringify(obj, null, 2)) + '</pre></div>';
+    };
+    return '<div style="position:fixed;inset:0;background:rgba(0,0,0,0.5);display:flex;align-items:center;justify-content:center;z-index:1000;" onclick="if(event.target===this){cerrarDetalleSolicitud();}">' +
+      '<div style="background:#fff;border-radius:12px;padding:24px;max-width:640px;width:92%;max-height:85vh;overflow-y:auto;box-shadow:0 10px 40px rgba(0,0,0,0.25);">' +
+        '<div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:6px;">' +
+          '<h3 style="margin:0;">Detalle de solicitud</h3>' + badgeEstadoSolicitud(s.estado) +
+        '</div>' +
+        '<p style="margin:0 0 10px;font-size:12px;color:var(--muted);">🔒 Vista de solo lectura -- sin acciones de aprobación, rechazo o ejecución en esta fase.</p>' +
+        '<div style="font-size:13px;line-height:1.7;">' +
+          '<b>Institución:</b> ' + esc(s.institucion_codigo) + '<br>' +
+          '<b>Tipo de cambio:</b> ' + esc(s.tipo_cambio) + '<br>' +
+          '<b>Familia:</b> ' + esc(s.familia_nombre || '-') + '<br>' +
+          '<b>Código:</b> ' + esc(s.codigo_producto || '-') + '<br>' +
+          '<b>Productos afectados:</b> ' + (s.productos_afectados != null ? s.productos_afectados : '-') + '<br>' +
+          '<b>Motivo:</b> ' + esc(s.motivo || '-') + '<br>' +
+          '<b>Solicitado por:</b> ' + esc(s.solicitado_por === matrizMiUsuarioId ? 'Tú' : (s.solicitado_por || '-')) + '<br>' +
+          '<b>Solicitado en:</b> ' + (s.solicitado_en ? fechaCorta(s.solicitado_en) : '-') + '<br>' +
+          (s.observaciones ? '<b>Observaciones:</b> ' + esc(s.observaciones) + '<br>' : '') +
+        '</div>' +
+        bloqueJson('valor_actual', s.valor_actual) +
+        bloqueJson('valor_propuesto', s.valor_propuesto) +
+        bloqueJson('impacto_estimado', s.impacto_estimado) +
+        bloqueJson('validacion_previa', s.validacion_previa) +
+        (s.rollback_sql ? bloqueJson('rollback_sql (referencia, no ejecutable desde aquí)', s.rollback_sql) : '') +
+        '<div style="display:flex;justify-content:flex-end;margin-top:16px;">' +
+          '<button class="btn-logout" onclick="cerrarDetalleSolicitud()">Cerrar</button>' +
+        '</div>' +
+      '</div>' +
+    '</div>';
+  }
+
   // --- Contenido del sub-tab activo ---
   let seccionesHtml = '';
   const requiereInstitucion = (matrizSubTab === 'catalogo' || matrizSubTab === 'descuentos' || matrizSubTab === 'duplicados' || matrizSubTab === 'overrides' || matrizSubTab === 'simulador');
@@ -1988,6 +2154,10 @@ function renderMatrizInstitucional() {
       : construirTablaAuditoria();
   } else if (matrizSubTab === 'simulador') {
     seccionesHtml = construirBloqueSimulador();
+  } else if (matrizSubTab === 'solicitudes') {
+    seccionesHtml = (matrizCargando && !matrizSolicitudesCargadas)
+      ? '<div style="color:var(--muted);padding:16px 10px;font-size:13px;">Cargando solicitudes...</div>'
+      : construirBandejaSolicitudes() + construirModalDetalleSolicitud();
   }
 
   v.innerHTML =
@@ -2061,6 +2231,13 @@ function renderMatrizInstitucional() {
       try { sm.setSelectionRange(p, p); } catch (e) {}
     }
   }
+
+  // Fase 5.4 -- filtros de la bandeja de solicitudes (solo filtran sobre los
+  // datos ya cargados, no vuelven a llamar a Supabase).
+  const sfe = document.getElementById('solicitudes-filtro-estado');
+  if (sfe) sfe.addEventListener('change', function (e) { matrizSolicitudesFiltroEstado = e.target.value; renderMatrizInstitucional(); });
+  const sfi = document.getElementById('solicitudes-filtro-institucion');
+  if (sfi) sfi.addEventListener('change', function (e) { matrizSolicitudesFiltroInstitucion = e.target.value; renderMatrizInstitucional(); });
 }
 
 sb.auth.onAuthStateChange(function (event, session) {
