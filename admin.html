@@ -83,6 +83,13 @@
 <div id="dashboard-view" style="display:none;"></div>
 
 <script>
+// Fase 5.6C -- version visible del panel admin, para diagnosticar en
+// segundos si el navegador esta sirviendo una version cacheada antigua
+// (incidente real: Fase 5.6A quedo con cache de una version anterior en
+// una sesion, sin esta marca hubiera sido mucho mas lento de detectar).
+const ADMIN_VERSION = '5.6C-2026-07-07';
+console.log('Admin version:', ADMIN_VERSION);
+
 const SUPABASE_URL = 'https://gzimllusbxjorbsbtsse.supabase.co';
 const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imd6aW1sbHVzYnhqb3Jic2J0c3NlIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE5NDQ4NDcsImV4cCI6MjA5NzUyMDg0N30.DFq-_PY10hyr2QmMUXk-v8VW2LKYz3bAW37VCutwmzY';
 const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
@@ -1017,7 +1024,7 @@ function renderDashboardPiloto() {
       ' Los datos mostrados pueden no estar actualizados.<br>' +
       '<button onclick="errorConexion=false;errorConexionMsg=\'\';cargarCotizaciones();" style="margin-top:8px;padding:7px 18px;background:#1a1a1a;color:#fff;border:none;border-radius:7px;cursor:pointer;font-size:13px;">🔄 Reintentar</button></div>' : '') +
     '<header class="topbar"><div><div class="brand-name">STRAUMANN</div><div class="brand-sub">GROUP CHILE · NEODENT</div></div>' +
-    '<div style="display:flex;align-items:center;gap:12px;"><span style="font-size:10px;color:#a1a1aa;">by Daniel Jordán</span><button class="btn-logout" id="btn-logout">Cerrar sesión</button></div></header>' +
+    '<div style="display:flex;align-items:center;gap:12px;"><span style="font-size:10px;color:#a1a1aa;">by Daniel Jordán · Admin v' + ADMIN_VERSION + '</span><button class="btn-logout" id="btn-logout">Cerrar sesión</button></div></header>' +
     '<main>' +
     tabsHtml +
     '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;">' +
@@ -1167,7 +1174,7 @@ function renderDashboard() {
 
   v.innerHTML =
     '<header class="topbar"><div><div class="brand-name">STRAUMANN</div><div class="brand-sub">GROUP CHILE · NEODENT</div></div>' +
-    '<div style="display:flex;align-items:center;gap:12px;"><span style="font-size:10px;color:#a1a1aa;">by Daniel Jordán</span><button class="btn-logout" id="btn-logout">Cerrar sesión</button></div></header>' +
+    '<div style="display:flex;align-items:center;gap:12px;"><span style="font-size:10px;color:#a1a1aa;">by Daniel Jordán · Admin v' + ADMIN_VERSION + '</span><button class="btn-logout" id="btn-logout">Cerrar sesión</button></div></header>' +
     (errorConexion ? '<div style="background:#fff3cd;border:1px solid #fde68a;border-radius:10px;padding:14px 18px;margin:16px;text-align:center;font-size:13px;">⚠️ ' + (errorConexionMsg || 'Sin conexión con el servidor.') + ' Los datos mostrados pueden no estar actualizados.<br><button onclick="errorConexion=false;errorConexionMsg=\'\';cargarCotizaciones();" style="margin-top:8px;padding:7px 18px;background:#1a1a1a;color:#fff;border:none;border-radius:7px;cursor:pointer;font-size:13px;">🔄 Reintentar</button></div>' : '') +
     '<main>' +
       ((esSuperAdmin() || esObservador()) ?
@@ -2337,7 +2344,7 @@ function renderMatrizInstitucional() {
 
   v.innerHTML =
     '<header class="topbar"><div><div class="brand-name">STRAUMANN</div><div class="brand-sub">GROUP CHILE · NEODENT</div></div>' +
-    '<div style="display:flex;align-items:center;gap:12px;"><span style="font-size:10px;color:#a1a1aa;">by Daniel Jordán</span><button class="btn-logout" id="btn-logout">Cerrar sesión</button></div></header>' +
+    '<div style="display:flex;align-items:center;gap:12px;"><span style="font-size:10px;color:#a1a1aa;">by Daniel Jordán · Admin v' + ADMIN_VERSION + '</span><button class="btn-logout" id="btn-logout">Cerrar sesión</button></div></header>' +
     '<main>' +
     tabsHtml +
     '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;flex-wrap:wrap;gap:8px;">' +
