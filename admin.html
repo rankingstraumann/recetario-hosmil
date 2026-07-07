@@ -1491,6 +1491,21 @@ async function crearSolicitudCambio() {
       matrizSolicitudExito = data;
       matrizSolicitudModalAbierto = false;
       matrizSolicitudMotivo = '';
+      // FASE 5.4A -- HOTFIX: antes, la bandeja de Solicitudes quedaba con
+      // cache obsoleta (matrizSolicitudesCargadas=true desde una visita
+      // anterior con la lista vacia) y crearSolicitudCambio() nunca la
+      // invalidaba ni actualizaba matrizSolicitudesRows. Se corrige en 2
+      // pasos: (1) se agrega la fila recien creada al array local de
+      // inmediato -- feedback instantaneo si algo la lee antes de recargar;
+      // (2) se invalida matrizSolicitudesCargadas para forzar una recarga
+      // REAL desde Supabase la proxima vez que se entre al sub-tab
+      // Solicitudes (cubre tanto "ya la habia visitado antes" como "todavia
+      // no la habia visitado"). Tambien se resetean los filtros para que la
+      // nueva solicitud nunca quede oculta por un filtro previo.
+      matrizSolicitudesRows = [data].concat(matrizSolicitudesRows);
+      matrizSolicitudesFiltroEstado = 'todos';
+      matrizSolicitudesFiltroInstitucion = 'todas';
+      matrizSolicitudesCargadas = false;
     }
   } catch (e) {
     matrizSolicitudError = 'Error de red al crear la solicitud.';
@@ -2034,6 +2049,7 @@ function renderMatrizInstitucional() {
           'ID: <span class="mono">' + esc(matrizSolicitudExito.id) + '</span>' +
           (matrizSolicitudExito.solicitado_en ? ' · ' + fechaCorta(matrizSolicitudExito.solicitado_en) : '') +
           '. No se aplicó ningún cambio real -- esta solicitud queda pendiente de una fase futura de aprobación.' +
+          '<div style="margin-top:8px;"><button class="btn-logout" onclick="cambiarSubTabMatriz(\'solicitudes\')">📋 Ver en Solicitudes</button></div>' +
         '</div>';
       }
       if (matrizSolicitudError && !matrizSolicitudModalAbierto) {
