@@ -172,6 +172,17 @@ let matrizComparadorFiltro = { texto: '', soloDiferencias: false };
 let matrizAuditoriaRows = [];
 let matrizAuditoriaCargada = false;
 
+// Fase 5.2B -- Simulador de impacto. Solo lectura: llama a
+// simular_cambio_descuento_familia y simular_cambio_descuento_familia_resumen
+// (Fase 5.2A, ya validadas), sin insertar en solicitudes_cambio_precio ni
+// modificar ninguna tabla comercial.
+let matrizSimuladorFamilia = '';
+let matrizSimuladorDescuentoTexto = '';
+let matrizSimuladorResumen = null;
+let matrizSimuladorDetalle = [];
+let matrizSimuladorCargando = false;
+let matrizSimuladorErrorValidacion = '';
+
 function institucionInfo(inst) {
   const s = (inst || '').toUpperCase();
   if (s.indexOf('TEMUCO') !== -1) return { label: 'U Mayor Temuco', color: '#fdf4ff;color:#a21caf', despacho: 'U. Mayor Temuco — Avenida Alemania 0281, 2° piso, Odontología, Temuco', responsable: 'Bethania', codigo: 'UMAYORT' };
@@ -1214,6 +1225,16 @@ async function seleccionarInstitucionMatriz(codigo) {
   matrizDescuentosRows = [];
   matrizDuplicadosRows = [];
   matrizOverridesRows = [];
+  // FASE 5.2B -- MODIFICACION JUSTIFICADA: se limpia el resultado del simulador
+  // al cambiar de institucion. Motivo: un resultado simulado de la institucion
+  // anterior quedaria visualmente engañoso si el usuario cambia de institucion
+  // sin volver a simular -- se prefiere mostrar el formulario vacio a mostrar
+  // un impacto que ya no corresponde a la institucion seleccionada.
+  matrizSimuladorFamilia = '';
+  matrizSimuladorDescuentoTexto = '';
+  matrizSimuladorResumen = null;
+  matrizSimuladorDetalle = [];
+  matrizSimuladorErrorValidacion = '';
   matrizCargando = true;
   renderMatrizInstitucional();
   try {
@@ -1294,6 +1315,81 @@ function exportarMatrizExcel(rows, columnas, nombreHoja, nombreArchivoBase) {
 // Ambas secciones son independientes de la institucion seleccionada, por eso
 // se cargan de forma perezosa (solo la primera vez que se abre el sub-tab) en
 // vez de junto con seleccionarInstitucionMatriz().
+
+// --- Fase 5.2B: Simulador de impacto (solo lectura) ---
+// Llama a las 2 RPCs de solo lectura creadas y validadas en Fase 5.2A.
+// No inserta en solicitudes_cambio_precio, no modifica descuentos_institucionales,
+// productos, precio_compartido_override ni reglas_cierre_institucional.
+
+async function ejecutarSimulacionMatriz() {
+  matrizSimuladorErrorValidacion = '';
+
+  const familiaEl = document.getElementById('simulador-familia');
+  const descuentoEl = document.getElementById('simulador-descuento');
+  const familia = familiaEl ? familiaEl.value : '';
+  const descuentoTexto = descuentoEl ? descuentoEl.value : '';
+
+  // Validaciones de entrada -- ninguna llamada a Supabase si algo falta o es invalido.
+  if (!matrizInstitucionSel) {
+    matrizSimuladorErrorValidacion = 'Selecciona una institución antes de simular.';
+    renderMatrizInstitucional();
+    return;
+  }
+  if (!familia) {
+    matrizSimuladorErrorValidacion = 'Selecciona una familia antes de simular.';
+    renderMatrizInstitucional();
+    return;
+  }
+  if (descuentoTexto === '' || descuentoTexto === null || descuentoTexto === undefined) {
+    matrizSimuladorErrorValidacion = 'Ingresa un descuento nuevo antes de simular.';
+    renderMatrizInstitucional();
+    return;
+  }
+  const descuentoNum = Number(descuentoTexto);
+  if (isNaN(descuentoNum)) {
+    matrizSimuladorErrorValidacion = 'El descuento debe ser un número.';
+    renderMatrizInstitucional();
+    return;
+  }
+  if (descuentoNum < 0) {
+    matrizSimuladorErrorValidacion = 'El descuento no puede ser menor a 0.';
+    renderMatrizInstitucional();
+    return;
+  }
+  if (descuentoNum > 100) {
+    matrizSimuladorErrorValidacion = 'El descuento no puede ser mayor a 100.';
+    renderMatrizInstitucional();
+    return;
+  }
+
+  matrizSimuladorFamilia = familia;
+  matrizSimuladorDescuentoTexto = descuentoTexto;
+  matrizSimuladorCargando = true;
+  matrizSimuladorResumen = null;
+  matrizSimuladorDetalle = [];
+  renderMatrizInstitucional();
+
+  try {
+    const resultados = await Promise.all([
+      sb.rpc('simular_cambio_descuento_familia_resumen', {
+        p_institucion_codigo: matrizInstitucionSel, p_familia_nombre: familia, p_descuento_nuevo: descuentoNum
+      }),
+      sb.rpc('simular_cambio_descuento_familia', {
+        p_institucion_codigo: matrizInstitucionSel, p_familia_nombre: familia, p_descuento_nuevo: descuentoNum
+      })
+    ]);
+    matrizSimuladorResumen = (!resultados[0].error && resultados[0].data && resultados[0].data[0]) ? resultados[0].data[0] : null;
+    matrizSimuladorDetalle = (!resultados[1].error && resultados[1].data) ? resultados[1].data : [];
+    if (resultados[0].error || resultados[1].error) {
+      matrizSimuladorErrorValidacion = 'Error al simular: ' +
+        ((resultados[0].error && resultados[0].error.message) || (resultados[1].error && resultados[1].error.message) || 'error desconocido');
+    }
+  } catch (e) {
+    matrizSimuladorErrorValidacion = 'No se pudo ejecutar la simulación (error de red).';
+  }
+  matrizSimuladorCargando = false;
+  renderMatrizInstitucional();
+}
 
 async function cargarMatrizComparador() {
   matrizCargando = true;
@@ -1419,7 +1515,8 @@ function renderMatrizInstitucional() {
     { id: 'duplicados', label: 'Duplicados' },
     { id: 'overrides', label: 'Overrides' },
     { id: 'comparador', label: 'Comparador' },
-    { id: 'auditoria', label: 'Auditoría' }
+    { id: 'auditoria', label: 'Auditoría' },
+    { id: 'simulador', label: '🔍 Simulador de impacto' }
   ];
   const subTabsHtml =
     '<div style="display:flex;gap:6px;flex-wrap:wrap;margin:16px 0 10px;border-bottom:1px solid var(--border);padding-bottom:10px;">' +
@@ -1638,12 +1735,106 @@ function renderMatrizInstitucional() {
     '</div>';
   }
 
+  function construirBloqueSimulador() {
+    const familiasDisponibles = Array.from(new Set(matrizCatalogoRows.map(function (r) { return r.familia; }))).filter(Boolean).sort();
+
+    let html = '<div class="dash-section" style="margin-top:8px;">' +
+      '<h3 style="margin:0 0 6px;">🔍 Simulador de impacto</h3>' +
+      '<p style="margin:0 0 12px;font-size:12px;color:var(--muted);">🔒 Solo simulación -- ningún resultado se guarda ni se aplica. Para ejecutar un cambio real, contactar a Daniel.</p>' +
+      '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end;margin-bottom:10px;">' +
+        '<div><label style="font-size:11px;font-weight:600;color:var(--muted);display:block;margin-bottom:3px;">Institución</label>' +
+          '<div style="padding:7px 10px;border-radius:7px;border:1px solid var(--border);font-size:13px;background:var(--bg);min-width:110px;">' + esc(matrizInstitucionSel) + '</div></div>' +
+        '<div><label style="font-size:11px;font-weight:600;color:var(--muted);display:block;margin-bottom:3px;">Familia</label>' +
+          '<select id="simulador-familia" style="padding:7px 10px;border-radius:7px;border:1px solid var(--border);font-size:13px;min-width:220px;">' +
+            '<option value="">Selecciona una familia...</option>' +
+            familiasDisponibles.map(function (f) { return '<option value="' + esc(f) + '"' + (matrizSimuladorFamilia === f ? ' selected' : '') + '>' + esc(f) + '</option>'; }).join('') +
+          '</select></div>' +
+        '<div><label style="font-size:11px;font-weight:600;color:var(--muted);display:block;margin-bottom:3px;">Nuevo descuento %</label>' +
+          '<input id="simulador-descuento" type="number" min="0" max="100" placeholder="30" value="' + esc(matrizSimuladorDescuentoTexto) + '" style="padding:7px 10px;border-radius:7px;border:1px solid var(--border);font-size:13px;width:90px;"></div>' +
+        '<button class="btn-logout" onclick="ejecutarSimulacionMatriz()"' + (matrizSimuladorCargando ? ' disabled' : '') + '>' + (matrizSimuladorCargando ? 'Simulando...' : '🔍 Simular impacto') + '</button>' +
+      '</div>';
+
+    if (matrizSimuladorErrorValidacion) {
+      html += '<div style="background:#fef2f2;color:#991b1b;border:1px solid #fecaca;border-radius:8px;padding:10px 14px;font-size:13px;margin-bottom:12px;">⚠️ ' + esc(matrizSimuladorErrorValidacion) + '</div>';
+    }
+
+    if (matrizSimuladorCargando) {
+      html += '<div style="color:var(--muted);padding:16px 10px;font-size:13px;">Simulando...</div>';
+    }
+
+    if (matrizSimuladorResumen) {
+      const r = matrizSimuladorResumen;
+      let alertas = '';
+      if (r.nivel_riesgo === 'alto') {
+        alertas += '<div style="background:#fef2f2;color:#991b1b;border:1px solid #fecaca;border-radius:8px;padding:10px 14px;font-size:13px;margin-bottom:8px;">🔴 <b>Riesgo alto detectado.</b></div>';
+      }
+      if (r.descuento_nuevo != null && r.descuento_nuevo >= 0.80) {
+        alertas += '<div style="background:#fff7ed;color:#9a3412;border:1px solid #fed7aa;border-radius:8px;padding:10px 14px;font-size:13px;margin-bottom:8px;">🟠 Descuento alto -- valida que no se esté confundiendo con la regla automática.</div>';
+      }
+      if (r.productos_con_regla_automatica > 0) {
+        alertas += '<div style="background:#fffbeb;color:#92400e;border:1px solid #fde68a;border-radius:8px;padding:10px 14px;font-size:13px;margin-bottom:8px;">🟡 Existen ' + r.productos_con_regla_automatica + ' producto(s) relacionados a reglas automáticas -- la simulación no modifica esas reglas.</div>';
+      }
+      if (r.productos_con_override > 0) {
+        alertas += '<div style="background:#eff6ff;color:#1d4ed8;border:1px solid #bfdbfe;border-radius:8px;padding:10px 14px;font-size:13px;margin-bottom:8px;">🔵 Hay ' + r.productos_con_override + ' producto(s) con override -- validar prevalencia comercial.</div>';
+      }
+      if (r.total_productos_afectados > 50) {
+        alertas += '<div style="background:#f5f3ff;color:#5b21b6;border:1px solid #ddd6fe;border-radius:8px;padding:10px 14px;font-size:13px;margin-bottom:8px;">🟣 Impacto masivo por volumen (' + r.total_productos_afectados + ' productos).</div>';
+      }
+      html += alertas;
+
+      html += '<div class="dash-grid" style="margin-bottom:14px;">' +
+        '<div class="dash-card"><div class="dc-label">Productos afectados</div><div class="dc-value">' + r.total_productos_afectados + '</div></div>' +
+        '<div class="dash-card"><div class="dc-label">Descuento nuevo</div><div class="dc-value">' + Math.round(r.descuento_nuevo * 100) + '%</div></div>' +
+        '<div class="dash-card"><div class="dc-label">Monto total lista</div><div class="dc-value" style="font-size:16px;">' + fmt(r.monto_total_lista) + '</div></div>' +
+        '<div class="dash-card"><div class="dc-label">Monto total actual</div><div class="dc-value" style="font-size:16px;">' + fmt(r.monto_total_actual) + '</div></div>' +
+        '<div class="dash-card"><div class="dc-label">Monto total simulado</div><div class="dc-value" style="font-size:16px;">' + fmt(r.monto_total_simulado) + '</div></div>' +
+        '<div class="dash-card"><div class="dc-label">Diferencia total</div><div class="dc-value" style="font-size:16px;">' + fmt(r.diferencia_total) + '</div></div>' +
+        '<div class="dash-card"><div class="dc-label">Con override</div><div class="dc-value">' + r.productos_con_override + '</div></div>' +
+        '<div class="dash-card"><div class="dc-label">Con regla automática</div><div class="dc-value">' + r.productos_con_regla_automatica + '</div></div>' +
+        '<div class="dash-card"><div class="dc-label">Nivel de riesgo</div><div class="dc-value" style="font-size:16px;text-transform:uppercase;">' + esc(r.nivel_riesgo) + '</div></div>' +
+      '</div>';
+
+      let filasDetalle = '';
+      matrizSimuladorDetalle.forEach(function (d) {
+        filasDetalle += '<tr>' +
+          '<td class="mono">' + esc(d.codigo) + '</td>' +
+          '<td>' + esc(d.marca) + '</td>' +
+          '<td>' + esc(d.descripcion) + '</td>' +
+          '<td class="num">' + fmt(d.precio_lista) + '</td>' +
+          '<td class="num">' + (d.descuento_actual != null ? Math.round(d.descuento_actual * 100) + '%' : '-') + '</td>' +
+          '<td class="num">' + fmt(d.precio_final_actual) + '</td>' +
+          '<td class="num">' + Math.round(d.descuento_nuevo * 100) + '%</td>' +
+          '<td class="num" style="font-weight:700;">' + fmt(d.precio_final_simulado) + '</td>' +
+          '<td class="num">' + fmt(d.diferencia_unitaria) + '</td>' +
+          '<td>' + (d.tiene_override ? '<span style="font-size:10px;font-weight:700;background:#dbeafe;color:#1d4ed8;border-radius:5px;padding:2px 6px;">Sí</span>' : '') + '</td>' +
+          '<td>' + (d.tiene_regla_automatica ? '<span style="font-size:10px;font-weight:700;background:#fef3c7;color:#92400e;border-radius:5px;padding:2px 6px;">Sí</span>' : '') + '</td>' +
+          '<td style="font-size:11px;color:var(--muted);max-width:260px;">' + esc(d.observacion || '') + '</td>' +
+        '</tr>';
+      });
+
+      html += '<div style="overflow-x:auto;"><table class="dash-table"><thead><tr>' +
+        '<th>Código</th><th>Marca</th><th>Descripción</th><th class="num">Precio lista</th><th class="num">Dscto. actual</th>' +
+        '<th class="num">Precio final actual</th><th class="num">Dscto. nuevo</th><th class="num">Precio final simulado</th>' +
+        '<th class="num">Diferencia</th><th>Override</th><th>Regla automática</th><th>Observación</th>' +
+      '</tr></thead><tbody>' + (filasDetalle || '<tr><td colspan="12" style="color:var(--muted);padding:16px 10px">Sin productos</td></tr>') + '</tbody></table></div>';
+
+      // Boton deshabilitado, marcado explicitamente como "Proximamente" -- ningun
+      // flujo de escritura conectado en esta fase (Fase 5.2B es solo lectura).
+      html += '<div style="margin-top:14px;">' +
+        '<button class="btn-logout" disabled title="Disponible en una fase futura" style="opacity:0.5;cursor:not-allowed;">📝 Crear solicitud (Próximamente)</button>' +
+      '</div>';
+    }
+
+    html += '</div>';
+    return html;
+  }
+
   // --- Contenido del sub-tab activo ---
   let seccionesHtml = '';
-  const requiereInstitucion = (matrizSubTab === 'catalogo' || matrizSubTab === 'descuentos' || matrizSubTab === 'duplicados' || matrizSubTab === 'overrides');
+  const requiereInstitucion = (matrizSubTab === 'catalogo' || matrizSubTab === 'descuentos' || matrizSubTab === 'duplicados' || matrizSubTab === 'overrides' || matrizSubTab === 'simulador');
   if (requiereInstitucion && !matrizInstitucionSel) {
     seccionesHtml = '<div style="color:var(--muted);padding:16px 10px;font-size:13px;">Selecciona una institución arriba (o una card) para ver esta sección.</div>';
-  } else if (requiereInstitucion && matrizCargando) {
+  } else if (requiereInstitucion && matrizCargando && matrizSubTab !== 'simulador') {
     seccionesHtml = '<div style="color:var(--muted);padding:16px 10px;font-size:13px;">Cargando datos de ' + esc(matrizInstitucionSel) + '...</div>';
   } else if (matrizSubTab === 'catalogo') {
     seccionesHtml = construirTablaCatalogo();
@@ -1661,6 +1852,8 @@ function renderMatrizInstitucional() {
     seccionesHtml = (matrizCargando && !matrizAuditoriaCargada)
       ? '<div style="color:var(--muted);padding:16px 10px;font-size:13px;">Cargando auditoría...</div>'
       : construirTablaAuditoria();
+  } else if (matrizSubTab === 'simulador') {
+    seccionesHtml = construirBloqueSimulador();
   }
 
   v.innerHTML =
@@ -1716,6 +1909,12 @@ function renderMatrizInstitucional() {
   }
   const cd = document.getElementById('matriz-comparador-solo-diferencias');
   if (cd) cd.addEventListener('change', function (e) { matrizComparadorFiltro.soloDiferencias = e.target.checked; renderMatrizInstitucional(); });
+
+  // Fase 5.2B -- el select de familia se recuerda para re-render (ej. tras
+  // simular), pero NO dispara ninguna llamada a Supabase por si solo -- la
+  // llamada ocurre unicamente al hacer click en "Simular impacto".
+  const sf = document.getElementById('simulador-familia');
+  if (sf) sf.addEventListener('change', function (e) { matrizSimuladorFamilia = e.target.value; });
 }
 
 sb.auth.onAuthStateChange(function (event, session) {
