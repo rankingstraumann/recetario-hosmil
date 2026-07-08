@@ -238,6 +238,8 @@ const DOMINIO_POR_CODIGO = {
   UDP: 'https://recetario-udp.vercel.app/',
   UMAYOR: 'https://recetario-umayor.vercel.app/',
   UMAYORT: 'https://recetario-umayor-temuco.vercel.app/',
+  ARMADA: 'https://recetario-centralodontologica.vercel.app/',
+  UC: 'https://recetario-uc.vercel.app/',
 };
 function linkPublicoDe(c) {
   const inst = institucionInfo(c.institucion);
@@ -1657,7 +1659,9 @@ function badgeEstadoSolicitud(estado) {
 function abrirAccionSolicitud(id, accion) {
   const fila = matrizSolicitudesRows.find(function (s) { return s.id === id; });
   if (!fila) return;
-  matrizSolicitudAccionAbierta = { id: id, accion: accion, institucion: fila.institucion_codigo, familia: fila.familia_nombre, estadoActual: fila.estado };
+  // FASE 5.7 -- se agrega observacionesPrevias para que la accion "aprobar"
+  // pueda AGREGAR texto en vez de sobreescribir el historial existente.
+  matrizSolicitudAccionAbierta = { id: id, accion: accion, institucion: fila.institucion_codigo, familia: fila.familia_nombre, estadoActual: fila.estado, observacionesPrevias: fila.observaciones || '' };
   matrizSolicitudAccionMotivo = '';
   matrizSolicitudAccionError = '';
   renderMatrizInstitucional();
@@ -1676,6 +1680,8 @@ async function confirmarAccionSolicitud() {
   const motivoEl = document.getElementById('accion-solicitud-motivo');
   const motivo = motivoEl ? motivoEl.value.trim() : '';
 
+  // FASE 5.7 -- "aprobar" muestra el campo de observacion pero NO la exige
+  // (a diferencia de anular/rechazar, que siguen requiriendo motivo).
   const requiereMotivo = (accion === 'anular' || accion === 'rechazar');
   if (requiereMotivo && !motivo) {
     matrizSolicitudAccionError = 'El motivo es obligatorio para ' + (accion === 'anular' ? 'anular' : 'rechazar') + ' una solicitud.';
@@ -1683,16 +1689,28 @@ async function confirmarAccionSolicitud() {
     return;
   }
 
-  let nuevoEstado, observacionesTexto;
+  let updatePayload;
   if (accion === 'enviar_aprobacion') {
-    nuevoEstado = 'pendiente_aprobacion';
-    observacionesTexto = 'Enviada a aprobación desde Matriz Admin.' + (motivo ? ' ' + motivo : '');
+    updatePayload = { estado: 'pendiente_aprobacion', observaciones: 'Enviada a aprobación desde Matriz Admin.' + (motivo ? ' ' + motivo : '') };
   } else if (accion === 'anular') {
-    nuevoEstado = 'anulada';
-    observacionesTexto = 'Anulada desde Matriz Admin. Motivo: ' + motivo;
+    updatePayload = { estado: 'anulada', observaciones: 'Anulada desde Matriz Admin. Motivo: ' + motivo };
   } else if (accion === 'rechazar') {
-    nuevoEstado = 'rechazada';
-    observacionesTexto = 'Rechazada desde Matriz Admin. Motivo: ' + motivo;
+    updatePayload = { estado: 'rechazada', observaciones: 'Rechazada desde Matriz Admin. Motivo: ' + motivo };
+  } else if (accion === 'aprobar') {
+    // FASE 5.7 -- unica accion que ademas puebla aprobado_por/aprobado_en
+    // (columnas ya existentes desde Fase 5.1A, nunca usadas hasta ahora), y
+    // que AGREGA texto a observaciones en vez de sobreescribirlas, para no
+    // perder el historial previo (ej. el motivo de "enviar a aprobacion").
+    const { data: userData } = await sb.auth.getUser();
+    const uid = (userData && userData.user) ? userData.user.id : null;
+    const observacionesPrevias = (matrizSolicitudAccionAbierta.observacionesPrevias || '').trim();
+    const notaAprobacion = 'Aprobada desde Matriz Admin.' + (motivo ? ' ' + motivo : '');
+    updatePayload = {
+      estado: 'aprobada',
+      aprobado_por: uid,
+      aprobado_en: new Date().toISOString(),
+      observaciones: observacionesPrevias ? (observacionesPrevias + ' | ' + notaAprobacion) : notaAprobacion
+    };
   } else {
     return; // accion desconocida -- defensivo, no deberia ocurrir
   }
@@ -1702,13 +1720,15 @@ async function confirmarAccionSolicitud() {
   renderMatrizInstitucional();
 
   try {
-    // FASE 5.5 -- unicamente se actualizan estado/observaciones. NUNCA
-    // aprobado_por/aprobado_en/validacion_posterior en esta fase (quedan
-    // para el flujo de aprobacion real, todavia no implementado). Ningun
-    // cambio a productos/descuentos_institucionales/precio_compartido_override/
-    // reglas_cierre_institucional/cotizaciones/auditoria_cambios.
+    // FASE 5.5/5.7 -- solo se actualizan estado/observaciones (y, unicamente
+    // en 'aprobar', aprobado_por/aprobado_en). NUNCA validacion_posterior en
+    // esta fase (queda para el flujo de ejecucion real, todavia no
+    // implementado). Ningun cambio a productos/descuentos_institucionales/
+    // precio_compartido_override/reglas_cierre_institucional/cotizaciones/
+    // auditoria_cambios. Esta fase NO ejecuta ningun cambio comercial --
+    // "aprobada" sigue siendo solo un estado dentro de solicitudes_cambio_precio.
     const { data, error } = await sb.from('solicitudes_cambio_precio')
-      .update({ estado: nuevoEstado, observaciones: observacionesTexto })
+      .update(updatePayload)
       .eq('id', id)
       .select()
       .single();
@@ -2214,7 +2234,8 @@ function renderMatrizInstitucional() {
               acciones += ' <button class="btn-logout" onclick="abrirAccionSolicitud(\'' + esc(s.id) + '\', \'enviar_aprobacion\')">Enviar a aprobación</button>' +
                 ' <button class="btn-logout" style="color:#991b1b;" onclick="abrirAccionSolicitud(\'' + esc(s.id) + '\', \'anular\')">Anular</button>';
             } else if (s.estado === 'pendiente_aprobacion') {
-              acciones += ' <button class="btn-logout" style="color:#991b1b;" onclick="abrirAccionSolicitud(\'' + esc(s.id) + '\', \'anular\')">Anular</button>' +
+              acciones += ' <button class="btn-logout" style="color:#166534;" onclick="abrirAccionSolicitud(\'' + esc(s.id) + '\', \'aprobar\')">Aprobar</button>' +
+                ' <button class="btn-logout" style="color:#991b1b;" onclick="abrirAccionSolicitud(\'' + esc(s.id) + '\', \'anular\')">Anular</button>' +
                 ' <button class="btn-logout" style="color:#991b1b;" onclick="abrirAccionSolicitud(\'' + esc(s.id) + '\', \'rechazar\')">Rechazar</button>';
             }
           }
@@ -2225,7 +2246,7 @@ function renderMatrizInstitucional() {
 
     return '<div class="dash-section" style="margin-top:8px;">' +
       '<h3 style="margin:0 0 6px;">📋 Solicitudes de cambio</h3>' +
-      '<p style="margin:0 0 12px;font-size:12px;color:var(--muted);">🔒 <b>super_admin</b> puede cambiar el estado de una solicitud (enviarla a aprobación, anularla o rechazarla) -- <b>observador</b> solo puede ver. Ningún botón de esta pantalla aprueba, ejecuta ni aplica un cambio comercial real: precios, descuentos, productos, overrides, reglas de cierre y cotizaciones no se tocan nunca desde aquí.</p>' +
+      '<p style="margin:0 0 12px;font-size:12px;color:var(--muted);">🔒 <b>super_admin</b> puede cambiar el estado de una solicitud (enviarla a aprobación, aprobarla, anularla o rechazarla) -- <b>observador</b> solo puede ver. "Aprobar" solo cambia el estado a <code>aprobada</code> y registra quién y cuándo -- ningún botón de esta pantalla ejecuta ni aplica un cambio comercial real: precios, descuentos, productos, overrides, reglas de cierre y cotizaciones no se tocan nunca desde aquí.</p>' +
       '<div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px;">' +
         '<div><label style="font-size:11px;font-weight:600;color:var(--muted);display:block;margin-bottom:3px;">Estado</label>' +
           '<select id="solicitudes-filtro-estado" style="padding:7px 10px;border-radius:7px;border:1px solid var(--border);font-size:13px;">' +
@@ -2307,6 +2328,8 @@ function renderMatrizInstitucional() {
           '<b>Motivo:</b> ' + esc(s.motivo || '-') + '<br>' +
           '<b>Solicitado por:</b> ' + esc(s.solicitado_por === matrizMiUsuarioId ? 'Tú' : (s.solicitado_por || '-')) + '<br>' +
           '<b>Solicitado en:</b> ' + (s.solicitado_en ? fechaCorta(s.solicitado_en) : '-') + '<br>' +
+          (s.aprobado_por ? '<b>Aprobado por:</b> ' + esc(s.aprobado_por === matrizMiUsuarioId ? 'Tú' : s.aprobado_por) + '<br>' : '') +
+          (s.aprobado_en ? '<b>Aprobado en:</b> ' + fechaCorta(s.aprobado_en) + '<br>' : '') +
           (s.observaciones ? '<b>Observaciones:</b> ' + esc(s.observaciones) + '<br>' : '') +
         '</div>' +
         bloqueJson('valor_actual', s.valor_actual) +
@@ -2326,10 +2349,15 @@ function renderMatrizInstitucional() {
     if (!matrizSolicitudAccionAbierta) return '';
     const a = matrizSolicitudAccionAbierta;
     const requiereMotivo = (a.accion === 'anular' || a.accion === 'rechazar');
+    // FASE 5.7 -- "aprobar" tambien muestra el campo de observacion, pero
+    // OPCIONAL (no bloquea si se deja vacio) -- a diferencia de anular/
+    // rechazar, que siguen exigiendo motivo.
+    const muestraObservacion = (a.accion === 'anular' || a.accion === 'rechazar' || a.accion === 'aprobar');
     const etiquetas = {
       enviar_aprobacion: { titulo: 'Enviar a aprobación', boton: 'Enviar a aprobación', color: '#1a1a1a' },
       anular: { titulo: 'Anular solicitud', boton: 'Anular', color: '#991b1b' },
-      rechazar: { titulo: 'Rechazar solicitud', boton: 'Rechazar', color: '#991b1b' }
+      rechazar: { titulo: 'Rechazar solicitud', boton: 'Rechazar', color: '#991b1b' },
+      aprobar: { titulo: 'Aprobar solicitud', boton: 'Aprobar', color: '#166534' }
     };
     const info = etiquetas[a.accion] || etiquetas.enviar_aprobacion;
     return '<div style="position:fixed;inset:0;background:rgba(0,0,0,0.5);display:flex;align-items:center;justify-content:center;z-index:1001;" onclick="if(event.target===this){cerrarAccionSolicitud();}">' +
@@ -2338,9 +2366,9 @@ function renderMatrizInstitucional() {
         '<p style="margin:0 0 10px;font-size:12px;color:var(--muted);">' +
           'Institución: <b>' + esc(a.institucion) + '</b> · Familia: <b>' + esc(a.familia || '-') + '</b> · Estado actual: ' + badgeEstadoSolicitud(a.estadoActual) +
         '</p>' +
-        '<p style="margin:0 0 14px;font-size:12px;color:var(--muted);">🔒 Esto SOLO cambia el estado de la solicitud. No aplica ningún cambio comercial real -- precios, descuentos, productos, overrides, reglas de cierre y cotizaciones no se tocan.</p>' +
-        (requiereMotivo
-          ? '<label style="font-size:12px;font-weight:600;display:block;margin-bottom:4px;">Motivo (obligatorio)</label>' +
+        '<p style="margin:0 0 14px;font-size:12px;color:var(--muted);">🔒 Esto SOLO cambia el estado de la solicitud. No aplica ningún cambio comercial real -- precios, descuentos, productos, overrides, reglas de cierre y cotizaciones no se tocan. No ejecuta ningún cambio, incluso si el estado queda en "aprobada".</p>' +
+        (muestraObservacion
+          ? '<label style="font-size:12px;font-weight:600;display:block;margin-bottom:4px;">Observación' + (requiereMotivo ? ' (obligatoria)' : ' (opcional)') + '</label>' +
             '<textarea id="accion-solicitud-motivo" rows="3" placeholder="Explica por qué..." style="width:100%;padding:8px 10px;border-radius:7px;border:1px solid var(--border);font-size:13px;box-sizing:border-box;font-family:inherit;">' + esc(matrizSolicitudAccionMotivo) + '</textarea>'
           : '') +
         (matrizSolicitudAccionError ? '<div style="background:#fef2f2;color:#991b1b;border:1px solid #fecaca;border-radius:8px;padding:8px 12px;font-size:12px;margin-top:8px;">⚠️ ' + esc(matrizSolicitudAccionError) + '</div>' : '') +
