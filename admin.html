@@ -87,7 +87,7 @@
 // segundos si el navegador esta sirviendo una version cacheada antigua
 // (incidente real: Fase 5.6A quedo con cache de una version anterior en
 // una sesion, sin esta marca hubiera sido mucho mas lento de detectar).
-const ADMIN_VERSION = '5.6C-2026-07-07';
+const ADMIN_VERSION = '5.9A-2026-07-09';
 console.log('Admin version:', ADMIN_VERSION);
 
 const SUPABASE_URL = 'https://gzimllusbxjorbsbtsse.supabase.co';
@@ -1757,9 +1757,17 @@ async function confirmarEjecutarCambio() {
     // Refrescar los descuentos de la Matriz si la institucion afectada es la
     // que esta seleccionada -- reutiliza la RPC de solo lectura ya existente
     // desde Fase 4.1, sin agregar ninguna llamada de escritura nueva.
+    // FASE 5.9A -- se agrega el mismo refresco para matrizCatalogoRows (sub-tab
+    // Catalogo), que mostraba precioFinal desactualizado hasta reseleccionar
+    // la institucion (hallazgo de Fase 5.9). Mismo patron: RPC de solo
+    // lectura ya existente, sin recalcular nada en el cliente -- la fuente
+    // de verdad sigue siendo Supabase.
     if (matrizInstitucionSel && matrizEjecutarCambioResultado && matrizInstitucionSel === matrizEjecutarCambioResultado.institucion_codigo) {
       const { data: descData } = await sb.rpc('matriz_descuentos_institucion', { p_institucion_codigo: matrizInstitucionSel });
       if (descData) matrizDescuentosRows = descData;
+
+      const { data: catData } = await sb.rpc('matriz_catalogo_institucion', { p_institucion_codigo: matrizInstitucionSel });
+      if (catData) matrizCatalogoRows = catData;
     }
   } catch (e) {
     matrizEjecutarCambioError = 'Error de red al ejecutar el cambio.';
