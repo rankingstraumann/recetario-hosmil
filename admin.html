@@ -222,6 +222,15 @@ let matrizSolicitudAccionMotivoFoco = false;
 let matrizSolicitudAccionGuardando = false;
 let matrizSolicitudAccionError = '';
 
+// Fase 5.8C -- Ejecucion real de un cambio aprobado (descuento_familia).
+// Unica escritura: llamar a la RPC ejecutar_solicitud_cambio_descuento_familia
+// (Fase 5.8B, ya validada). Ningun insert/update/delete directo desde
+// admin.html a ninguna tabla comercial.
+let matrizEjecutarCambioAbierto = null; // fila completa de la solicitud aprobada
+let matrizEjecutarCambioResultado = null; // resumen devuelto por la RPC tras ejecutar
+let matrizEjecutarCambioGuardando = false;
+let matrizEjecutarCambioError = '';
+
 function institucionInfo(inst) {
   const s = (inst || '').toUpperCase();
   if (s.indexOf('TEMUCO') !== -1) return { label: 'U Mayor Temuco', color: '#fdf4ff;color:#a21caf', despacho: 'U. Mayor Temuco — Avenida Alemania 0281, 2° piso, Odontología, Temuco', responsable: 'Bethania', codigo: 'UMAYORT' };
@@ -1680,6 +1689,85 @@ function cerrarAccionSolicitud() {
   renderMatrizInstitucional();
 }
 
+// --- Fase 5.8C: ejecucion real de un cambio aprobado (descuento_familia) ---
+// Unica escritura de todo este bloque: sb.rpc('ejecutar_solicitud_cambio_descuento_familia', ...).
+// Ningun insert/update/delete directo a productos, descuentos_institucionales,
+// precio_compartido_override, reglas_cierre_institucional ni cotizaciones.
+
+function abrirEjecutarCambio(id) {
+  const fila = matrizSolicitudesRows.find(function (s) { return s.id === id; });
+  if (!fila) return;
+  matrizEjecutarCambioAbierto = fila;
+  matrizEjecutarCambioResultado = null;
+  matrizEjecutarCambioError = '';
+  renderMatrizInstitucional();
+}
+
+function cerrarEjecutarCambio() {
+  const huboExito = !!matrizEjecutarCambioResultado;
+  matrizEjecutarCambioAbierto = null;
+  matrizEjecutarCambioResultado = null;
+  matrizEjecutarCambioError = '';
+  renderMatrizInstitucional();
+  return huboExito;
+}
+
+async function confirmarEjecutarCambio() {
+  if (!matrizEjecutarCambioAbierto) return;
+  const s = matrizEjecutarCambioAbierto;
+  const confirmEl = document.getElementById('ejecutar-cambio-confirm-texto');
+  const textoEscrito = confirmEl ? confirmEl.value.trim().toUpperCase() : '';
+
+  if (textoEscrito !== 'EJECUTAR') {
+    matrizEjecutarCambioError = 'Debes escribir EJECUTAR (en mayúsculas) para confirmar.';
+    renderMatrizInstitucional();
+    return;
+  }
+
+  matrizEjecutarCambioGuardando = true;
+  matrizEjecutarCambioError = '';
+  renderMatrizInstitucional();
+
+  try {
+    // FASE 5.8C -- unica escritura de esta funcion: llamar a la RPC ya
+    // creada y validada en Fase 5.8B. No hay ningun .insert/.update/.delete
+    // directo a ninguna tabla comercial en todo este archivo para esta accion.
+    const { data, error } = await sb.rpc('ejecutar_solicitud_cambio_descuento_familia', { p_solicitud_id: s.id });
+    if (error) {
+      matrizEjecutarCambioError = 'No se pudo ejecutar el cambio: ' + error.message;
+      matrizEjecutarCambioGuardando = false;
+      renderMatrizInstitucional();
+      return;
+    }
+    matrizEjecutarCambioResultado = Array.isArray(data) ? data[0] : data;
+
+    // Refrescar la fila completa desde la base -- ejecutado_por/ejecutado_en/
+    // validacion_posterior/observaciones no vienen en el resumen de la RPC,
+    // solo se traen con un SELECT normal, ya permitido por la politica
+    // solicitudes_select_admin existente (sin necesitar ningun permiso nuevo).
+    const { data: filaActualizada, error: errorFila } = await sb
+      .from('solicitudes_cambio_precio')
+      .select('*')
+      .eq('id', s.id)
+      .single();
+    if (!errorFila && filaActualizada) {
+      matrizSolicitudesRows = matrizSolicitudesRows.map(function (row) { return row.id === s.id ? filaActualizada : row; });
+    }
+
+    // Refrescar los descuentos de la Matriz si la institucion afectada es la
+    // que esta seleccionada -- reutiliza la RPC de solo lectura ya existente
+    // desde Fase 4.1, sin agregar ninguna llamada de escritura nueva.
+    if (matrizInstitucionSel && matrizEjecutarCambioResultado && matrizInstitucionSel === matrizEjecutarCambioResultado.institucion_codigo) {
+      const { data: descData } = await sb.rpc('matriz_descuentos_institucion', { p_institucion_codigo: matrizInstitucionSel });
+      if (descData) matrizDescuentosRows = descData;
+    }
+  } catch (e) {
+    matrizEjecutarCambioError = 'Error de red al ejecutar el cambio.';
+  }
+  matrizEjecutarCambioGuardando = false;
+  renderMatrizInstitucional();
+}
+
 async function confirmarAccionSolicitud() {
   if (!matrizSolicitudAccionAbierta) return;
   const id = matrizSolicitudAccionAbierta.id;
@@ -2244,6 +2332,12 @@ function renderMatrizInstitucional() {
               acciones += ' <button class="btn-logout" style="color:#166534;" onclick="abrirAccionSolicitud(\'' + esc(s.id) + '\', \'aprobar\')">Aprobar</button>' +
                 ' <button class="btn-logout" style="color:#991b1b;" onclick="abrirAccionSolicitud(\'' + esc(s.id) + '\', \'anular\')">Anular</button>' +
                 ' <button class="btn-logout" style="color:#991b1b;" onclick="abrirAccionSolicitud(\'' + esc(s.id) + '\', \'rechazar\')">Rechazar</button>';
+            } else if (s.estado === 'aprobada' && s.tipo_cambio === 'descuento_familia') {
+              // FASE 5.8C -- unico camino de la UI hacia una ejecucion real.
+              // Restringido a exactamente los 2 requisitos: estado aprobada Y
+              // tipo_cambio descuento_familia. Ningun otro estado ni tipo
+              // muestra este boton.
+              acciones += ' <button class="btn-logout" style="background:#991b1b;color:#fff;" onclick="abrirEjecutarCambio(\'' + esc(s.id) + '\')">⚠️ Ejecutar cambio</button>';
             }
           }
           return acciones;
@@ -2325,7 +2419,7 @@ function renderMatrizInstitucional() {
         '<div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:6px;">' +
           '<h3 style="margin:0;">Detalle de solicitud</h3>' + badgeEstadoSolicitud(s.estado) +
         '</div>' +
-        '<p style="margin:0 0 10px;font-size:12px;color:var(--muted);">🔒 Vista de solo lectura -- sin acciones de aprobación, rechazo o ejecución en esta fase.</p>' +
+        '<p style="margin:0 0 10px;font-size:12px;color:var(--muted);">🔒 Vista de solo lectura -- este panel no tiene ningún botón de aprobación, rechazo ni ejecución (esas acciones viven en la bandeja).</p>' +
         '<div style="font-size:13px;line-height:1.7;">' +
           '<b>Institución:</b> ' + esc(s.institucion_codigo) + '<br>' +
           '<b>Tipo de cambio:</b> ' + esc(s.tipo_cambio) + '<br>' +
@@ -2337,16 +2431,77 @@ function renderMatrizInstitucional() {
           '<b>Solicitado en:</b> ' + (s.solicitado_en ? fechaCorta(s.solicitado_en) : '-') + '<br>' +
           (s.aprobado_por ? '<b>Aprobado por:</b> ' + esc(s.aprobado_por === matrizMiUsuarioId ? 'Tú' : s.aprobado_por) + '<br>' : '') +
           (s.aprobado_en ? '<b>Aprobado en:</b> ' + fechaCorta(s.aprobado_en) + '<br>' : '') +
+          (s.ejecutado_por ? '<b>Ejecutado por:</b> ' + esc(s.ejecutado_por === matrizMiUsuarioId ? 'Tú' : s.ejecutado_por) + '<br>' : '') +
+          (s.ejecutado_en ? '<b>Ejecutado en:</b> ' + fechaCorta(s.ejecutado_en) + '<br>' : '') +
           (s.observaciones ? '<b>Observaciones:</b> ' + esc(s.observaciones) + '<br>' : '') +
         '</div>' +
         bloqueJson('valor_actual', s.valor_actual) +
         bloqueJson('valor_propuesto', s.valor_propuesto) +
         bloqueJson('impacto_estimado', s.impacto_estimado) +
         bloqueJson('validacion_previa', s.validacion_previa) +
+        bloqueJson('validacion_posterior', s.validacion_posterior) +
         construirBloquePlanReversa(s.rollback_sql) +
         (s.rollback_sql ? bloqueJson('rollback_sql (JSON técnico crudo, referencia -- no ejecutable desde aquí)', (function () { try { return JSON.parse(s.rollback_sql); } catch (e) { return s.rollback_sql; } })()) : '') +
         '<div style="display:flex;justify-content:flex-end;margin-top:16px;">' +
           '<button class="btn-logout" onclick="cerrarDetalleSolicitud()">Cerrar</button>' +
+        '</div>' +
+      '</div>' +
+    '</div>';
+  }
+
+  function construirModalEjecutarCambio() {
+    if (!matrizEjecutarCambioAbierto) return '';
+    const s = matrizEjecutarCambioAbierto;
+
+    // Resultado ya disponible -- mostrar resumen de exito en vez del formulario
+    if (matrizEjecutarCambioResultado) {
+      const r = matrizEjecutarCambioResultado;
+      return '<div style="position:fixed;inset:0;background:rgba(0,0,0,0.5);display:flex;align-items:center;justify-content:center;z-index:1002;">' +
+        '<div style="background:#fff;border-radius:12px;padding:24px;max-width:460px;width:90%;box-shadow:0 10px 40px rgba(0,0,0,0.25);">' +
+          '<h3 style="margin:0 0 10px;color:#166534;">✅ Cambio ejecutado</h3>' +
+          '<div style="font-size:13px;line-height:1.8;background:var(--bg);border-radius:8px;padding:10px 14px;">' +
+            '<b>Operación:</b> ' + esc(r.operacion) + '<br>' +
+            '<b>Descuento anterior:</b> ' + (r.descuento_anterior != null ? Math.round(r.descuento_anterior * 100) + '%' : '-') + '<br>' +
+            '<b>Descuento nuevo:</b> ' + (r.descuento_nuevo != null ? Math.round(r.descuento_nuevo * 100) + '%' : '-') + '<br>' +
+            '<b>Estado resultante:</b> ' + badgeEstadoSolicitud(r.estado_resultante) +
+          '</div>' +
+          '<div style="display:flex;justify-content:flex-end;margin-top:16px;">' +
+            '<button class="btn-logout" onclick="cerrarEjecutarCambio()" style="background:#1a1a1a;color:#fff;">Cerrar</button>' +
+          '</div>' +
+        '</div>' +
+      '</div>';
+    }
+
+    let planReversaHtml = '';
+    if (s.rollback_sql) {
+      try {
+        const plan = JSON.parse(s.rollback_sql);
+        planReversaHtml = '<div style="margin-top:10px;padding:8px 12px;background:#eff6ff;border:1px solid #bfdbfe;border-radius:7px;font-size:12px;color:#1e3a5f;">🔄 Plan de reversa disponible -- restaurar a ' + esc(String(plan.valor_anterior)) + '%.</div>';
+      } catch (e) {
+        planReversaHtml = '<div style="margin-top:10px;padding:8px 12px;background:#f4f4f5;border-radius:7px;font-size:12px;color:var(--muted);">Plan de reversa no legible.</div>';
+      }
+    } else {
+      planReversaHtml = '<div style="margin-top:10px;padding:8px 12px;background:#f4f4f5;border-radius:7px;font-size:12px;color:var(--muted);">Sin plan de reversa generado para esta solicitud.</div>';
+    }
+
+    return '<div style="position:fixed;inset:0;background:rgba(0,0,0,0.5);display:flex;align-items:center;justify-content:center;z-index:1002;" onclick="if(event.target===this){cerrarEjecutarCambio();}">' +
+      '<div style="background:#fff;border-radius:12px;padding:24px;max-width:480px;width:92%;box-shadow:0 10px 40px rgba(0,0,0,0.25);">' +
+        '<h3 style="margin:0 0 6px;color:#991b1b;">⚠️ Ejecutar cambio aprobado</h3>' +
+        '<p style="margin:0 0 12px;font-size:13px;color:#991b1b;font-weight:600;">Esta acción SÍ modificará el descuento futuro de esta institución/familia. No altera cotizaciones históricas.</p>' +
+        '<div style="font-size:13px;line-height:1.8;background:var(--bg);border-radius:8px;padding:10px 14px;">' +
+          '<b>Institución:</b> ' + esc(s.institucion_codigo) + '<br>' +
+          '<b>Familia:</b> ' + esc(s.familia_nombre || '-') + '<br>' +
+          '<b>Valor actual:</b> ' + resumenValorSolicitud(s.valor_actual) + '<br>' +
+          '<b>Valor propuesto:</b> ' + resumenValorSolicitud(s.valor_propuesto) + '<br>' +
+          '<b>Productos afectados:</b> ' + (s.productos_afectados != null ? s.productos_afectados : '-') +
+        '</div>' +
+        planReversaHtml +
+        '<label style="font-size:12px;font-weight:600;display:block;margin-top:14px;margin-bottom:4px;">Escribe <code>EJECUTAR</code> para confirmar</label>' +
+        '<input id="ejecutar-cambio-confirm-texto" type="text" placeholder="EJECUTAR" style="width:100%;padding:8px 10px;border-radius:7px;border:1px solid var(--border);font-size:13px;box-sizing:border-box;">' +
+        (matrizEjecutarCambioError ? '<div style="background:#fef2f2;color:#991b1b;border:1px solid #fecaca;border-radius:8px;padding:8px 12px;font-size:12px;margin-top:8px;">⚠️ ' + esc(matrizEjecutarCambioError) + '</div>' : '') +
+        '<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:16px;">' +
+          '<button class="btn-logout" onclick="cerrarEjecutarCambio()">Cancelar</button>' +
+          '<button class="btn-logout" onclick="confirmarEjecutarCambio()"' + (matrizEjecutarCambioGuardando ? ' disabled' : '') + ' style="background:#991b1b;color:#fff;">' + (matrizEjecutarCambioGuardando ? 'Ejecutando...' : 'Ejecutar cambio') + '</button>' +
         '</div>' +
       '</div>' +
     '</div>';
@@ -2415,7 +2570,7 @@ function renderMatrizInstitucional() {
   } else if (matrizSubTab === 'solicitudes') {
     seccionesHtml = (matrizCargando && !matrizSolicitudesCargadas)
       ? '<div style="color:var(--muted);padding:16px 10px;font-size:13px;">Cargando solicitudes...</div>'
-      : construirBandejaSolicitudes() + construirModalDetalleSolicitud() + construirModalAccionSolicitud();
+      : construirBandejaSolicitudes() + construirModalDetalleSolicitud() + construirModalAccionSolicitud() + construirModalEjecutarCambio();
   }
 
   v.innerHTML =
