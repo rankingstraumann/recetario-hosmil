@@ -229,6 +229,13 @@ function institucionInfo(inst) {
   if (s.indexOf('UDP') !== -1) return { label: 'UDP Stgo', color: '#f5f3ff;color:#6d28d9', despacho: 'UDP Santiago — Av. Ejército Libertador 219', responsable: 'Carla', codigo: 'UDP' };
   if (s.indexOf('MAYOR') !== -1) return { label: 'U Mayor Stgo', color: '#fdf4ff;color:#a21caf', despacho: 'U. Mayor Santiago — Av. Libertador Bernardo O\'Higgins 2013', responsable: 'Nicole', codigo: 'UMAYOR' };
   if (s.indexOf('HOSMIL') !== -1) return { label: 'HOSMIL', color: '#fef2f2;color:#991b1b', despacho: 'Hospital Militar (HOSMIL)', responsable: 'Nicole', codigo: 'HOSMIL' };
+  // HOTFIX -- ARMADA. Cubre 'ARMADA', 'CENTRAL ODONT...' (con o sin tilde en
+  // la O de ODONTOLÓGICA, ya que .toUpperCase() preserva tildes) y
+  // 'CENTRALODONTOLOGICA' sin espacio. Dato real confirmado en produccion:
+  // institucion = 'Central Odontológica de la Armada'.
+  if (s.indexOf('ARMADA') !== -1 || s.indexOf('CENTRAL ODONT') !== -1 || s.indexOf('CENTRALODONTOLOGICA') !== -1) {
+    return { label: 'ARMADA', color: '#f0fdf4;color:#166534', despacho: 'Central Odontológica Armada', responsable: 'Catalina', codigo: 'ARMADA' };
+  }
   return { label: inst || '-', color: '#f4f4f5;color:#3f3f46', despacho: inst || '-', responsable: '-', codigo: '' };
 }
 
