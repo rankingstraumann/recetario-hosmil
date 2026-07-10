@@ -497,7 +497,50 @@ function construirLineasCotizacion() {
   return lineas;
 }
 
-function addToCart(codigo) { state.errorMsg=''; state.cart[codigo] = (state.cart[codigo]||0) + 1; renderCart(); renderFloating(); }
+// HOTFIX -- alerta de incompatibilidad de plataforma cierre/tapa. Caso real
+// diagnosticado: implante grupo BLT RC agrega automaticamente tapa RC
+// (024.4100S, 99% dto), usuario agrega manualmente casquillo NC (024.2100S,
+// grupo BLT NC) -- son plataformas fisicamente incompatibles (Narrow vs
+// Regular Connection), no algo que deba "reemplazarse", sino algo que el
+// usuario deberia confirmar antes de continuar. Si el codigo agregado
+// pertenece al MISMO grupo que un cierre automatico activo, no pasa nada
+// aqui -- la logica ya existente en construirLineasCotizacion() ya consume
+// ese credito correctamente (verificado, sin bug). Esta funcion nueva NO
+// cambia ningun calculo de precio ni ninguna regla comercial -- solo
+// pregunta antes de agregar en el caso de mezcla de grupos.
+function detectarGrupoConCierreAutomaticoActivo(grupoExcluir) {
+  const rawItems = cartItemsList();
+  for (let i = 0; i < REGLAS_CIERRE.length; i++) {
+    const grupo = REGLAS_CIERRE[i];
+    if (grupo === grupoExcluir) continue;
+    let implantUnits = 0;
+    if (grupo.implantCodes) {
+      rawItems.forEach(function (it) { if (grupo.implantCodes.indexOf(it.codigo) !== -1) implantUnits += it.cantidad; });
+    } else {
+      rawItems.forEach(function (it) { if (grupo.implantFamilias.indexOf(it.familia) !== -1) implantUnits += it.cantidad; });
+    }
+    if (implantUnits === 0) continue;
+    let creditoRestante = implantUnits;
+    rawItems.forEach(function (it) {
+      if (grupo.cierreCodes.indexOf(it.codigo) === -1) return;
+      creditoRestante -= Math.min(it.cantidad, creditoRestante);
+    });
+    if (creditoRestante > 0) return grupo;
+  }
+  return null;
+}
+function addToCart(codigo) {
+  state.errorMsg='';
+  const grupoDelCodigo = REGLAS_CIERRE.find(function (g) { return g.cierreCodes.indexOf(codigo) !== -1; });
+  if (grupoDelCodigo) {
+    const grupoConAutoActivo = detectarGrupoConCierreAutomaticoActivo(grupoDelCodigo);
+    if (grupoConAutoActivo) {
+      const continuar = confirm('Ya existe un cierre automático asociado al implante. El producto que estás agregando pertenece a otra plataforma. Revisa si corresponde reemplazarlo antes de continuar.\n\n¿Deseas agregarlo de todas formas?');
+      if (!continuar) return;
+    }
+  }
+  state.cart[codigo] = (state.cart[codigo]||0) + 1; renderCart(); renderFloating();
+}
 function setQty(codigo, qty) { if (qty<=0) delete state.cart[codigo]; else state.cart[codigo]=qty; renderCart(); renderFloating(); }
 function removeFromCart(codigo) { delete state.cart[codigo]; renderCart(); renderFloating(); }
 function vaciarCarrito() { state.cart={}; renderCart(); renderFloating(); }
