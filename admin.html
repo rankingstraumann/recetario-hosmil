@@ -179,6 +179,26 @@ let matrizComparadorFiltro = { texto: '', soloDiferencias: false };
 let matrizAuditoriaRows = [];
 let matrizAuditoriaCargada = false;
 
+// ============================================================
+// FASE 6.0A -- Simulador de visibilidad institucional de productos.
+// Modo EXCLUSIVAMENTE de simulacion: ningun camino de este bloque
+// ejecuta INSERT/UPDATE/DELETE ni invoca ninguna RPC de escritura.
+// No existe ningun boton "Ejecutar" ni "Aprobar" en toda esta seccion.
+// Reutiliza matrizCatalogoRows ya cargado (misma fuente que el resto
+// del sub-tab Catalogo) para determinar disponibilidad actual, mas 2
+// SELECT de solo lectura adicionales: productos/producto_familias (para
+// encontrar tambien productos NO visibles, que no aparecen en
+// matrizCatalogoRows porque la RPC ya los excluye) y cotizaciones (para
+// confirmar el impacto real en cotizaciones historicas, en vez de
+// asumir "0" sin verificar).
+let matrizSimVisBusqueda = '';
+let matrizSimVisBuscando = false;
+let matrizSimVisError = '';
+let matrizSimVisResultados = []; // candidatos de la busqueda (hasta 20)
+let matrizSimVisAbierto = null; // producto elegido para simular {codigo, descripcion, marca, familia, precioLista}
+let matrizSimVisImpacto = null; // impacto ya calculado para matrizSimVisAbierto
+let matrizSimVisCalculando = false;
+
 // Fase 5.2B -- Simulador de impacto. Solo lectura: llama a
 // simular_cambio_descuento_familia y simular_cambio_descuento_familia_resumen
 // (Fase 5.2A, ya validadas), sin insertar en solicitudes_cambio_precio ni
@@ -1776,6 +1796,152 @@ async function confirmarEjecutarCambio() {
   renderMatrizInstitucional();
 }
 
+// ============================================================
+// FASE 6.0A -- Simulador de visibilidad institucional de productos.
+// TODO este bloque es de solo lectura. Ninguna funcion aqui abajo
+// ejecuta insert/update/delete ni llama una RPC de escritura -- se
+// puede confirmar leyendo cada funcion completa, ninguna contiene
+// sb.from(...).insert/update/delete ni sb.rpc con un nombre de
+// escritura conocido (ejecutar_*, aprobar_*, crear_*).
+// ============================================================
+
+async function buscarProductoVisibilidad() {
+  const termino = (matrizSimVisBusqueda || '').trim();
+  if (!termino || !matrizInstitucionSel) return;
+  matrizSimVisBuscando = true;
+  matrizSimVisError = '';
+  matrizSimVisResultados = [];
+  renderMatrizInstitucional();
+
+  try {
+    // Paso 1: buscar en productos directamente (NO en matrizCatalogoRows),
+    // porque matrizCatalogoRows solo contiene lo que la RPC ya considera
+    // visible -- un producto excluido por marca no aparece ahi, y este
+    // buscador necesita encontrar tambien esos para poder simular su
+    // activacion.
+    const { data: prodData, error: errProd } = await sb
+      .from('productos')
+      .select('codigo, descripcion, marca, precio_lista, familia_id')
+      .or('codigo.ilike.%' + termino + '%,descripcion.ilike.%' + termino + '%')
+      .limit(20);
+    if (errProd) throw errProd;
+
+    // Paso 2: consulta SEPARADA para los nombres de familia -- mismo
+    // patron ya usado en el resto del proyecto (evitar embeds de
+    // PostgREST, que causaron un PGRST200 real en otra funcion).
+    const familiaIds = Array.from(new Set((prodData || []).map(function (p) { return p.familia_id; }).filter(Boolean)));
+    let familiasPorId = {};
+    if (familiaIds.length > 0) {
+      const { data: famData, error: errFam } = await sb
+        .from('producto_familias')
+        .select('id, nombre')
+        .in('id', familiaIds);
+      if (errFam) throw errFam;
+      (famData || []).forEach(function (f) { familiasPorId[f.id] = f.nombre; });
+    }
+
+    matrizSimVisResultados = (prodData || []).map(function (p) {
+      return {
+        codigo: p.codigo,
+        descripcion: p.descripcion,
+        marca: p.marca,
+        precioLista: p.precio_lista,
+        familia: familiasPorId[p.familia_id] || null,
+      };
+    });
+
+    // Tambien permitir buscar por nombre de familia -- si el termino
+    // coincide con una familia visible en la institucion, se agregan sus
+    // productos desde matrizCatalogoRows (ya cargado, sin nueva consulta).
+    const familiaCoincidente = matrizCatalogoRows.filter(function (r) {
+      return (r.familia || '').toLowerCase().indexOf(termino.toLowerCase()) !== -1;
+    });
+    if (familiaCoincidente.length > 0) {
+      const codigosYaListados = new Set(matrizSimVisResultados.map(function (r) { return r.codigo; }));
+      familiaCoincidente.slice(0, 20).forEach(function (r) {
+        if (!codigosYaListados.has(r.codigo)) {
+          matrizSimVisResultados.push({ codigo: r.codigo, descripcion: r.descripcion, marca: r.marca, precioLista: r.precioLista, familia: r.familia });
+          codigosYaListados.add(r.codigo);
+        }
+      });
+    }
+  } catch (e) {
+    matrizSimVisError = 'Error al buscar: ' + (e.message || e);
+  }
+  matrizSimVisBuscando = false;
+  renderMatrizInstitucional();
+}
+
+// Determina disponibilidad actual de un producto para la institucion
+// seleccionada, cruzando contra matrizCatalogoRows (fuente unica de
+// verdad de "que ve la RPC hoy"). Funcion PURA, sin ningun acceso a red.
+function determinarDisponibilidadVisibilidad(producto) {
+  const filaVisible = matrizCatalogoRows.find(function (r) { return r.codigo === producto.codigo; });
+  if (filaVisible) {
+    return {
+      disponible: true,
+      motivo: null,
+      precioFinalRef: filaVisible.precioFinal,
+      tieneOverride: !!filaVisible.tiene_override,
+      overrideInfo: filaVisible.tiene_override ? { tipo: filaVisible.tipo_override, motivo: filaVisible.motivo_override } : null,
+    };
+  }
+  return {
+    disponible: false,
+    motivo: 'No aparece en el catálogo maestro de ' + matrizInstitucionSel + ' -- probablemente excluido por marca (marca_excluida). No se pudo confirmar la causa exacta de forma automática; verificar institucion_catalogo manualmente si es necesario.',
+    precioFinalRef: null,
+    tieneOverride: false,
+    overrideInfo: null,
+  };
+}
+
+function abrirSimulacionVisibilidad(codigo) {
+  const producto = matrizSimVisResultados.find(function (p) { return p.codigo === codigo; });
+  if (!producto) return;
+  matrizSimVisAbierto = producto;
+  matrizSimVisImpacto = null;
+  matrizSimVisCalculando = true;
+  renderMatrizInstitucional();
+  calcularImpactoVisibilidad(producto);
+}
+
+function cerrarSimulacionVisibilidad() {
+  matrizSimVisAbierto = null;
+  matrizSimVisImpacto = null;
+  matrizSimVisCalculando = false;
+  renderMatrizInstitucional();
+}
+
+async function calcularImpactoVisibilidad(producto) {
+  try {
+    // Confirmar el impacto REAL en cotizaciones historicas, en vez de
+    // asumir "0" -- consulta de solo lectura, filtro por contenido JSONB
+    // (items @> [{"codigo": "..."}]), ya verificada contra datos reales
+    // antes de implementar esta fase.
+    const { count, error } = await sb
+      .from('cotizaciones')
+      .select('id', { count: 'exact', head: true })
+      .is('deleted_at', null)
+      .contains('items', [{ codigo: producto.codigo }]);
+    if (error) throw error;
+
+    const disponibilidad = determinarDisponibilidadVisibilidad(producto);
+    const familiaLower = (producto.familia || '').toLowerCase();
+    const esPosibleCierre = familiaLower.indexOf('tapa') !== -1 || familiaLower.indexOf('cicatrizador') !== -1;
+
+    matrizSimVisImpacto = {
+      cotizacionesAfectadas: count || 0,
+      esPosibleCierre: esPosibleCierre,
+      esHosmil: matrizInstitucionSel === 'HOSMIL',
+      disponibilidad: disponibilidad,
+    };
+  } catch (e) {
+    matrizSimVisImpacto = { error: 'No se pudo calcular el impacto: ' + (e.message || e) };
+  }
+  matrizSimVisCalculando = false;
+  renderMatrizInstitucional();
+}
+
 async function confirmarAccionSolicitud() {
   if (!matrizSolicitudAccionAbierta) return;
   const id = matrizSolicitudAccionAbierta.id;
@@ -1985,6 +2151,40 @@ function renderMatrizInstitucional() {
     }).join('') +
     '</div>';
 
+  function construirBuscadorVisibilidad() {
+    let filasResultado = '';
+    matrizSimVisResultados.forEach(function (p) {
+      const disp = determinarDisponibilidadVisibilidad(p);
+      const badgeEstado = disp.disponible
+        ? '<span style="font-size:10px;font-weight:700;background:#d1fae5;color:#065f46;border-radius:5px;padding:2px 8px;">✓ Disponible</span>'
+        : '<span style="font-size:10px;font-weight:700;background:#fee2e2;color:#991b1b;border-radius:5px;padding:2px 8px;">✗ No disponible</span>';
+      const etiquetaAccion = disp.disponible ? 'Simular desactivación' : 'Simular activación';
+      filasResultado += '<tr>' +
+        '<td class="mono">' + esc(p.codigo) + '</td>' +
+        '<td>' + esc(p.descripcion) + '</td>' +
+        '<td style="font-size:11px;">' + esc(p.familia || '-') + '</td>' +
+        '<td class="num">' + fmt(p.precioLista) + '</td>' +
+        '<td>' + badgeEstado + '</td>' +
+        '<td><button class="btn-logout" onclick="abrirSimulacionVisibilidad(\'' + esc(p.codigo) + '\')" style="font-size:11px;">' + etiquetaAccion + '</button></td>' +
+      '</tr>';
+    });
+
+    return '<div class="dash-section" style="margin-top:8px;margin-bottom:14px;border:1px dashed var(--border);">' +
+      '<h3 style="margin:0 0 4px;">🔍 Simulador de visibilidad institucional <span style="font-size:11px;font-weight:400;color:var(--muted);">(solo simulación — no modifica nada)</span></h3>' +
+      '<p style="margin:0 0 10px;font-size:12px;color:var(--muted);">Busca cualquier producto (incluso los no visibles hoy) por código SAP, descripción o familia, para revisar su disponibilidad actual en ' + esc(matrizInstitucionSel) + '.</p>' +
+      '<div style="display:flex;gap:8px;flex-wrap:wrap;">' +
+        '<input id="matriz-simvis-busqueda" type="text" placeholder="Código SAP, descripción o familia..." value="' + esc(matrizSimVisBusqueda) + '" style="padding:7px 10px;border-radius:7px;border:1px solid var(--border);font-size:13px;flex:1;min-width:220px;">' +
+        '<button class="btn-logout" onclick="buscarProductoVisibilidad()"' + (matrizSimVisBuscando ? ' disabled' : '') + '>' + (matrizSimVisBuscando ? 'Buscando...' : 'Buscar') + '</button>' +
+      '</div>' +
+      (matrizSimVisError ? '<div style="margin-top:8px;color:#991b1b;font-size:12px;">' + esc(matrizSimVisError) + '</div>' : '') +
+      (matrizSimVisResultados.length > 0
+        ? '<div style="overflow-x:auto;margin-top:10px;"><table class="dash-table"><thead><tr>' +
+            '<th>Código</th><th>Descripción</th><th>Familia</th><th class="num">Precio lista</th><th>Estado</th><th>Acción</th>' +
+          '</tr></thead><tbody>' + filasResultado + '</tbody></table></div>'
+        : '') +
+    '</div>';
+  }
+
   function construirTablaCatalogo() {
     const filasCat = matrizCatalogoFiltrado();
     const marcasDisponibles = Array.from(new Set(matrizCatalogoRows.map(function (r) { return r.marca; }))).filter(Boolean).sort();
@@ -2006,7 +2206,7 @@ function renderMatrizInstitucional() {
       '</tr>';
     });
 
-    return '<div class="dash-section" style="margin-top:8px;">' +
+    return construirBuscadorVisibilidad() + '<div class="dash-section" style="margin-top:8px;">' +
       '<div style="display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;">' +
         '<h3 style="margin:0;">Catálogo — ' + esc(matrizInstitucionSel) + ' <span class="dash-badge">' + filasCat.length + ' de ' + matrizCatalogoRows.length + '</span></h3>' +
         '<div style="display:flex;gap:8px;flex-wrap:wrap;">' +
@@ -2457,6 +2657,73 @@ function renderMatrizInstitucional() {
     '</div>';
   }
 
+  // FASE 6.0A -- modal de simulacion de visibilidad. UNICO boton de accion
+  // es "Cerrar" -- no existe "Ejecutar", "Aprobar" ni ningun otro control
+  // que produzca una escritura. Todo el contenido es informativo.
+  function construirModalSimulacionVisibilidad() {
+    if (!matrizSimVisAbierto) return '';
+    const p = matrizSimVisAbierto;
+
+    if (matrizSimVisCalculando || !matrizSimVisImpacto) {
+      return '<div style="position:fixed;inset:0;background:rgba(0,0,0,0.5);display:flex;align-items:center;justify-content:center;z-index:1002;">' +
+        '<div style="background:#fff;border-radius:12px;padding:24px;max-width:460px;width:90%;box-shadow:0 10px 40px rgba(0,0,0,0.25);">' +
+          '<p style="margin:0;font-size:13px;color:var(--muted);">Calculando impacto real (cotizaciones históricas)...</p>' +
+        '</div>' +
+      '</div>';
+    }
+
+    if (matrizSimVisImpacto.error) {
+      return '<div style="position:fixed;inset:0;background:rgba(0,0,0,0.5);display:flex;align-items:center;justify-content:center;z-index:1002;">' +
+        '<div style="background:#fff;border-radius:12px;padding:24px;max-width:460px;width:90%;box-shadow:0 10px 40px rgba(0,0,0,0.25);">' +
+          '<h3 style="margin:0 0 10px;color:#991b1b;">Error</h3>' +
+          '<p style="margin:0;font-size:13px;">' + esc(matrizSimVisImpacto.error) + '</p>' +
+          '<div style="display:flex;justify-content:flex-end;margin-top:16px;">' +
+            '<button class="btn-logout" onclick="cerrarSimulacionVisibilidad()" style="background:#1a1a1a;color:#fff;">Cerrar</button>' +
+          '</div>' +
+        '</div>' +
+      '</div>';
+    }
+
+    const disp = matrizSimVisImpacto.disponibilidad;
+    const accion = disp.disponible ? 'Desactivar' : 'Activar';
+    const estadoPropuesto = disp.disponible ? 'No disponible' : 'Disponible';
+
+    let advertencias = '';
+    if (matrizSimVisImpacto.esPosibleCierre) {
+      advertencias += '<div style="margin-top:8px;padding:8px 12px;background:#fef3c7;border:1px solid #fde68a;border-radius:7px;font-size:12px;color:#92400e;">⚠️ La familia de este producto sugiere que podría participar en la regla de tapa/cicatrizador automático al 99%. Esa regla se calcula desde <code>precioLista</code> directamente, no depende de <code>precioFinal</code> ni de este simulador, pero cambiar la disponibilidad de este código podría afectar el flujo de agregado automático. Verificar manualmente en el recetario antes de un cambio real.</div>';
+    }
+    if (matrizSimVisImpacto.esHosmil) {
+      advertencias += '<div style="margin-top:8px;padding:8px 12px;background:#f4f4f5;border-radius:7px;font-size:12px;color:var(--muted);">ℹ️ HOSMIL tiene una lista adicional de productos ocultos (<code>PRODUCTOS_OCULTOS</code>) hardcodeada directamente en <code>recetario.html</code> -- no está en Supabase, por lo que este simulador no puede confirmar si este código está en esa lista. Verificar manualmente el archivo si es relevante.</div>';
+    }
+    if (!disp.disponible) {
+      advertencias += '<div style="margin-top:8px;padding:8px 12px;background:#f4f4f5;border-radius:7px;font-size:12px;color:var(--muted);">' + esc(disp.motivo) + '</div>';
+    }
+    if (disp.tieneOverride) {
+      advertencias += '<div style="margin-top:8px;padding:8px 12px;background:#d1fae5;border-radius:7px;font-size:12px;color:#065f46;">🔒 Este producto tiene un override de precio activo (' + esc(disp.overrideInfo.tipo || '-') + '). Activar/desactivar visibilidad no modifica el override ni el precio.</div>';
+    }
+
+    return '<div style="position:fixed;inset:0;background:rgba(0,0,0,0.5);display:flex;align-items:center;justify-content:center;z-index:1002;" onclick="if(event.target===this){cerrarSimulacionVisibilidad();}">' +
+      '<div style="background:#fff;border-radius:12px;padding:24px;max-width:480px;width:92%;box-shadow:0 10px 40px rgba(0,0,0,0.25);">' +
+        '<h3 style="margin:0 0 6px;">🔍 Simulación -- ' + esc(accion) + '</h3>' +
+        '<p style="margin:0 0 12px;font-size:12px;color:var(--muted);">Esta es solo una simulación visual. No se modificará ningún dato en Supabase.</p>' +
+        '<div style="font-size:13px;line-height:1.8;background:var(--bg);border-radius:8px;padding:10px 14px;">' +
+          '<b>Institución:</b> ' + esc(matrizInstitucionSel) + '<br>' +
+          '<b>Producto:</b> ' + esc(p.codigo) + ' -- ' + esc(p.descripcion) + '<br>' +
+          '<b>Familia:</b> ' + esc(p.familia || '-') + '<br>' +
+          '<b>Estado actual:</b> ' + (disp.disponible ? '<span style="color:#166534;">Disponible</span>' : '<span style="color:#991b1b;">No disponible</span>') + '<br>' +
+          '<b>Estado propuesto:</b> ' + estadoPropuesto + '<br>' +
+          '<b>Cambio de visibilidad:</b> ' + (disp.disponible ? 'Dejaría de aparecer en nuevas cotizaciones' : 'Aparecería en el catálogo institucional en la próxima carga') + '<br>' +
+          '<b>Cotizaciones históricas afectadas:</b> ' + matrizSimVisImpacto.cotizacionesAfectadas + ' (verificado, no modificarían su contenido)<br>' +
+          '<b>Precio y descuentos:</b> Sin cambios' +
+        '</div>' +
+        advertencias +
+        '<div style="display:flex;justify-content:flex-end;margin-top:16px;">' +
+          '<button class="btn-logout" onclick="cerrarSimulacionVisibilidad()" style="background:#1a1a1a;color:#fff;">Cerrar</button>' +
+        '</div>' +
+      '</div>' +
+    '</div>';
+  }
+
   function construirModalEjecutarCambio() {
     if (!matrizEjecutarCambioAbierto) return '';
     const s = matrizEjecutarCambioAbierto;
@@ -2558,7 +2825,7 @@ function renderMatrizInstitucional() {
   } else if (requiereInstitucion && matrizCargando && matrizSubTab !== 'simulador') {
     seccionesHtml = '<div style="color:var(--muted);padding:16px 10px;font-size:13px;">Cargando datos de ' + esc(matrizInstitucionSel) + '...</div>';
   } else if (matrizSubTab === 'catalogo') {
-    seccionesHtml = construirTablaCatalogo();
+    seccionesHtml = construirTablaCatalogo() + construirModalSimulacionVisibilidad();
   } else if (matrizSubTab === 'descuentos') {
     seccionesHtml = construirTablaDescuentos();
   } else if (matrizSubTab === 'duplicados') {
@@ -2620,6 +2887,15 @@ function renderMatrizInstitucional() {
   if (fo) fo.addEventListener('change', function (e) { matrizFiltro.soloOverride = e.target.checked; renderMatrizInstitucional(); });
   const fd = document.getElementById('matriz-filtro-duplicado');
   if (fd) fd.addEventListener('change', function (e) { matrizFiltro.soloDuplicado = e.target.checked; renderMatrizInstitucional(); });
+
+  // FASE 6.0A -- input del buscador de visibilidad, mismo patron de
+  // preservacion de foco que matriz-filtro-texto. Enter dispara la
+  // busqueda (misma funcion de solo lectura que el boton "Buscar").
+  const svq = document.getElementById('matriz-simvis-busqueda');
+  if (svq) {
+    svq.addEventListener('input', function (e) { matrizSimVisBusqueda = e.target.value; });
+    svq.addEventListener('keydown', function (e) { if (e.key === 'Enter') buscarProductoVisibilidad(); });
+  }
 
   // Fase 4.2B -- filtros del Comparador (mismo patron de "no perder foco" que
   // el filtro de texto de Catalogo, adaptado a esta seccion nueva).
