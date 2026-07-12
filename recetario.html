@@ -303,8 +303,21 @@ async function cargarCatalogoMaestro() {
     if (!Array.isArray(data) || data.length === 0) {
       throw new Error('Catálogo maestro devolvió una lista vacía');
     }
-    if (data.length < 504) {
-      throw new Error('Catálogo maestro devolvió ' + data.length + ' productos, se esperaban 504');
+    // FASE 5.9G -- umbral de 2 niveles en vez del umbral rigido unico
+    // (mismo patron ya aplicado en UMAYORT en Fase 5.9E). CATALOGO_REFERENCIA
+    // es la cantidad historica esperada (511) -- bajar de ahi no es un
+    // error, solo una señal a vigilar (1 advertencia, nunca bloquea).
+    // CATALOGO_UMBRAL_CRITICO (490) es el verdadero piso de seguridad --
+    // por debajo de eso, se asume que algo esta mal con la RPC o los
+    // datos, y se activa el fallback al catalogo embebido (mismo
+    // mecanismo de siempre, via el catch general de esta funcion).
+    const CATALOGO_REFERENCIA = 511;
+    const CATALOGO_UMBRAL_CRITICO = 490;
+    if (data.length < CATALOGO_UMBRAL_CRITICO) {
+      throw new Error('Catálogo maestro devolvió ' + data.length + ' productos; el mínimo de seguridad es ' + CATALOGO_UMBRAL_CRITICO);
+    }
+    if (data.length < CATALOGO_REFERENCIA) {
+      console.warn('[catalogoMaestro] Catálogo HOSMIL bajo la referencia histórica: ' + data.length + ' de ' + CATALOGO_REFERENCIA + ' productos. Se continuará usando el catálogo maestro.');
     }
 
     // FASE 5.9C -- precioFinal RPC-autoritativo, con calcularPreviewLocal
