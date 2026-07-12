@@ -1805,70 +1805,41 @@ async function confirmarEjecutarCambio() {
 // escritura conocido (ejecutar_*, aprobar_*, crear_*).
 // ============================================================
 
-async function buscarProductoVisibilidad() {
-  const termino = (matrizSimVisBusqueda || '').trim();
-  if (!termino || !matrizInstitucionSel) return;
-  matrizSimVisBuscando = true;
+function buscarProductoVisibilidad() {
+  const termino = (matrizSimVisBusqueda || '').trim().toLowerCase();
   matrizSimVisError = '';
   matrizSimVisResultados = [];
-  renderMatrizInstitucional();
-
-  try {
-    // Paso 1: buscar en productos directamente (NO en matrizCatalogoRows),
-    // porque matrizCatalogoRows solo contiene lo que la RPC ya considera
-    // visible -- un producto excluido por marca no aparece ahi, y este
-    // buscador necesita encontrar tambien esos para poder simular su
-    // activacion.
-    const { data: prodData, error: errProd } = await sb
-      .from('productos')
-      .select('codigo, descripcion, marca, precio_lista, familia_id')
-      .or('codigo.ilike.%' + termino + '%,descripcion.ilike.%' + termino + '%')
-      .limit(20);
-    if (errProd) throw errProd;
-
-    // Paso 2: consulta SEPARADA para los nombres de familia -- mismo
-    // patron ya usado en el resto del proyecto (evitar embeds de
-    // PostgREST, que causaron un PGRST200 real en otra funcion).
-    const familiaIds = Array.from(new Set((prodData || []).map(function (p) { return p.familia_id; }).filter(Boolean)));
-    let familiasPorId = {};
-    if (familiaIds.length > 0) {
-      const { data: famData, error: errFam } = await sb
-        .from('producto_familias')
-        .select('id, nombre')
-        .in('id', familiaIds);
-      if (errFam) throw errFam;
-      (famData || []).forEach(function (f) { familiasPorId[f.id] = f.nombre; });
-    }
-
-    matrizSimVisResultados = (prodData || []).map(function (p) {
-      return {
-        codigo: p.codigo,
-        descripcion: p.descripcion,
-        marca: p.marca,
-        precioLista: p.precio_lista,
-        familia: familiasPorId[p.familia_id] || null,
-      };
-    });
-
-    // Tambien permitir buscar por nombre de familia -- si el termino
-    // coincide con una familia visible en la institucion, se agregan sus
-    // productos desde matrizCatalogoRows (ya cargado, sin nueva consulta).
-    const familiaCoincidente = matrizCatalogoRows.filter(function (r) {
-      return (r.familia || '').toLowerCase().indexOf(termino.toLowerCase()) !== -1;
-    });
-    if (familiaCoincidente.length > 0) {
-      const codigosYaListados = new Set(matrizSimVisResultados.map(function (r) { return r.codigo; }));
-      familiaCoincidente.slice(0, 20).forEach(function (r) {
-        if (!codigosYaListados.has(r.codigo)) {
-          matrizSimVisResultados.push({ codigo: r.codigo, descripcion: r.descripcion, marca: r.marca, precioLista: r.precioLista, familia: r.familia });
-          codigosYaListados.add(r.codigo);
-        }
-      });
-    }
-  } catch (e) {
-    matrizSimVisError = 'Error al buscar: ' + (e.message || e);
+  if (!termino || !matrizInstitucionSel) {
+    renderMatrizInstitucional();
+    return;
   }
-  matrizSimVisBuscando = false;
+
+  // FASE 6.0A-HOTFIX -- CAUSA RAIZ del bug original: la version anterior
+  // consultaba productos/producto_familias directamente via sb.from(...),
+  // ejecutandose como el rol 'authenticated' del admin logueado. Ambas
+  // tablas tienen RLS activo con 0 politicas definidas -- confirmado con
+  // SET ROLE authenticated + SELECT real, que devolvio 0 filas SIN
+  // ningun error (RLS filtra filas silenciosamente, no lanza excepcion).
+  // Por eso nunca aparecia resultado ni mensaje de error.
+  //
+  // Correccion: buscar exclusivamente dentro de matrizCatalogoRows, que
+  // ya esta cargado en memoria via matriz_catalogo_institucion (RPC
+  // SECURITY DEFINER, sin problema de RLS -- mismo dato que ya usa la
+  // tabla del sub-tab Catalogo). Sin ninguna consulta de red nueva.
+  //
+  // LIMITACION CONOCIDA que este hotfix acepta explicitamente: esto solo
+  // encuentra productos actualmente VISIBLES para la institucion
+  // seleccionada. Un producto excluido por marca (marca_excluida) no
+  // aparece en matrizCatalogoRows y por lo tanto no aparecera en esta
+  // busqueda -- restaurar esa capacidad requeriria una RPC de solo
+  // lectura nueva en Supabase, fuera de alcance de este hotfix (que
+  // tiene prohibido modificar Supabase o crear RPC).
+  matrizSimVisResultados = matrizCatalogoRows.filter(function (r) {
+    return (r.codigo || '').toLowerCase().indexOf(termino) !== -1 ||
+           (r.descripcion || '').toLowerCase().indexOf(termino) !== -1 ||
+           (r.familia || '').toLowerCase().indexOf(termino) !== -1;
+  }).slice(0, 20);
+
   renderMatrizInstitucional();
 }
 
