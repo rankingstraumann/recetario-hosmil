@@ -307,15 +307,33 @@ async function cargarCatalogoMaestro() {
       throw new Error('Catálogo maestro devolvió ' + data.length + ' productos, se esperaban 504');
     }
 
+    // FASE 5.9C -- precioFinal RPC-autoritativo, con calcularPreviewLocal
+    // como fallback defensivo (mismo patron ya validado en ARMADA, UDP,
+    // UMAYOR y UNAB desde Fase 5.9B). Validacion estricta: solo se acepta
+    // un numero finito y estrictamente positivo -- null/undefined/''/NaN/
+    // negativos/objetos se tratan como invalidos, y 0 tambien se trata
+    // como invalido (ningun producto legitimo de este catalogo tiene
+    // precio final cero). Contador de fallback para 1 solo resumen final
+    // en consola, sin alertas al usuario ni datos personales.
+    let fallbacksLocales = 0;
+
     const nuevos = data.map(function(p) {
+      const precioFinalRpc = Number(p.precioFinal);
+      const precioFinalValido = Number.isFinite(precioFinalRpc) && precioFinalRpc > 0;
+      if (!precioFinalValido) fallbacksLocales++;
+
       return {
         codigo: p.codigo,
         descripcion: p.descripcion,
         familia: p.familia,
         precioLista: p.precioLista,
-        precioFinal: calcularPreviewLocal(p.familia, p.precioLista),
+        precioFinal: precioFinalValido ? precioFinalRpc : calcularPreviewLocal(p.familia, p.precioLista),
       };
     });
+
+    if (fallbacksLocales > 0) {
+      console.warn('[catalogoMaestro] ' + fallbacksLocales + ' producto(s) sin precioFinal válido desde la RPC -- se usó cálculo local de respaldo.');
+    }
 
     PRODUCTS.length = 0;
     PRODUCTS.push.apply(PRODUCTS, nuevos);
