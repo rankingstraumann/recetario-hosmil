@@ -1883,32 +1883,61 @@ function cerrarSimulacionVisibilidad() {
   renderMatrizInstitucional();
 }
 
+// Extrae un mensaje legible de cualquier forma de error que Supabase/
+// PostgREST pueda devolver -- nunca produce "[object Object]". Usado tanto
+// para el log tecnico en consola como, si alguna vez hiciera falta, para
+// mostrar un mensaje al usuario.
+function mensajeErrorSeguro(error) {
+  if (!error) return 'Error desconocido';
+  if (typeof error === 'string') return error;
+  return error.message || error.details || JSON.stringify(error);
+}
+
 async function calcularImpactoVisibilidad(producto) {
+  const disponibilidad = determinarDisponibilidadVisibilidad(producto);
+  const familiaLower = (producto.familia || '').toLowerCase();
+  const esPosibleCierre = familiaLower.indexOf('tapa') !== -1 || familiaLower.indexOf('cicatrizador') !== -1;
+
+  // HOTFIX 2 -- el conteo de cotizaciones historicas es informacion
+  // COMPLEMENTARIA, nunca una condicion necesaria para abrir la
+  // simulacion. Si esta consulta falla, la simulacion continua igual --
+  // el detalle tecnico del error se registra SOLO en consola (con
+  // message/code/details/hint reales, nunca "[object Object]"), y el
+  // modal muestra un texto neutro en su lugar, sin bloquear nada.
+  let cotizacionesAfectadas = null;
+  let impactoHistoricoDisponible = true;
+
   try {
-    // Confirmar el impacto REAL en cotizaciones historicas, en vez de
-    // asumir "0" -- consulta de solo lectura, filtro por contenido JSONB
-    // (items @> [{"codigo": "..."}]), ya verificada contra datos reales
-    // antes de implementar esta fase.
+    // Confirmar el impacto REAL en cotizaciones historicas de la
+    // institucion seleccionada especificamente -- HOTFIX 2 tambien
+    // corrige un defecto real encontrado en el diagnostico: la version
+    // anterior no filtraba por institucion_codigo, contando el codigo
+    // en TODAS las instituciones en vez de solo en la seleccionada.
     const { count, error } = await sb
       .from('cotizaciones')
       .select('id', { count: 'exact', head: true })
+      .eq('institucion_codigo', matrizInstitucionSel)
       .is('deleted_at', null)
       .contains('items', [{ codigo: producto.codigo }]);
     if (error) throw error;
-
-    const disponibilidad = determinarDisponibilidadVisibilidad(producto);
-    const familiaLower = (producto.familia || '').toLowerCase();
-    const esPosibleCierre = familiaLower.indexOf('tapa') !== -1 || familiaLower.indexOf('cicatrizador') !== -1;
-
-    matrizSimVisImpacto = {
-      cotizacionesAfectadas: count || 0,
-      esPosibleCierre: esPosibleCierre,
-      esHosmil: matrizInstitucionSel === 'HOSMIL',
-      disponibilidad: disponibilidad,
-    };
+    cotizacionesAfectadas = count || 0;
   } catch (e) {
-    matrizSimVisImpacto = { error: 'No se pudo calcular el impacto: ' + (e.message || e) };
+    impactoHistoricoDisponible = false;
+    console.error('[simuladorVisibilidad] No se pudo calcular el impacto histórico:', mensajeErrorSeguro(e), {
+      message: e && e.message,
+      code: e && e.code,
+      details: e && e.details,
+      hint: e && e.hint,
+    });
   }
+
+  matrizSimVisImpacto = {
+    cotizacionesAfectadas: cotizacionesAfectadas,
+    impactoHistoricoDisponible: impactoHistoricoDisponible,
+    esPosibleCierre: esPosibleCierre,
+    esHosmil: matrizInstitucionSel === 'HOSMIL',
+    disponibilidad: disponibilidad,
+  };
   matrizSimVisCalculando = false;
   renderMatrizInstitucional();
 }
@@ -2643,17 +2672,11 @@ function renderMatrizInstitucional() {
       '</div>';
     }
 
-    if (matrizSimVisImpacto.error) {
-      return '<div style="position:fixed;inset:0;background:rgba(0,0,0,0.5);display:flex;align-items:center;justify-content:center;z-index:1002;">' +
-        '<div style="background:#fff;border-radius:12px;padding:24px;max-width:460px;width:90%;box-shadow:0 10px 40px rgba(0,0,0,0.25);">' +
-          '<h3 style="margin:0 0 10px;color:#991b1b;">Error</h3>' +
-          '<p style="margin:0;font-size:13px;">' + esc(matrizSimVisImpacto.error) + '</p>' +
-          '<div style="display:flex;justify-content:flex-end;margin-top:16px;">' +
-            '<button class="btn-logout" onclick="cerrarSimulacionVisibilidad()" style="background:#1a1a1a;color:#fff;">Cerrar</button>' +
-          '</div>' +
-        '</div>' +
-      '</div>';
-    }
+    // HOTFIX 2 -- ya NO existe un branch que bloquee el modal por error.
+    // El impacto historico es informacion complementaria: si la consulta
+    // fallo, matrizSimVisImpacto.impactoHistoricoDisponible es false y el
+    // modal muestra un texto neutro en su lugar (mas abajo), sin impedir
+    // que el resto de la simulacion se vea normalmente.
 
     const disp = matrizSimVisImpacto.disponibilidad;
     const accion = disp.disponible ? 'Desactivar' : 'Activar';
@@ -2684,9 +2707,10 @@ function renderMatrizInstitucional() {
           '<b>Estado actual:</b> ' + (disp.disponible ? '<span style="color:#166534;">Disponible</span>' : '<span style="color:#991b1b;">No disponible</span>') + '<br>' +
           '<b>Estado propuesto:</b> ' + estadoPropuesto + '<br>' +
           '<b>Cambio de visibilidad:</b> ' + (disp.disponible ? 'Dejaría de aparecer en nuevas cotizaciones' : 'Aparecería en el catálogo institucional en la próxima carga') + '<br>' +
-          '<b>Cotizaciones históricas afectadas:</b> ' + matrizSimVisImpacto.cotizacionesAfectadas + ' (verificado, no modificarían su contenido)<br>' +
+          '<b>Cotizaciones históricas afectadas:</b> ' + (matrizSimVisImpacto.impactoHistoricoDisponible ? (matrizSimVisImpacto.cotizacionesAfectadas + ' (verificado, no modificarían su contenido)') : 'no disponible para esta sesión') + '<br>' +
           '<b>Precio y descuentos:</b> Sin cambios' +
         '</div>' +
+        (matrizSimVisImpacto.impactoHistoricoDisponible ? '' : '<div style="margin-top:8px;padding:8px 12px;background:#f4f4f5;border-radius:7px;font-size:12px;color:var(--muted);">La activación o desactivación no modifica cotizaciones históricas.</div>') +
         advertencias +
         '<div style="display:flex;justify-content:flex-end;margin-top:16px;">' +
           '<button class="btn-logout" onclick="cerrarSimulacionVisibilidad()" style="background:#1a1a1a;color:#fff;">Cerrar</button>' +
