@@ -267,12 +267,12 @@ const WEBPAY_LINK = 'https://www.webpay.cl/form-pay/33930';
 const PATIENT_LINK_BASE = 'https://recetario-hosmil.vercel.app/';
 
 // ============================================================
-// FASE 3.5B -- Modo prueba: carga opcional desde catálogo maestro.
-// Activado SOLO con ?catalogoMaestro=1 en la URL. Por defecto, esta
-// función ni se ejecuta y PRODUCTS sigue siendo el array embebido de
-// siempre. No reemplaza la declaración de PRODUCTS de arriba, solo puede
-// mutar su contenido en memoria si el flag está activo Y la carga tiene
-// éxito. No se activa como default en esta fase.
+// Catálogo maestro activo por defecto.
+// Para forzar temporalmente el catálogo embebido usar:
+// ?catalogoEmbebido=1
+//
+// Si la RPC falla o la respuesta no supera las validaciones de seguridad,
+// el sistema mantiene automáticamente el catálogo embebido como fallback.
 // ============================================================
 const forzarEmbebido = new URLSearchParams(window.location.search).get('catalogoEmbebido') === '1';
 const usarCatalogoMaestro = !forzarEmbebido;
@@ -982,7 +982,7 @@ renderProductList();
 renderCart();
 renderFloating();
 
-cargarCatalogoMaestro(); // Fase 3.5B: no-op salvo ?catalogoMaestro=1
+cargarCatalogoMaestro(); // Catálogo maestro activo por defecto -- ver comentario en su declaración
 
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', function () {

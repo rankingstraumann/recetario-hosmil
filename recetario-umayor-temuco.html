@@ -224,12 +224,13 @@ const PRODUCTS_BLT = [{"codigo":"022.0109","descripcion":"RC VB Crown, incl. tor
 PRODUCTS.push.apply(PRODUCTS, PRODUCTS_BLT);
 
 // ============================================================
-// FASE 3.2 -- Modo prueba: carga opcional desde catálogo maestro.
-// Activado SOLO con ?catalogoMaestro=1 en la URL. Por defecto, esta
-// función ni se ejecuta y PRODUCTS sigue siendo el array embebido de
-// siempre. No reemplaza la declaración de PRODUCTS/PRODUCTS_BLT de arriba,
-// solo puede mutar su contenido en memoria si el flag está activo Y la
-// carga tiene éxito.
+// Catálogo maestro activo por defecto.
+// Para forzar temporalmente el catálogo embebido usar:
+// ?catalogoEmbebido=1
+//
+// Si la RPC falla o la respuesta no supera las validaciones de seguridad,
+// el sistema mantiene automáticamente el catálogo embebido (PRODUCTS +
+// PRODUCTS_BLT) como fallback.
 // ============================================================
 const forzarEmbebido = new URLSearchParams(window.location.search).get('catalogoEmbebido') === '1';
 const usarCatalogoMaestro = !forzarEmbebido;
@@ -1078,7 +1079,7 @@ renderProductList();
 renderCart();
 renderFloating();
 
-cargarCatalogoMaestro(); // Fase 3.2: no-op salvo ?catalogoMaestro=1
+cargarCatalogoMaestro(); // Catálogo maestro activo por defecto -- ver comentario en su declaración
 
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', function () {
