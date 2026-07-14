@@ -573,6 +573,14 @@ async function copiarGestionCompleta(id, btn) {
     'Dr. tratante: ' + valorSeguro(c.doctor)
   ];
 
+  // Dirección de despacho: para todas las instituciones es la dirección
+  // institucional fija (inst.despacho). Excepción ARMADA: el despacho se
+  // hace a la misma dirección de facturación del paciente, por lo que se
+  // usa c.paciente_direccion en su lugar.
+  const direccionDespacho = (inst.codigo === 'ARMADA')
+    ? valorSeguro(c.paciente_direccion)
+    : (inst.despacho || '-');
+
   // Productos: misma data y misma lógica de descuento que el detalle visual
   // (descuentoEfectivo / fmt), reutilizadas sin modificar
   const items = c.items || [];
@@ -580,7 +588,7 @@ async function copiarGestionCompleta(id, btn) {
     return [
       valorSeguro(it.codigo),
       valorSeguro(it.descripcion),
-      'x' + valorSeguro(it.cantidad),
+      valorSeguro(it.cantidad),
       descuentoEfectivo(it),
       fmt(it.subtotal)
     ].join(' | ');
@@ -589,6 +597,8 @@ async function copiarGestionCompleta(id, btn) {
   // ── Texto plano (fallback si el navegador no soporta ClipboardItem) ──────────
   const textoPlano = [
     datosLineas.join('\n'),
+    '',
+    'Despachar a: ' + direccionDespacho,
     '',
     'Link comprobante de pago: ' + comprobanteTxt,
     '',
@@ -604,7 +614,7 @@ async function copiarGestionCompleta(id, btn) {
     return '<tr>' +
       '<td style="border:1px solid #ddd;padding:6px;text-align:left;">' + esc(it.codigo) + '</td>' +
       '<td style="border:1px solid #ddd;padding:6px;text-align:left;">' + esc(it.descripcion) + '</td>' +
-      '<td style="border:1px solid #ddd;padding:6px;text-align:right;">x' + esc(it.cantidad) + '</td>' +
+      '<td style="border:1px solid #ddd;padding:6px;text-align:right;">' + esc(it.cantidad) + '</td>' +
       '<td style="border:1px solid #ddd;padding:6px;text-align:right;">' + esc(descuentoEfectivo(it)) + '</td>' +
       '<td style="border:1px solid #ddd;padding:6px;text-align:right;">' + esc(fmt(it.subtotal)) + '</td>' +
     '</tr>';
@@ -637,6 +647,8 @@ async function copiarGestionCompleta(id, btn) {
   // en divs vacíos — un salto de línea real sobrevive ese proceso.
   const html = '<div style="font-family:Arial,sans-serif;font-size:13px;">' +
     datosHtml +
+    '<br><br>' +
+    '<div>Despachar a: ' + esc(direccionDespacho) + '</div>' +
     '<br><br>' +
     '<div>Link comprobante de pago: ' + comprobanteHtml + '</div>' +
     '<br><br>' +
