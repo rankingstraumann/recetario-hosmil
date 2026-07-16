@@ -1,0 +1,828 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<link rel="manifest" href="/manifest-cotizador-comercial.webmanifest">
+<meta name="theme-color" content="#991b1b">
+<link rel="icon" href="/favicon-32.png" sizes="32x32">
+<link rel="apple-touch-icon" href="/icon-180.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="Cotizador Straumann">
+<meta name="mobile-web-app-capable" content="yes">
+<title>Cotizador Comercial | Straumann Group Chile</title>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>
+  :root {
+    --red: #991b1b; --red-dark: #7f1d1d; --ink: #18181b; --muted: #71717a;
+    --border: #e4e4e7; --bg: #f8fafc;
+  }
+  * { box-sizing: border-box; }
+  body { margin:0; font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif; background:var(--bg); color:var(--ink); overflow-x:hidden; }
+  header.topbar { background:#fff; border-bottom:1px solid var(--border); padding:10px 16px; display:flex; align-items:center; justify-content:space-between; gap:8px; flex-wrap:wrap; }
+  .brand-name { color:var(--red); font-weight:800; font-size:17px; letter-spacing:-0.02em; line-height:1; }
+  .brand-sub { color:#a1a1aa; font-size:9px; letter-spacing:0.15em; font-weight:600; margin-top:2px; }
+  .btn-logout { font-size:12px; color:#71717a; background:none; border:1px solid var(--border); border-radius:8px; padding:6px 12px; cursor:pointer; white-space:nowrap; }
+  main { max-width:600px; margin:0 auto; padding:20px 16px 60px; }
+
+  .login-wrap { max-width:360px; margin:60px auto; background:#fff; border:1px solid var(--border); border-radius:14px; padding:28px; }
+  .login-wrap h1 { font-size:18px; margin:0 0 4px; }
+  .login-wrap p { font-size:12px; color:#71717a; margin:0 0 18px; }
+  .login-wrap input { width:100%; border:1px solid #d4d4d8; border-radius:8px; padding:11px 12px; font-size:15px; margin-bottom:10px; }
+  .login-wrap input:focus { outline:none; border-color:var(--red); box-shadow:0 0 0 3px rgba(153,27,27,0.12); }
+  .btn-primary { width:100%; background:var(--red); color:#fff; border:none; border-radius:8px; padding:12px; font-size:15px; font-weight:600; cursor:pointer; }
+  .btn-primary:hover { background:var(--red-dark); }
+  .btn-primary:disabled { background:#d4d4d8; cursor:not-allowed; }
+  .login-err { background:#fef2f2; color:#b91c1c; font-size:12px; border-radius:8px; padding:8px 10px; margin-bottom:10px; }
+
+  /* Cotizador Comercial -- mismas clases ya probadas en C6A/C6A.1 dentro
+     del Admin, replicadas aqui tal cual porque este archivo es un
+     frontend independiente sin acceso al CSS de admin.html. */
+  .cc-wrap { max-width:560px; margin:0 auto; }
+  .cc-steps { display:flex; align-items:center; gap:4px; margin:4px 0 10px; }
+  .cc-step-dot { flex:1; height:4px; border-radius:4px; background:var(--border); }
+  .cc-step-dot.done, .cc-step-dot.active { background:var(--red); }
+  .cc-step-label { font-size:11px; color:var(--muted); margin-bottom:16px; }
+  .cc-banner { background:#fff7ed; border:1px solid #fed7aa; color:#9a3412; font-size:12px; font-weight:600; border-radius:10px; padding:10px 12px; margin-bottom:16px; }
+  .cc-card-grid { display:flex; flex-direction:column; gap:12px; margin-bottom:6px; }
+  .cc-choice-card { display:block; width:100%; text-align:left; background:#fff; border:2px solid var(--border); border-radius:14px; padding:18px 20px; cursor:pointer; font-family:inherit; }
+  .cc-choice-card.selected { border-color:var(--red); background:#fef2f2; }
+  .cc-choice-card .cc-pct { font-size:28px; font-weight:800; color:var(--ink); line-height:1; }
+  .cc-choice-card.selected .cc-pct { color:var(--red); }
+  .cc-pct-label { font-size:12px; color:var(--muted); margin-top:4px; }
+  .cc-field { margin-bottom:14px; }
+  .cc-field label { display:block; font-size:12px; font-weight:600; color:var(--ink); margin-bottom:5px; }
+  .cc-field input, .cc-field textarea, .cc-field select { width:100%; border:1px solid #d4d4d8; border-radius:10px; padding:12px 14px; font-size:15px; font-family:inherit; }
+  .cc-field input:focus, .cc-field textarea:focus, .cc-field select:focus { outline:none; border-color:var(--red); box-shadow:0 0 0 3px rgba(153,27,27,0.1); }
+  .cc-err { color:#b91c1c; font-size:11px; margin-top:4px; }
+  .cc-collapsible summary { cursor:pointer; font-size:13px; font-weight:600; color:var(--muted); padding:10px 0; list-style:none; }
+  .cc-collapsible summary::-webkit-details-marker { display:none; }
+  .cc-collapsible summary::before { content:'▸ '; }
+  .cc-collapsible[open] summary::before { content:'▾ '; }
+  .cc-product-card { background:#fff; border:1px solid var(--border); border-radius:12px; padding:14px; margin-bottom:10px; }
+  .cc-p-codigo { font-family:ui-monospace,monospace; font-size:11px; color:var(--muted); }
+  .cc-p-desc { font-size:14px; font-weight:600; color:var(--ink); margin:2px 0 6px; }
+  .cc-p-meta { font-size:11px; color:var(--muted); display:flex; gap:8px; flex-wrap:wrap; margin-bottom:6px; }
+  .cc-tag-dup { background:#fef3c7; color:#92400e; border-radius:6px; padding:1px 6px; font-weight:700; }
+  .cc-btn-add { width:100%; background:var(--red); color:#fff; border:none; border-radius:9px; padding:11px; font-size:13px; font-weight:700; cursor:pointer; }
+  .cc-btn-add:disabled { background:#d4d4d8; cursor:not-allowed; }
+  .cc-cart-item { display:flex; align-items:center; justify-content:space-between; gap:8px; background:#fff; border:1px solid var(--border); border-radius:12px; padding:10px 12px; margin-bottom:8px; }
+  .cc-ci-info { flex:1; min-width:0; }
+  .cc-ci-desc { font-size:13px; font-weight:600; color:var(--ink); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .cc-ci-precio { font-size:11px; color:var(--muted); }
+  .cc-qty { display:flex; align-items:center; gap:6px; flex-shrink:0; }
+  .cc-qty button { width:28px; height:28px; border-radius:8px; border:1px solid var(--border); background:#fff; font-size:16px; cursor:pointer; line-height:1; }
+  .cc-qty span { min-width:18px; text-align:center; font-size:13px; font-weight:700; }
+  .cc-btn-remove { background:none; border:none; color:#b91c1c; font-size:11px; cursor:pointer; padding:4px 2px; flex-shrink:0; }
+  .cc-summary-row { display:flex; justify-content:space-between; gap:10px; font-size:13px; padding:6px 0; border-bottom:1px dashed #e4e4e7; }
+  .cc-summary-row.total { font-size:16px; font-weight:800; border-bottom:none; padding-top:10px; }
+  .cc-nav { display:flex; gap:10px; margin-top:20px; }
+  .cc-btn-secondary { flex:1; background:#fff; border:1px solid var(--border); border-radius:10px; padding:12px; font-size:14px; font-weight:600; color:var(--ink); cursor:pointer; }
+  .cc-btn-secondary:disabled { opacity:0.5; cursor:not-allowed; }
+  .cc-btn-next { flex:2; background:var(--red); color:#fff; border:none; border-radius:10px; padding:12px; font-size:14px; font-weight:700; cursor:pointer; }
+  .cc-btn-next:disabled, .cc-choice-card:disabled { background:#d4d4d8; cursor:not-allowed; }
+  .cc-empty { text-align:center; padding:40px 20px; color:#a1a1aa; font-size:13px; background:#fff; border:1px dashed var(--border); border-radius:14px; line-height:1.6; }
+  .cc-subtabs { display:flex; gap:8px; margin-bottom:18px; }
+  .cc-subtab { flex:1; padding:12px; border-radius:10px; border:1px solid var(--border); background:#fff; font-size:13px; font-weight:600; color:var(--muted); cursor:pointer; }
+  .cc-subtab.active { background:var(--ink); color:#fff; border-color:var(--ink); }
+</style>
+</head>
+<body>
+
+<div id="login-view"></div>
+<div id="app-view" style="display:none;"></div>
+
+<script>
+// FASE C6D -- Cotizador Comercial, frontend independiente para
+// Ejecutivos Comerciales. Reutiliza el mismo Supabase/Auth/backend ya
+// validado en C3A-C6C. Este archivo NUNCA accede directamente a tablas
+// comerciales -- solo llama las 5 RPC ya autorizadas:
+// buscar_productos_comercial, listar_modalidades_comerciales,
+// simular_cotizacion_comercial, crear_cotizacion_comercial,
+// listar_cotizaciones_comerciales. Ningun insert/update/delete directo
+// en todo el archivo -- se puede confirmar leyendolo completo.
+const APP_VERSION = '0.1-2026-07-16';
+console.log('Cotizador Comercial version:', APP_VERSION);
+
+const SUPABASE_URL = 'https://gzimllusbxjorbsbtsse.supabase.co';
+const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imd6aW1sbHVzYnhqb3Jic2J0c3NlIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE5NDQ4NDcsImV4cCI6MjA5NzUyMDg0N30.DFq-_PY10hyr2QmMUXk-v8VW2LKYz3bAW37VCutwmzY';
+const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+let miPerfil = null;
+let vistaComercial = 'nueva'; // 'nueva' | 'mis'
+let errorConexion = false;
+let errorConexionMsg = '';
+
+function esc(s) {
+  if (s === undefined || s === null) return '';
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+function fmt(n) { return '$' + Math.round(n || 0).toLocaleString('es-CL'); }
+
+// Clasifica errores tecnicos en mensajes legibles -- nunca deja pasar
+// "[object Object]" ni un mensaje crudo del backend sin traducir cuando
+// hay una categoria conocida.
+function interpretarError(e) {
+  var msg = (e && (e.message || e.details || '')) || '';
+  var low = msg.toLowerCase();
+  if (!msg) return 'Ocurrió un error inesperado. Intenta nuevamente.';
+  if (low.indexOf('jwt') !== -1 || low.indexOf('refresh_token') !== -1 || low.indexOf('session') !== -1) return 'Tu sesión expiró. Vuelve a iniciar sesión.';
+  if (low.indexOf('42501') !== -1 || low.indexOf('no autorizado') !== -1) return 'No tienes permiso para realizar esta acción.';
+  if (low.indexOf('modalidad') !== -1) return 'Esta modalidad comercial todavía no está activa. El cálculo real se habilitará cuando se active.';
+  if (low.indexOf('rut') !== -1) return 'El RUT ingresado no es válido. Revísalo e intenta de nuevo.';
+  if (low.indexOf('producto') !== -1 || low.indexOf('precio de lista') !== -1) return 'Uno de los productos seleccionados ya no está disponible. Actualiza la búsqueda.';
+  if (low.indexOf('failed to fetch') !== -1 || low.indexOf('networkerror') !== -1 || low.indexOf('load failed') !== -1 || low.indexOf('timeout') !== -1 || low.indexOf('network') !== -1) return 'No se pudo conectar con el servidor. Revisa tu conexión e intenta de nuevo.';
+  return msg; // el backend ya entrega mensajes en español via RAISE EXCEPTION
+}
+
+// ============================================================
+// LOGIN
+// ============================================================
+function renderLogin(errMsg) {
+  document.getElementById('app-view').style.display = 'none';
+  const v = document.getElementById('login-view');
+  v.style.display = 'block';
+  v.innerHTML =
+    '<header class="topbar"><div><div class="brand-name">STRAUMANN</div><div class="brand-sub">COTIZADOR COMERCIAL</div></div></header>' +
+    (errorConexion ? '<div style="background:#fff3cd;border:1px solid #fde68a;border-radius:10px;padding:14px 18px;margin:16px;text-align:center;font-size:13px;">⚠️ ' + esc(errorConexionMsg || 'No se pudo conectar. Puede deberse a firewall, VPN o red corporativa.') + '<br><button onclick="location.reload()" style="margin-top:8px;padding:7px 18px;background:#1a1a1a;color:#fff;border:none;border-radius:7px;cursor:pointer;font-size:13px;">🔄 Reintentar</button></div>' : '') +
+    '<div class="login-wrap">' +
+      '<h1>Cotizador Comercial</h1>' +
+      '<p>Ingresa con tu correo corporativo</p>' +
+      (errMsg ? '<div class="login-err">⚠️ ' + esc(errMsg) + '</div>' : '') +
+      '<input type="email" id="li-email" placeholder="Correo" autocomplete="username">' +
+      '<input type="password" id="li-pass" placeholder="Contraseña" autocomplete="current-password">' +
+      '<button class="btn-primary" id="li-btn">Iniciar sesión</button>' +
+      '<p style="font-size:11px;color:var(--muted);margin-top:16px;text-align:center;line-height:1.5;">📲 Puedes instalar este Cotizador en la pantalla de inicio de tu celular.</p>' +
+    '</div>';
+  document.getElementById('li-btn').addEventListener('click', doLogin);
+  document.getElementById('li-pass').addEventListener('keydown', function (e) { if (e.key === 'Enter') doLogin(); });
+}
+
+async function doLogin() {
+  const email = document.getElementById('li-email').value.trim();
+  const pass = document.getElementById('li-pass').value;
+  const btn = document.getElementById('li-btn');
+  btn.disabled = true; btn.textContent = 'Ingresando...';
+  try {
+    const { error } = await sb.auth.signInWithPassword({ email: email, password: pass });
+    if (error) {
+      const msg = interpretarError(error);
+      const esRed = msg.indexOf('conectar') !== -1;
+      if (esRed) { errorConexion = true; }
+      renderLogin(esRed ? msg : 'Correo o contraseña incorrectos.');
+      return;
+    }
+  } catch (e) {
+    errorConexion = true;
+    renderLogin(interpretarError(e));
+    return;
+  }
+  // sb.auth.onAuthStateChange toma el control desde aqui (carga de perfil + render)
+}
+
+// ============================================================
+// PERFIL Y ACCESO (fail-closed)
+// ============================================================
+function tieneAccesoComercial() {
+  return !!(miPerfil && (miPerfil.es_vendedor || miPerfil.es_super_admin || miPerfil.es_coordinador || miPerfil.es_observador));
+}
+function esSoloCustomerService() {
+  return !!(miPerfil && miPerfil.es_customer_service && !miPerfil.es_vendedor && !miPerfil.es_super_admin && !miPerfil.es_coordinador && !miPerfil.es_observador);
+}
+function puedeCrearCotizaciones() {
+  return !!(miPerfil && (miPerfil.es_vendedor || miPerfil.es_super_admin));
+}
+
+async function cargarMiPerfilYEntrar() {
+  try {
+    const { data: userData } = await sb.auth.getUser();
+    if (!userData || !userData.user) { miPerfil = null; renderLogin(); return; }
+    const { data, error } = await sb.from('admin_perfiles')
+      .select('es_super_admin, es_observador, es_vendedor, es_coordinador, es_customer_service, coordinador_id')
+      .eq('user_id', userData.user.id)
+      .maybeSingle();
+    miPerfil = (!error && data) ? data : null;
+  } catch (e) {
+    miPerfil = null;
+  }
+
+  // Fail-closed: sin perfil, o con perfil pero sin ningun rol reconocido
+  // por este frontend, se cierra la sesion de inmediato -- nunca se deja
+  // a alguien "adentro" sin rol esperando a que un boton este oculto.
+  if (!miPerfil || !tieneAccesoComercial()) {
+    if (!esSoloCustomerService()) {
+      await sb.auth.signOut();
+      miPerfil = null;
+      renderLogin('No tienes acceso habilitado al Cotizador Comercial.');
+      return;
+    }
+  }
+
+  vistaComercial = puedeCrearCotizaciones() ? 'nueva' : 'mis';
+  renderApp();
+}
+
+// ============================================================
+// COTIZADOR -- estado y motor (mismo diseno ya validado en C6A/C6A.1)
+// ============================================================
+function cotComClienteVacio() {
+  return { rut: '', tipoCliente: 'prospecto', doctorNombre: '', razonSocial: '', direccion: '', correo: '', telefono: '', codigoSap: '', observaciones: '' };
+}
+let cotComState = {
+  paso: 1,
+  modalidadCodigo: null,
+  modalidades: [],
+  modalidadesCargadas: false,
+  cliente: cotComClienteVacio(),
+  opcionalesAbierto: false,
+  busqueda: '',
+  resultados: [],
+  buscando: false,
+  errorBusqueda: '',
+  carrito: [],
+  simulando: false,
+  simulacion: null,
+  simulacionError: '',
+  creada: null
+};
+let cotComRutFoco = false;
+let cotComDoctorFoco = false;
+let cotComCreando = false;
+let cotComCrearError = '';
+
+function reiniciarCotizadorComercial() {
+  cotComState = {
+    paso: 1, modalidadCodigo: null, modalidades: cotComState.modalidades, modalidadesCargadas: cotComState.modalidadesCargadas,
+    cliente: cotComClienteVacio(), opcionalesAbierto: false,
+    busqueda: '', resultados: [], buscando: false, errorBusqueda: '',
+    carrito: [], simulando: false, simulacion: null, simulacionError: '', creada: null
+  };
+  cotComRutFoco = false;
+  cotComDoctorFoco = false;
+  cotComCrearError = '';
+  renderApp();
+}
+
+function rutFormatoBasicoValido(rut) {
+  var limpio = (rut || '').toUpperCase().replace(/[^0-9K]/g, '');
+  return /^[0-9]{7,8}[0-9K]$/.test(limpio);
+}
+function cotComClienteValido() {
+  var c = cotComState.cliente;
+  return !!(c.rut && rutFormatoBasicoValido(c.rut) && c.doctorNombre && c.doctorNombre.trim() !== '');
+}
+
+function cotComIrPaso(n) {
+  if (n < 1 || n > 6) return;
+  cotComState.paso = n;
+  if (n === 4) { intentarSimularCotizacion(); return; }
+  renderApp();
+}
+function cotComSiguiente() {
+  if (cotComState.paso === 1 && !cotComState.modalidadCodigo) return;
+  if (cotComState.paso === 2 && !cotComClienteValido()) return;
+  if (cotComState.paso === 3 && cotComState.carrito.length === 0) return;
+  cotComIrPaso(cotComState.paso + 1);
+}
+function cotComAnterior() { cotComIrPaso(cotComState.paso - 1); }
+function cotComSeleccionarModalidad(codigo) { cotComState.modalidadCodigo = codigo; renderApp(); }
+
+async function cargarModalidadesComerciales() {
+  cotComState.modalidadesCargadas = true;
+  try {
+    const { data, error } = await sb.rpc('listar_modalidades_comerciales');
+    if (error) throw error;
+    cotComState.modalidades = data || [];
+  } catch (e) {
+    cotComState.modalidades = [];
+  }
+  renderApp();
+}
+
+async function cotComBuscarProductos() {
+  var termino = (cotComState.busqueda || '').trim();
+  cotComState.errorBusqueda = '';
+  if (!termino) { cotComState.resultados = []; renderApp(); return; }
+  cotComState.buscando = true;
+  renderApp();
+  try {
+    const { data, error } = await sb.rpc('buscar_productos_comercial', { p_busqueda: termino, p_limite: 30 });
+    if (error) throw error;
+    cotComState.resultados = data || [];
+  } catch (e) {
+    cotComState.resultados = [];
+    cotComState.errorBusqueda = interpretarError(e);
+  }
+  cotComState.buscando = false;
+  renderApp();
+}
+
+function cotComAgregarProducto(productoId) {
+  var p = cotComState.resultados.find(function (r) { return String(r.producto_id) === String(productoId); });
+  if (!p) return;
+  var existente = cotComState.carrito.find(function (ci) { return ci.producto_id === p.producto_id; });
+  if (existente) {
+    existente.cantidad += 1;
+  } else {
+    cotComState.carrito.push({
+      producto_id: p.producto_id, codigo: p.codigo, descripcion: p.descripcion,
+      marca: p.marca, familia: p.familia, precio_lista: p.precio_lista, cantidad: 1,
+      es_codigo_duplicado: p.es_codigo_duplicado
+    });
+  }
+  renderApp();
+}
+function cotComCambiarCantidad(productoId, delta) {
+  var ci = cotComState.carrito.find(function (c) { return c.producto_id === productoId; });
+  if (!ci) return;
+  ci.cantidad += delta;
+  if (ci.cantidad <= 0) { cotComState.carrito = cotComState.carrito.filter(function (c) { return c.producto_id !== productoId; }); }
+  renderApp();
+}
+function cotComQuitarProducto(productoId) {
+  cotComState.carrito = cotComState.carrito.filter(function (c) { return c.producto_id !== productoId; });
+  renderApp();
+}
+
+function cotComParamsRpc() {
+  var modalidadReal = cotComState.modalidades.find(function (m) { return m.codigo === cotComState.modalidadCodigo; });
+  var c = cotComState.cliente;
+  var items = cotComState.carrito.map(function (ci) { return { producto_id: ci.producto_id, cantidad: ci.cantidad }; });
+  return {
+    modalidadReal: modalidadReal,
+    params: {
+      p_rut: c.rut, p_tipo_cliente: c.tipoCliente, p_doctor_nombre: c.doctorNombre,
+      p_modalidad_id: modalidadReal ? modalidadReal.id : null, p_items: items,
+      p_razon_social: c.razonSocial || null, p_direccion: c.direccion || null,
+      p_correo: c.correo || null, p_telefono: c.telefono || null,
+      p_codigo_sap: c.codigoSap || null, p_observaciones: c.observaciones || null
+    }
+  };
+}
+
+async function intentarSimularCotizacion() {
+  cotComState.simulando = true;
+  cotComState.simulacion = null;
+  cotComState.simulacionError = '';
+  renderApp();
+
+  var pr = cotComParamsRpc();
+  if (!pr.modalidadReal) {
+    cotComState.simulando = false;
+    cotComState.simulacionError = 'La modalidad ' + (cotComState.modalidadCodigo || '') + ' todavía no está disponible en el sistema.';
+    renderApp();
+    return;
+  }
+
+  try {
+    const { data, error } = await sb.rpc('simular_cotizacion_comercial', pr.params);
+    if (error) throw error;
+    cotComState.simulacion = data;
+  } catch (e) {
+    cotComState.simulacion = null;
+    cotComState.simulacionError = interpretarError(e);
+  }
+  cotComState.simulando = false;
+  renderApp();
+}
+
+// Creacion real -- exige simulacion exitosa previa, protege contra doble
+// clic con una bandera JS ademas del atributo disabled en el boton, llama
+// crear_cotizacion_comercial una sola vez, y NUNCA limpia el formulario
+// si falla (el usuario conserva todo para reintentar).
+async function crearCotizacionReal() {
+  if (cotComCreando) return;
+  if (!cotComState.simulacion) {
+    cotComCrearError = 'Primero necesitas una simulación exitosa antes de crear la cotización.';
+    renderApp();
+    return;
+  }
+  cotComCreando = true;
+  cotComCrearError = '';
+  renderApp();
+
+  var pr = cotComParamsRpc();
+  try {
+    const { data, error } = await sb.rpc('crear_cotizacion_comercial', pr.params);
+    if (error) throw error;
+    cotComState.creada = { folio: data.folio, id: data.id };
+    cotComState.paso = 6;
+    misCotState.cargado = false; // fuerza refresco la proxima vez que se visite Mis cotizaciones
+  } catch (e) {
+    cotComCrearError = interpretarError(e);
+  }
+  cotComCreando = false;
+  renderApp();
+}
+
+// ============================================================
+// COTIZADOR -- render de los 6 pasos
+// ============================================================
+function construirProgresoCotizador() {
+  var pasos = ['Descuento', 'Cliente', 'Productos', 'Resumen'];
+  var dots = '';
+  for (var i = 1; i <= 4; i++) {
+    var cls = 'cc-step-dot';
+    if (cotComState.paso > i || cotComState.paso >= 5) cls += ' done';
+    else if (cotComState.paso === i) cls += ' active';
+    dots += '<div class="' + cls + '"></div>';
+  }
+  var etiqueta = cotComState.paso <= 4
+    ? ('Paso ' + cotComState.paso + ' de 4 — ' + esc(pasos[cotComState.paso - 1]))
+    : (cotComState.paso === 5 ? 'Revisa y crea tu cotización' : 'Cotización creada');
+  return '<div class="cc-steps">' + dots + '</div><div class="cc-step-label">' + etiqueta + '</div>';
+}
+
+function construirPasoDescuento() {
+  var opciones = [{ codigo: 'COM10', pct: '10%' }, { codigo: 'COM25', pct: '25%' }, { codigo: 'COM30', pct: '30%' }];
+  var cardsHtml = '<div class="cc-card-grid">';
+  opciones.forEach(function (o) {
+    var sel = cotComState.modalidadCodigo === o.codigo;
+    cardsHtml += '<button type="button" class="cc-choice-card' + (sel ? ' selected' : '') + '" onclick="cotComSeleccionarModalidad(\'' + o.codigo + '\')">' +
+      '<div class="cc-pct">' + o.pct + '</div>' +
+      '<div class="cc-pct-label">Descuento comercial ' + o.pct + (sel ? ' · Seleccionado' : '') + '</div>' +
+      '</button>';
+  });
+  cardsHtml += '</div>';
+
+  return '<div class="cc-wrap">' + construirProgresoCotizador() +
+    '<h2 style="margin:0 0 4px;font-size:17px;">Elige el descuento</h2>' +
+    '<p style="font-size:12px;color:var(--muted);margin:0 0 16px;">Solo eliges la modalidad. El porcentaje y el precio final siempre los calcula el sistema.</p>' +
+    cardsHtml +
+    '<div class="cc-nav">' +
+      '<button class="cc-btn-secondary" onclick="reiniciarCotizadorComercial()">Reiniciar</button>' +
+      '<button class="cc-btn-next" ' + (!cotComState.modalidadCodigo ? 'disabled' : '') + ' onclick="cotComSiguiente()">Siguiente</button>' +
+    '</div>' +
+  '</div>';
+}
+
+function construirPasoCliente() {
+  var c = cotComState.cliente;
+  var rutOk = !c.rut || rutFormatoBasicoValido(c.rut);
+  return '<div class="cc-wrap">' + construirProgresoCotizador() +
+    '<h2 style="margin:0 0 4px;font-size:17px;">Datos del cliente</h2>' +
+    '<p style="font-size:12px;color:var(--muted);margin:0 0 16px;">Si el RUT ya existe, se reutiliza automáticamente.</p>' +
+    '<div class="cc-field"><label>RUT *</label><input id="cc-input-rut" type="text" placeholder="12.345.678-9" value="' + esc(c.rut) + '">' +
+      (c.rut && !rutOk ? '<div class="cc-err">Revisa el formato del RUT.</div>' : '') +
+    '</div>' +
+    '<div class="cc-field"><label>Nombre del doctor *</label><input id="cc-input-doctor" type="text" placeholder="Dr./Dra. ..." value="' + esc(c.doctorNombre) + '"></div>' +
+    '<details class="cc-collapsible"' + (cotComState.opcionalesAbierto ? ' open' : '') + '>' +
+      '<summary onclick="cotComState.opcionalesAbierto=!cotComState.opcionalesAbierto;">Datos opcionales (razón social, dirección, contacto...)</summary>' +
+      '<div class="cc-field"><label>Razón social</label><input id="cc-input-razon" type="text" value="' + esc(c.razonSocial) + '"></div>' +
+      '<div class="cc-field"><label>Dirección</label><input id="cc-input-direccion" type="text" value="' + esc(c.direccion) + '"></div>' +
+      '<div class="cc-field"><label>Correo</label><input id="cc-input-correo" type="email" value="' + esc(c.correo) + '"></div>' +
+      '<div class="cc-field"><label>Teléfono</label><input id="cc-input-telefono" type="tel" value="' + esc(c.telefono) + '"></div>' +
+      '<div class="cc-field"><label>Código SAP</label><input id="cc-input-sap" type="text" value="' + esc(c.codigoSap) + '"></div>' +
+      '<div class="cc-field"><label>Observaciones</label><textarea id="cc-input-obs" rows="3">' + esc(c.observaciones) + '</textarea></div>' +
+    '</details>' +
+    '<div class="cc-nav">' +
+      '<button class="cc-btn-secondary" onclick="cotComAnterior()">Volver</button>' +
+      '<button class="cc-btn-next" ' + (!cotComClienteValido() ? 'disabled' : '') + ' onclick="cotComSiguiente()">Siguiente</button>' +
+    '</div>' +
+  '</div>';
+}
+
+function construirPasoProductos() {
+  var resultadosHtml = '';
+  if (cotComState.buscando) {
+    resultadosHtml = '<div style="text-align:center;color:var(--muted);font-size:12px;padding:14px;">Buscando...</div>';
+  } else if (cotComState.errorBusqueda) {
+    resultadosHtml = '<div class="cc-err" style="text-align:center;padding:10px;">' + esc(cotComState.errorBusqueda) + '</div>';
+  } else if (cotComState.resultados.length > 0) {
+    resultadosHtml = cotComState.resultados.map(function (p) {
+      var yaEnCarrito = cotComState.carrito.some(function (ci) { return ci.producto_id === p.producto_id; });
+      return '<div class="cc-product-card">' +
+        '<div class="cc-p-codigo">' + esc(p.codigo) + (p.es_codigo_duplicado ? ' <span class="cc-tag-dup">código duplicado</span>' : '') + '</div>' +
+        '<div class="cc-p-desc">' + esc(p.descripcion) + '</div>' +
+        '<div class="cc-p-meta"><span>' + esc(p.marca) + '</span><span>' + esc(p.familia) + '</span><span>' + fmt(p.precio_lista) + '</span></div>' +
+        '<button type="button" class="cc-btn-add" onclick="cotComAgregarProducto(\'' + p.producto_id + '\')">' + (yaEnCarrito ? '✓ En el carrito — agregar otra unidad' : '+ Agregar al carrito') + '</button>' +
+      '</div>';
+    }).join('');
+  } else if (cotComState.busqueda) {
+    resultadosHtml = '<div style="text-align:center;color:var(--muted);font-size:12px;padding:14px;">Sin resultados para "' + esc(cotComState.busqueda) + '".</div>';
+  }
+
+  var carritoHtml = cotComState.carrito.length === 0
+    ? '<div class="cc-empty">Todavía no agregaste productos.</div>'
+    : cotComState.carrito.map(function (ci) {
+      return '<div class="cc-cart-item">' +
+        '<div class="cc-ci-info"><div class="cc-ci-desc">' + esc(ci.descripcion) + '</div><div class="cc-ci-precio">' + esc(ci.codigo) + ' · ' + fmt(ci.precio_lista) + ' c/u</div></div>' +
+        '<div class="cc-qty"><button type="button" onclick="cotComCambiarCantidad(\'' + ci.producto_id + '\',-1)">−</button><span>' + ci.cantidad + '</span><button type="button" onclick="cotComCambiarCantidad(\'' + ci.producto_id + '\',1)">+</button></div>' +
+        '<button type="button" class="cc-btn-remove" onclick="cotComQuitarProducto(\'' + ci.producto_id + '\')">Quitar</button>' +
+      '</div>';
+    }).join('');
+
+  return '<div class="cc-wrap">' + construirProgresoCotizador() +
+    '<h2 style="margin:0 0 4px;font-size:17px;">Agrega productos</h2>' +
+    '<p style="font-size:12px;color:var(--muted);margin:0 0 12px;">Busca por código o descripción. Los productos se identifican siempre por su ID interno, nunca solo por código.</p>' +
+    '<div style="display:flex;gap:8px;margin-bottom:10px;">' +
+      '<input id="cc-input-busqueda" type="text" placeholder="Código o descripción..." style="flex:1;border:1px solid #d4d4d8;border-radius:10px;padding:12px 14px;font-size:15px;" value="' + esc(cotComState.busqueda) + '">' +
+      '<button type="button" class="cc-btn-add" style="width:auto;padding:0 18px;" onclick="cotComBuscarProductos()">Buscar</button>' +
+    '</div>' +
+    resultadosHtml +
+    '<h3 style="font-size:13px;margin:20px 0 10px;">Carrito (' + cotComState.carrito.length + ')</h3>' +
+    carritoHtml +
+    '<div class="cc-nav">' +
+      '<button class="cc-btn-secondary" onclick="cotComAnterior()">Volver</button>' +
+      '<button class="cc-btn-next" ' + (cotComState.carrito.length === 0 ? 'disabled' : '') + ' onclick="cotComSiguiente()">Siguiente</button>' +
+    '</div>' +
+  '</div>';
+}
+
+function construirPasoResumen() {
+  var c = cotComState.cliente;
+  var modalidadLabel = cotComState.modalidadCodigo ? cotComState.modalidadCodigo.replace('COM', '') + '%' : '—';
+  var productosHtml = cotComState.carrito.map(function (ci) {
+    return '<div class="cc-summary-row"><span>' + esc(ci.descripcion) + ' × ' + ci.cantidad + '</span><span>' + fmt(ci.precio_lista * ci.cantidad) + '</span></div>';
+  }).join('');
+
+  var calculoHtml;
+  if (cotComState.simulando) {
+    calculoHtml = '<div style="text-align:center;color:var(--muted);font-size:12px;padding:14px;">Calculando...</div>';
+  } else if (cotComState.simulacion) {
+    var s = cotComState.simulacion;
+    calculoHtml =
+      '<div class="cc-summary-row"><span>Subtotal</span><span>' + fmt(s.subtotal) + '</span></div>' +
+      '<div class="cc-summary-row"><span>IVA (19%)</span><span>' + fmt(s.iva) + '</span></div>' +
+      '<div class="cc-summary-row total"><span>Total</span><span>' + fmt(s.total) + '</span></div>' +
+      '<div style="font-size:11px;color:var(--muted);margin-top:6px;">Vigencia estimada: ' + esc(s.vigencia_estimada) + '</div>';
+  } else {
+    var totalLista = cotComState.carrito.reduce(function (sum, ci) { return sum + ci.precio_lista * ci.cantidad; }, 0);
+    calculoHtml =
+      '<div class="cc-banner">📐 ' + esc(cotComState.simulacionError || 'El cálculo real se habilitará cuando la modalidad comercial sea activada.') + '</div>' +
+      '<div style="font-size:12px;color:var(--muted);margin-bottom:4px;">Precio de lista de referencia (sin descuento aplicado, no es el total oficial):</div>' +
+      '<div class="cc-summary-row total"><span>Total lista</span><span>' + fmt(totalLista) + '</span></div>';
+  }
+
+  return '<div class="cc-wrap">' + construirProgresoCotizador() +
+    '<h2 style="margin:0 0 4px;font-size:17px;">Resumen</h2>' +
+    '<div style="background:#fff;border:1px solid var(--border);border-radius:12px;padding:14px;margin-bottom:14px;">' +
+      '<div class="cc-summary-row"><span>Doctor</span><span>' + esc(c.doctorNombre) + '</span></div>' +
+      '<div class="cc-summary-row"><span>RUT</span><span>' + esc(c.rut) + '</span></div>' +
+      '<div class="cc-summary-row"><span>Modalidad</span><span>' + esc(modalidadLabel) + '</span></div>' +
+    '</div>' +
+    '<div style="background:#fff;border:1px solid var(--border);border-radius:12px;padding:14px;margin-bottom:14px;">' + productosHtml + '</div>' +
+    '<div style="background:#fff;border:1px solid var(--border);border-radius:12px;padding:14px;margin-bottom:14px;">' + calculoHtml + '</div>' +
+    '<div class="cc-nav">' +
+      '<button class="cc-btn-secondary" onclick="cotComAnterior()">Volver</button>' +
+      '<button class="cc-btn-next" onclick="cotComIrPaso(5)">Continuar</button>' +
+    '</div>' +
+  '</div>';
+}
+
+function construirPasoAccionFinal() {
+  var puedeCrear = !!cotComState.simulacion && !cotComCreando;
+  return '<div class="cc-wrap">' + construirProgresoCotizador() +
+    '<h2 style="margin:0 0 4px;font-size:17px;">Crear cotización</h2>' +
+    '<p style="font-size:12px;color:var(--muted);margin:0 0 16px;">Revisa el resumen antes de crear. Una vez creada, no se puede editar desde aquí.</p>' +
+    (cotComCrearError ? '<div class="cc-err" style="background:#fef2f2;border:1px solid #fecaca;border-radius:10px;padding:10px 12px;margin-bottom:14px;">' + esc(cotComCrearError) + '</div>' : '') +
+    (!cotComState.simulacion ? '<div class="cc-banner">📐 Necesitas una simulación exitosa antes de crear la cotización. Vuelve al paso Resumen.</div>' : '') +
+    '<div class="cc-card-grid">' +
+      '<button type="button" class="cc-btn-add" style="padding:16px;font-size:15px;" ' + (puedeCrear ? '' : 'disabled') + ' onclick="crearCotizacionReal()">' + (cotComCreando ? 'Creando...' : '📝 Crear cotización') + '</button>' +
+      '<button type="button" class="cc-choice-card" disabled style="opacity:0.5;cursor:not-allowed;">' +
+        '<div style="font-size:15px;font-weight:700;">💬 Enviar por WhatsApp</div><div class="cc-pct-label">Disponible en la próxima fase</div>' +
+      '</button>' +
+    '</div>' +
+    '<div class="cc-nav">' +
+      '<button class="cc-btn-secondary" ' + (cotComCreando ? 'disabled' : '') + ' onclick="cotComAnterior()">Volver y editar</button>' +
+    '</div>' +
+  '</div>';
+}
+
+function construirPasoConfirmacion() {
+  var cr = cotComState.creada;
+  return '<div class="cc-wrap">' +
+    '<div class="cc-empty" style="background:#ecfdf5;border-color:#a7f3d0;">' +
+      '<div style="font-size:32px;">✅</div>' +
+      '<div style="font-weight:700;font-size:16px;color:#047857;margin:8px 0 4px;">Cotización creada correctamente.</div>' +
+      '<div style="font-size:13px;color:var(--ink);">Folio: <b>' + esc(cr ? cr.folio : '') + '</b></div>' +
+      '<div style="font-size:12px;color:var(--muted);margin-top:10px;">Envío por WhatsApp disponible en la próxima fase.</div>' +
+    '</div>' +
+    '<div class="cc-nav">' +
+      '<button class="cc-btn-secondary" onclick="vistaComercial=\'mis\';cargarMisCotizaciones(true);">Ver Mis cotizaciones</button>' +
+      '<button class="cc-btn-next" onclick="reiniciarCotizadorComercial()">Nueva cotización</button>' +
+    '</div>' +
+  '</div>';
+}
+
+function wireCotizadorComercialInputs() {
+  var rutEl = document.getElementById('cc-input-rut');
+  if (rutEl) {
+    rutEl.addEventListener('input', function (e) { cotComState.cliente.rut = e.target.value; cotComRutFoco = true; renderApp(); });
+    if (cotComRutFoco) { rutEl.focus(); var p1 = rutEl.value.length; try { rutEl.setSelectionRange(p1, p1); } catch (er) {} }
+  }
+  var doctorEl = document.getElementById('cc-input-doctor');
+  if (doctorEl) {
+    doctorEl.addEventListener('input', function (e) { cotComState.cliente.doctorNombre = e.target.value; cotComDoctorFoco = true; renderApp(); });
+    if (cotComDoctorFoco) { doctorEl.focus(); var p2 = doctorEl.value.length; try { doctorEl.setSelectionRange(p2, p2); } catch (er) {} }
+  }
+  [['razon', 'razonSocial'], ['direccion', 'direccion'], ['correo', 'correo'], ['telefono', 'telefono'], ['sap', 'codigoSap'], ['obs', 'observaciones']].forEach(function (par) {
+    var el = document.getElementById('cc-input-' + par[0]);
+    if (el) el.addEventListener('input', function (e) { cotComState.cliente[par[1]] = e.target.value; });
+  });
+  var busq = document.getElementById('cc-input-busqueda');
+  if (busq) {
+    busq.addEventListener('input', function (e) { cotComState.busqueda = e.target.value; });
+    busq.addEventListener('keydown', function (e) { if (e.key === 'Enter') cotComBuscarProductos(); });
+  }
+}
+
+// ============================================================
+// MIS COTIZACIONES -- listar_cotizaciones_comerciales (RPC segura, ya
+// probada en C6C). El alcance por rol lo aplica el backend; este archivo
+// nunca vuelve a filtrar por vendedor en el cliente.
+// ============================================================
+const MIS_COT_PAGINA = 20;
+let misCotState = { cargado: false, cargando: false, error: '', filas: [], filtroBusqueda: '', filtroEstado: '', filtroFacturacion: '', offset: 0, hayMas: true };
+let misCotBusquedaFoco = false;
+
+async function cargarMisCotizaciones(reiniciar) {
+  if (reiniciar) { misCotState.offset = 0; misCotState.filas = []; misCotState.hayMas = true; }
+  misCotState.cargando = true;
+  misCotState.error = '';
+  renderApp();
+  try {
+    const { data, error } = await sb.rpc('listar_cotizaciones_comerciales', {
+      p_estado_comercial: misCotState.filtroEstado || null,
+      p_estado_facturacion: misCotState.filtroFacturacion || null,
+      p_fecha_desde: null, p_fecha_hasta: null,
+      p_busqueda: misCotState.filtroBusqueda || null,
+      p_limite: MIS_COT_PAGINA, p_offset: misCotState.offset
+    });
+    if (error) throw error;
+    var filas = data || [];
+    misCotState.filas = misCotState.filas.concat(filas);
+    misCotState.hayMas = filas.length === MIS_COT_PAGINA;
+    misCotState.offset += filas.length;
+    misCotState.cargado = true;
+  } catch (e) {
+    misCotState.error = interpretarError(e);
+  }
+  misCotState.cargando = false;
+  renderApp();
+}
+
+const ESTADOS_COMERCIALES = ['borrador', 'enviada', 'aceptada', 'rechazada', 'vencida', 'anulada'];
+const ESTADOS_FACTURACION = ['pendiente', 'enviada_customer_service', 'facturada', 'parcialmente_facturada', 'cerrada'];
+
+function construirMisCotizaciones() {
+  var opcionesEstado = '<option value="">Todos los estados</option>' + ESTADOS_COMERCIALES.map(function (e) {
+    return '<option value="' + e + '"' + (misCotState.filtroEstado === e ? ' selected' : '') + '>' + e + '</option>';
+  }).join('');
+  var opcionesFact = '<option value="">Toda facturación</option>' + ESTADOS_FACTURACION.map(function (e) {
+    return '<option value="' + e + '"' + (misCotState.filtroFacturacion === e ? ' selected' : '') + '>' + e + '</option>';
+  }).join('');
+
+  var filtrosHtml =
+    '<div style="display:flex;gap:8px;margin-bottom:10px;">' +
+      '<input id="mc-input-busqueda" type="text" placeholder="Folio, RUT o doctor..." style="flex:1;border:1px solid #d4d4d8;border-radius:10px;padding:12px 14px;font-size:15px;" value="' + esc(misCotState.filtroBusqueda) + '">' +
+      '<button type="button" class="cc-btn-add" style="width:auto;padding:0 18px;" onclick="cargarMisCotizaciones(true)">Buscar</button>' +
+    '</div>' +
+    '<div style="display:flex;gap:8px;margin-bottom:16px;">' +
+      '<select id="mc-select-estado" style="flex:1;">' + opcionesEstado + '</select>' +
+      '<select id="mc-select-facturacion" style="flex:1;">' + opcionesFact + '</select>' +
+    '</div>';
+
+  var listaHtml;
+  if (misCotState.cargando && misCotState.filas.length === 0) {
+    listaHtml = '<div style="text-align:center;color:var(--muted);font-size:12px;padding:20px;">Cargando...</div>';
+  } else if (misCotState.error) {
+    listaHtml = '<div class="cc-err" style="text-align:center;padding:14px;">' + esc(misCotState.error) + '</div>';
+  } else if (misCotState.filas.length === 0) {
+    listaHtml = '<div class="cc-empty">Todavía no hay cotizaciones para mostrar.</div>';
+  } else {
+    listaHtml = misCotState.filas.map(function (f) {
+      return '<div class="cc-product-card">' +
+        '<div style="display:flex;justify-content:space-between;align-items:start;margin-bottom:6px;gap:8px;">' +
+          '<span class="cc-p-codigo">' + esc(f.folio) + '</span>' +
+          '<span class="cc-tag-dup" style="background:#eff6ff;color:#1d4ed8;white-space:nowrap;">' + esc(f.estado) + '</span>' +
+        '</div>' +
+        '<div class="cc-p-desc">' + esc(f.doctor_nombre) + '</div>' +
+        '<div class="cc-p-meta"><span>' + esc(f.rut) + '</span><span>' + fmt(f.total) + '</span><span>' + esc(f.modalidad_codigo) + '</span></div>' +
+        '<div class="cc-p-meta"><span>Facturación: ' + esc(f.estado_facturacion) + '</span>' + (f.creado_en ? '<span>' + esc(new Date(f.creado_en).toLocaleDateString('es-CL')) + '</span>' : '') + '</div>' +
+        (f.vigencia_hasta ? '<div class="cc-p-meta"><span>Vigente hasta: ' + esc(f.vigencia_hasta) + '</span></div>' : '') +
+      '</div>';
+    }).join('');
+  }
+
+  var cargarMasHtml = '';
+  if (misCotState.filas.length > 0 && misCotState.cargando) {
+    cargarMasHtml = '<div style="text-align:center;color:var(--muted);font-size:12px;padding:10px;">Cargando más...</div>';
+  } else if (misCotState.hayMas && misCotState.filas.length > 0) {
+    cargarMasHtml = '<button type="button" class="cc-btn-secondary" style="width:100%;margin-top:10px;" onclick="cargarMisCotizaciones(false)">Cargar más</button>';
+  }
+
+  var alcanceTexto = miPerfil && miPerfil.es_coordinador && !miPerfil.es_vendedor && !miPerfil.es_super_admin
+    ? 'Cotizaciones de tu equipo.'
+    : (miPerfil && (miPerfil.es_observador) && !miPerfil.es_vendedor && !miPerfil.es_super_admin ? 'Todas las cotizaciones.' : 'Tus propias cotizaciones.');
+
+  return '<div class="cc-wrap">' +
+    '<h2 style="margin:0 0 4px;font-size:17px;">Mis cotizaciones</h2>' +
+    '<p style="font-size:12px;color:var(--muted);margin:0 0 14px;">' + esc(alcanceTexto) + '</p>' +
+    filtrosHtml + listaHtml + cargarMasHtml +
+  '</div>';
+}
+
+function wireMisCotizacionesInputs() {
+  var b = document.getElementById('mc-input-busqueda');
+  if (b) {
+    b.addEventListener('input', function (e) { misCotState.filtroBusqueda = e.target.value; misCotBusquedaFoco = true; });
+    b.addEventListener('keydown', function (e) { if (e.key === 'Enter') cargarMisCotizaciones(true); });
+    if (misCotBusquedaFoco) { b.focus(); var p = b.value.length; try { b.setSelectionRange(p, p); } catch (er) {} }
+  }
+  var se = document.getElementById('mc-select-estado');
+  if (se) se.addEventListener('change', function (e) { misCotState.filtroEstado = e.target.value; cargarMisCotizaciones(true); });
+  var sf = document.getElementById('mc-select-facturacion');
+  if (sf) sf.addEventListener('change', function (e) { misCotState.filtroFacturacion = e.target.value; cargarMisCotizaciones(true); });
+}
+
+// ============================================================
+// NAVEGACION Y RENDER PRINCIPAL
+// ============================================================
+function construirNavComercial() {
+  var botones = '';
+  if (puedeCrearCotizaciones()) {
+    botones += '<button class="cc-subtab' + (vistaComercial === 'nueva' ? ' active' : '') + '" onclick="vistaComercial=\'nueva\';renderApp();">Nueva cotización</button>';
+  }
+  botones += '<button class="cc-subtab' + (vistaComercial === 'mis' ? ' active' : '') + '" onclick="vistaComercial=\'mis\';cargarMisCotizaciones(true);">Mis cotizaciones</button>';
+  return '<div class="cc-subtabs">' + botones + '</div>';
+}
+
+function renderApp() {
+  document.getElementById('login-view').style.display = 'none';
+  const v = document.getElementById('app-view');
+  v.style.display = 'block';
+
+  if (!cotComState.modalidadesCargadas) { cargarModalidadesComerciales(); }
+
+  var contenidoHtml;
+  if (esSoloCustomerService()) {
+    contenidoHtml = '<div class="cc-wrap"><div class="cc-empty">Este Cotizador es para Ejecutivos Comerciales.<br><span style="font-size:11px;">Tu rol de Customer Service gestiona facturación desde el Admin general.</span></div></div>';
+  } else if (vistaComercial === 'mis') {
+    contenidoHtml = construirMisCotizaciones();
+  } else if (!puedeCrearCotizaciones()) {
+    contenidoHtml = '<div class="cc-wrap"><div class="cc-empty">Tu perfil no tiene el rol de Ejecutivo Comercial habilitado para crear cotizaciones.</div></div>';
+  } else {
+    switch (cotComState.paso) {
+      case 1: contenidoHtml = construirPasoDescuento(); break;
+      case 2: contenidoHtml = construirPasoCliente(); break;
+      case 3: contenidoHtml = construirPasoProductos(); break;
+      case 4: contenidoHtml = construirPasoResumen(); break;
+      case 5: contenidoHtml = construirPasoAccionFinal(); break;
+      case 6: contenidoHtml = construirPasoConfirmacion(); break;
+      default: contenidoHtml = construirPasoDescuento();
+    }
+  }
+
+  v.innerHTML =
+    '<header class="topbar"><div><div class="brand-name">STRAUMANN</div><div class="brand-sub">COTIZADOR COMERCIAL</div></div>' +
+    '<button class="btn-logout" id="btn-logout">Cerrar sesión</button></header>' +
+    '<main>' +
+      (esSoloCustomerService() ? '' : construirNavComercial()) +
+      contenidoHtml +
+      '<div style="text-align:center;font-size:10px;color:#a1a1aa;margin-top:30px;">Cotizador Comercial v' + APP_VERSION + '</div>' +
+    '</main>';
+
+  document.getElementById('btn-logout').addEventListener('click', function () { sb.auth.signOut(); });
+  wireCotizadorComercialInputs();
+  wireMisCotizacionesInputs();
+}
+
+// ============================================================
+// PWA -- reutiliza sw.js tal cual, mismo patron que los recetarios
+// ============================================================
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', function () {
+    navigator.serviceWorker.register('/sw.js').catch(function () {});
+  });
+}
+
+// ============================================================
+// AUTENTICACION -- entrada
+// ============================================================
+sb.auth.onAuthStateChange(function (event, session) {
+  if (session) {
+    cargarMiPerfilYEntrar();
+  } else {
+    miPerfil = null;
+    renderLogin();
+  }
+});
+
+(async function init() {
+  try {
+    const { data } = await sb.auth.getSession();
+    if (data && data.session) {
+      await cargarMiPerfilYEntrar();
+    } else {
+      renderLogin();
+    }
+  } catch (e) {
+    errorConexion = true;
+    renderLogin(interpretarError(e));
+  }
+})();
+</script>
+</body>
+</html>

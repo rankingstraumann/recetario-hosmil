@@ -1,0 +1,18 @@
+{
+  "name": "Cotizador Comercial Straumann",
+  "short_name": "Cotizador Straumann",
+  "description": "Cotizador comercial para ejecutivos de Straumann Group Chile",
+  "start_url": "/cotizador-comercial.html",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#f8fafc",
+  "theme_color": "#991b1b",
+  "lang": "es-CL",
+  "icons": [
+    { "src": "/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "maskable" },
+    { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}
