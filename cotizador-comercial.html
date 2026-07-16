@@ -102,7 +102,7 @@
 // simular_cotizacion_comercial, crear_cotizacion_comercial,
 // listar_cotizaciones_comerciales. Ningun insert/update/delete directo
 // en todo el archivo -- se puede confirmar leyendolo completo.
-const APP_VERSION = '0.2.1-2026-07-16';
+const APP_VERSION = '0.2.2-2026-07-16';
 console.log('Cotizador Comercial version:', APP_VERSION);
 
 const SUPABASE_URL = 'https://gzimllusbxjorbsbtsse.supabase.co';
@@ -264,9 +264,15 @@ function reiniciarCotizadorComercial() {
   renderApp();
 }
 
+// FASE C6D.2 -- el campo RUT ahora acepta solo digitos (teclado numerico
+// en iPhone/Android). El digito verificador K queda deliberadamente fuera
+// de esta version: no hay forma de escribirlo desde un teclado numerico,
+// y no se traduce en silencio a otra cosa. Documentado tambien en la
+// entrega. La validacion autoritativa sigue siendo exclusivamente la del
+// backend (_validar_rut_chileno).
 function rutFormatoBasicoValido(rut) {
-  var limpio = (rut || '').toUpperCase().replace(/[^0-9K]/g, '');
-  return /^[0-9]{7,8}[0-9K]$/.test(limpio);
+  var limpio = (rut || '').replace(/\D/g, '');
+  return /^[0-9]{8,9}$/.test(limpio);
 }
 function cotComClienteValido() {
   var c = cotComState.cliente;
@@ -439,14 +445,30 @@ function construirProgresoCotizador() {
 }
 
 function construirSelectorModalidad() {
-  var opciones = [{ codigo: 'COM10', pct: '10%' }, { codigo: 'COM25', pct: '25%' }, { codigo: 'COM30', pct: '30%' }];
+  // FASE C6D.2 -- COM0 se agrega condicionado a su existencia REAL en
+  // modalidades_comerciales (confirmado por lectura antes de este cambio:
+  // hoy NO existe). No se inventa aqui ni se hardcodea un calculo de 0% --
+  // si Daniel la crea mas adelante, esta opcion se habilita sola la
+  // proxima vez que cargue la lista real, sin tocar este archivo de nuevo.
+  var com0Existe = cotComState.modalidades.some(function (m) { return m.codigo === 'COM0'; });
+  var opciones = [
+    { codigo: 'COM0', pct: '0%', disponible: com0Existe },
+    { codigo: 'COM10', pct: '10%', disponible: true },
+    { codigo: 'COM25', pct: '25%', disponible: true },
+    { codigo: 'COM30', pct: '30%', disponible: true }
+  ];
   var optionsHtml = '<option value="">Selecciona un descuento</option>' + opciones.map(function (o) {
-    return '<option value="' + o.codigo + '"' + (cotComState.modalidadCodigo === o.codigo ? ' selected' : '') + '>' + o.pct + '</option>';
+    var label = o.disponible ? o.pct : (o.pct + ' — pendiente de habilitación');
+    return '<option value="' + o.codigo + '"' +
+      (cotComState.modalidadCodigo === o.codigo ? ' selected' : '') +
+      (!o.disponible ? ' disabled' : '') +
+      '>' + label + '</option>';
   }).join('');
   return '<div class="cc-field">' +
     '<label>Descuento comercial *</label>' +
     '<select id="cc-select-modalidad">' + optionsHtml + '</select>' +
     (!cotComState.modalidadCodigo ? '<div class="cc-err">Selecciona el descuento comercial.</div>' : '') +
+    (!com0Existe ? '<div style="font-size:11px;color:var(--muted);margin-top:4px;">0% pendiente de habilitación en el sistema.</div>' : '') +
   '</div>';
 }
 
@@ -456,8 +478,9 @@ function construirPasoCliente() {
   return '<div class="cc-wrap">' + construirProgresoCotizador() +
     '<h2 style="margin:0 0 4px;font-size:17px;">Datos del cliente</h2>' +
     '<p style="font-size:12px;color:var(--muted);margin:0 0 16px;">Si el RUT ya existe, se reutiliza automáticamente. El porcentaje y el precio final siempre los calcula el sistema.</p>' +
-    '<div class="cc-field"><label>RUT *</label><input id="cc-input-rut" type="text" placeholder="12.345.678-9" value="' + esc(c.rut) + '">' +
+    '<div class="cc-field"><label>RUT *</label><input id="cc-input-rut" type="text" inputmode="numeric" pattern="[0-9]*" autocomplete="off" maxlength="9" placeholder="123456789" value="' + esc(c.rut) + '">' +
       (c.rut && !rutOk ? '<div class="cc-err">Revisa el formato del RUT.</div>' : '') +
+      '<div style="font-size:11px;color:var(--muted);margin-top:4px;">Ingresa solo números, sin puntos ni guion. Los RUT terminados en K se habilitarán en una próxima actualización.</div>' +
     '</div>' +
     '<div class="cc-field"><label>Nombre del doctor *</label><input id="cc-input-doctor" type="text" placeholder="Dr./Dra. ..." value="' + esc(c.doctorNombre) + '"></div>' +
     construirSelectorModalidad() +
@@ -603,7 +626,16 @@ function construirPasoConfirmacion() {
 function wireCotizadorComercialInputs() {
   var rutEl = document.getElementById('cc-input-rut');
   if (rutEl) {
-    rutEl.addEventListener('input', function (e) { cotComState.cliente.rut = e.target.value; cotComRutFoco = true; renderApp(); });
+    rutEl.addEventListener('input', function (e) {
+      // FASE C6D.2 -- solo digitos, sin puntos/guion/letras (incluida K,
+      // que queda fuera de esta version -- ver nota fija bajo el campo).
+      // Se limita tambien la longitud (8-9 digitos: cuerpo + DV numerico).
+      var limpio = e.target.value.replace(/\D/g, '').slice(0, 9);
+      e.target.value = limpio;
+      cotComState.cliente.rut = limpio;
+      cotComRutFoco = true;
+      renderApp();
+    });
     if (cotComRutFoco) { rutEl.focus(); var p1 = rutEl.value.length; try { rutEl.setSelectionRange(p1, p1); } catch (er) {} }
   }
   var doctorEl = document.getElementById('cc-input-doctor');
