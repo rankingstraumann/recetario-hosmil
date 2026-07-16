@@ -102,7 +102,7 @@
 // simular_cotizacion_comercial, crear_cotizacion_comercial,
 // listar_cotizaciones_comerciales. Ningun insert/update/delete directo
 // en todo el archivo -- se puede confirmar leyendolo completo.
-const APP_VERSION = '0.1-2026-07-16';
+const APP_VERSION = '0.2.1-2026-07-16';
 console.log('Cotizador Comercial version:', APP_VERSION);
 
 const SUPABASE_URL = 'https://gzimllusbxjorbsbtsse.supabase.co';
@@ -272,21 +272,23 @@ function cotComClienteValido() {
   var c = cotComState.cliente;
   return !!(c.rut && rutFormatoBasicoValido(c.rut) && c.doctorNombre && c.doctorNombre.trim() !== '');
 }
+// FASE C6D.1 -- el paso 1 ahora exige tambien la modalidad seleccionada
+// (fusionada dentro del mismo paso Cliente, ya no es una pantalla propia).
+function cotComPaso1Valido() { return cotComClienteValido() && !!cotComState.modalidadCodigo; }
 
 function cotComIrPaso(n) {
-  if (n < 1 || n > 6) return;
+  if (n < 1 || n > 5) return;
   cotComState.paso = n;
-  if (n === 4) { intentarSimularCotizacion(); return; }
+  if (n === 3) { intentarSimularCotizacion(); return; }
   renderApp();
 }
 function cotComSiguiente() {
-  if (cotComState.paso === 1 && !cotComState.modalidadCodigo) return;
-  if (cotComState.paso === 2 && !cotComClienteValido()) return;
-  if (cotComState.paso === 3 && cotComState.carrito.length === 0) return;
+  if (cotComState.paso === 1 && !cotComPaso1Valido()) return;
+  if (cotComState.paso === 2 && cotComState.carrito.length === 0) return;
   cotComIrPaso(cotComState.paso + 1);
 }
 function cotComAnterior() { cotComIrPaso(cotComState.paso - 1); }
-function cotComSeleccionarModalidad(codigo) { cotComState.modalidadCodigo = codigo; renderApp(); }
+function cotComSeleccionarModalidad(codigo) { cotComState.modalidadCodigo = codigo || null; renderApp(); }
 
 async function cargarModalidadesComerciales() {
   cotComState.modalidadesCargadas = true;
@@ -407,7 +409,7 @@ async function crearCotizacionReal() {
     const { data, error } = await sb.rpc('crear_cotizacion_comercial', pr.params);
     if (error) throw error;
     cotComState.creada = { folio: data.folio, id: data.id };
-    cotComState.paso = 6;
+    cotComState.paso = 5;
     misCotState.cargado = false; // fuerza refresco la proxima vez que se visite Mis cotizaciones
   } catch (e) {
     cotComCrearError = interpretarError(e);
@@ -417,43 +419,34 @@ async function crearCotizacionReal() {
 }
 
 // ============================================================
-// COTIZADOR -- render de los 6 pasos
+// COTIZADOR -- render de los pasos (FASE C6D.1: el descuento ya no es una
+// pantalla propia -- es un campo desplegable dentro del paso Cliente,
+// similar al Recetario Institucional)
 // ============================================================
 function construirProgresoCotizador() {
-  var pasos = ['Descuento', 'Cliente', 'Productos', 'Resumen'];
+  var pasos = ['Cliente', 'Productos', 'Resumen'];
   var dots = '';
-  for (var i = 1; i <= 4; i++) {
+  for (var i = 1; i <= 3; i++) {
     var cls = 'cc-step-dot';
-    if (cotComState.paso > i || cotComState.paso >= 5) cls += ' done';
+    if (cotComState.paso > i || cotComState.paso >= 4) cls += ' done';
     else if (cotComState.paso === i) cls += ' active';
     dots += '<div class="' + cls + '"></div>';
   }
-  var etiqueta = cotComState.paso <= 4
-    ? ('Paso ' + cotComState.paso + ' de 4 — ' + esc(pasos[cotComState.paso - 1]))
-    : (cotComState.paso === 5 ? 'Revisa y crea tu cotización' : 'Cotización creada');
+  var etiqueta = cotComState.paso <= 3
+    ? ('Paso ' + cotComState.paso + ' de 3 — ' + esc(pasos[cotComState.paso - 1]))
+    : (cotComState.paso === 4 ? 'Revisa y crea tu cotización' : 'Cotización creada');
   return '<div class="cc-steps">' + dots + '</div><div class="cc-step-label">' + etiqueta + '</div>';
 }
 
-function construirPasoDescuento() {
+function construirSelectorModalidad() {
   var opciones = [{ codigo: 'COM10', pct: '10%' }, { codigo: 'COM25', pct: '25%' }, { codigo: 'COM30', pct: '30%' }];
-  var cardsHtml = '<div class="cc-card-grid">';
-  opciones.forEach(function (o) {
-    var sel = cotComState.modalidadCodigo === o.codigo;
-    cardsHtml += '<button type="button" class="cc-choice-card' + (sel ? ' selected' : '') + '" onclick="cotComSeleccionarModalidad(\'' + o.codigo + '\')">' +
-      '<div class="cc-pct">' + o.pct + '</div>' +
-      '<div class="cc-pct-label">Descuento comercial ' + o.pct + (sel ? ' · Seleccionado' : '') + '</div>' +
-      '</button>';
-  });
-  cardsHtml += '</div>';
-
-  return '<div class="cc-wrap">' + construirProgresoCotizador() +
-    '<h2 style="margin:0 0 4px;font-size:17px;">Elige el descuento</h2>' +
-    '<p style="font-size:12px;color:var(--muted);margin:0 0 16px;">Solo eliges la modalidad. El porcentaje y el precio final siempre los calcula el sistema.</p>' +
-    cardsHtml +
-    '<div class="cc-nav">' +
-      '<button class="cc-btn-secondary" onclick="reiniciarCotizadorComercial()">Reiniciar</button>' +
-      '<button class="cc-btn-next" ' + (!cotComState.modalidadCodigo ? 'disabled' : '') + ' onclick="cotComSiguiente()">Siguiente</button>' +
-    '</div>' +
+  var optionsHtml = '<option value="">Selecciona un descuento</option>' + opciones.map(function (o) {
+    return '<option value="' + o.codigo + '"' + (cotComState.modalidadCodigo === o.codigo ? ' selected' : '') + '>' + o.pct + '</option>';
+  }).join('');
+  return '<div class="cc-field">' +
+    '<label>Descuento comercial *</label>' +
+    '<select id="cc-select-modalidad">' + optionsHtml + '</select>' +
+    (!cotComState.modalidadCodigo ? '<div class="cc-err">Selecciona el descuento comercial.</div>' : '') +
   '</div>';
 }
 
@@ -462,11 +455,12 @@ function construirPasoCliente() {
   var rutOk = !c.rut || rutFormatoBasicoValido(c.rut);
   return '<div class="cc-wrap">' + construirProgresoCotizador() +
     '<h2 style="margin:0 0 4px;font-size:17px;">Datos del cliente</h2>' +
-    '<p style="font-size:12px;color:var(--muted);margin:0 0 16px;">Si el RUT ya existe, se reutiliza automáticamente.</p>' +
+    '<p style="font-size:12px;color:var(--muted);margin:0 0 16px;">Si el RUT ya existe, se reutiliza automáticamente. El porcentaje y el precio final siempre los calcula el sistema.</p>' +
     '<div class="cc-field"><label>RUT *</label><input id="cc-input-rut" type="text" placeholder="12.345.678-9" value="' + esc(c.rut) + '">' +
       (c.rut && !rutOk ? '<div class="cc-err">Revisa el formato del RUT.</div>' : '') +
     '</div>' +
     '<div class="cc-field"><label>Nombre del doctor *</label><input id="cc-input-doctor" type="text" placeholder="Dr./Dra. ..." value="' + esc(c.doctorNombre) + '"></div>' +
+    construirSelectorModalidad() +
     '<details class="cc-collapsible"' + (cotComState.opcionalesAbierto ? ' open' : '') + '>' +
       '<summary onclick="cotComState.opcionalesAbierto=!cotComState.opcionalesAbierto;">Datos opcionales (razón social, dirección, contacto...)</summary>' +
       '<div class="cc-field"><label>Razón social</label><input id="cc-input-razon" type="text" value="' + esc(c.razonSocial) + '"></div>' +
@@ -477,8 +471,8 @@ function construirPasoCliente() {
       '<div class="cc-field"><label>Observaciones</label><textarea id="cc-input-obs" rows="3">' + esc(c.observaciones) + '</textarea></div>' +
     '</details>' +
     '<div class="cc-nav">' +
-      '<button class="cc-btn-secondary" onclick="cotComAnterior()">Volver</button>' +
-      '<button class="cc-btn-next" ' + (!cotComClienteValido() ? 'disabled' : '') + ' onclick="cotComSiguiente()">Siguiente</button>' +
+      '<button class="cc-btn-secondary" onclick="reiniciarCotizadorComercial()">Reiniciar</button>' +
+      '<button class="cc-btn-next" ' + (!cotComPaso1Valido() ? 'disabled' : '') + ' onclick="cotComSiguiente()">Siguiente</button>' +
     '</div>' +
   '</div>';
 }
@@ -566,7 +560,7 @@ function construirPasoResumen() {
     '<div style="background:#fff;border:1px solid var(--border);border-radius:12px;padding:14px;margin-bottom:14px;">' + calculoHtml + '</div>' +
     '<div class="cc-nav">' +
       '<button class="cc-btn-secondary" onclick="cotComAnterior()">Volver</button>' +
-      '<button class="cc-btn-next" onclick="cotComIrPaso(5)">Continuar</button>' +
+      '<button class="cc-btn-next" onclick="cotComIrPaso(4)">Continuar</button>' +
     '</div>' +
   '</div>';
 }
@@ -616,6 +610,10 @@ function wireCotizadorComercialInputs() {
   if (doctorEl) {
     doctorEl.addEventListener('input', function (e) { cotComState.cliente.doctorNombre = e.target.value; cotComDoctorFoco = true; renderApp(); });
     if (cotComDoctorFoco) { doctorEl.focus(); var p2 = doctorEl.value.length; try { doctorEl.setSelectionRange(p2, p2); } catch (er) {} }
+  }
+  var modalidadEl = document.getElementById('cc-select-modalidad');
+  if (modalidadEl) {
+    modalidadEl.addEventListener('change', function (e) { cotComSeleccionarModalidad(e.target.value); });
   }
   [['razon', 'razonSocial'], ['direccion', 'direccion'], ['correo', 'correo'], ['telefono', 'telefono'], ['sap', 'codigoSap'], ['obs', 'observaciones']].forEach(function (par) {
     var el = document.getElementById('cc-input-' + par[0]);
@@ -765,13 +763,12 @@ function renderApp() {
     contenidoHtml = '<div class="cc-wrap"><div class="cc-empty">Tu perfil no tiene el rol de Ejecutivo Comercial habilitado para crear cotizaciones.</div></div>';
   } else {
     switch (cotComState.paso) {
-      case 1: contenidoHtml = construirPasoDescuento(); break;
-      case 2: contenidoHtml = construirPasoCliente(); break;
-      case 3: contenidoHtml = construirPasoProductos(); break;
-      case 4: contenidoHtml = construirPasoResumen(); break;
-      case 5: contenidoHtml = construirPasoAccionFinal(); break;
-      case 6: contenidoHtml = construirPasoConfirmacion(); break;
-      default: contenidoHtml = construirPasoDescuento();
+      case 1: contenidoHtml = construirPasoCliente(); break;
+      case 2: contenidoHtml = construirPasoProductos(); break;
+      case 3: contenidoHtml = construirPasoResumen(); break;
+      case 4: contenidoHtml = construirPasoAccionFinal(); break;
+      case 5: contenidoHtml = construirPasoConfirmacion(); break;
+      default: contenidoHtml = construirPasoCliente();
     }
   }
 
