@@ -87,7 +87,7 @@
 // segundos si el navegador esta sirviendo una version cacheada antigua
 // (incidente real: Fase 5.6A quedo con cache de una version anterior en
 // una sesion, sin esta marca hubiera sido mucho mas lento de detectar).
-const ADMIN_VERSION = '6.0C-2026-07-16';
+const ADMIN_VERSION = '6.0I-2026-07-16';
 console.log('Admin version:', ADMIN_VERSION);
 
 const SUPABASE_URL = 'https://gzimllusbxjorbsbtsse.supabase.co';
@@ -198,6 +198,46 @@ let matrizSimVisResultados = []; // candidatos de la busqueda (hasta 20)
 let matrizSimVisAbierto = null; // producto elegido para simular {codigo, descripcion, marca, familia, precioLista}
 let matrizSimVisImpacto = null; // impacto ya calculado para matrizSimVisAbierto
 let matrizSimVisCalculando = false;
+
+// ============================================================
+// FASE 6.0I -- flujo completo de disponibilidad unitaria (solicitar,
+// listar, aprobar, rechazar, ejecutar, revertir). Usa EXCLUSIVAMENTE
+// las 6 RPC ya creadas y validadas en 6.0F/6.0G:
+//   crear_solicitud_disponibilidad_producto
+//   aprobar_solicitud_disponibilidad_producto
+//   rechazar_solicitud_disponibilidad_producto
+//   listar_solicitudes_disponibilidad_producto
+//   ejecutar_solicitud_disponibilidad_producto
+//   revertir_cambio_disponibilidad_producto
+// Ningun acceso directo (sb.from) a producto_exclusion_institucion ni a
+// solicitudes_cambio_disponibilidad_producto en todo este bloque.
+// ============================================================
+const DISP_INSTITUCIONES = ['ARMADA', 'HOSMIL', 'UC', 'UDP', 'UMAYOR', 'UMAYORT', 'UNAB'];
+
+// Crear solicitud desde el modal de simulacion existente (6.0A/6.0C)
+let matrizDispMotivo = '';
+let matrizDispMotivoFoco = false;
+let matrizDispCreando = false; // guarda contra doble clic / doble envio
+let matrizDispCrearError = '';
+let matrizDispCrearExito = null; // fila devuelta por crear_solicitud_disponibilidad_producto
+
+// Listado de solicitudes (solo via listar_solicitudes_disponibilidad_producto)
+let matrizDispSolicitudesRows = [];
+let matrizDispSolicitudesCargando = false;
+let matrizDispSolicitudesCargadas = false;
+let matrizDispFiltroInstitucion = 'todas';
+let matrizDispFiltroEstado = 'todos';
+let matrizDispFiltroTexto = '';
+let matrizDispFiltroTextoFoco = false;
+let matrizDispDetalleAbierta = null; // fila para ver detalle completo (solo lectura)
+
+// Aprobar / rechazar / ejecutar / revertir -- una unica accion a la vez
+let matrizDispAccionAbierta = null; // { id, tipo: 'aprobar'|'rechazar'|'ejecutar'|'revertir', fila }
+let matrizDispAccionMotivo = ''; // solo se usa para 'rechazar'
+let matrizDispAccionMotivoFoco = false;
+let matrizDispAccionError = '';
+let matrizDispAccionGuardando = false; // guarda contra doble clic / doble envio
+let matrizDispAccionResultado = null; // fila devuelta por la RPC tras exito
 
 // Fase 5.2B -- Simulador de impacto. Solo lectura: llama a
 // simular_cambio_descuento_familia y simular_cambio_descuento_familia_resumen
@@ -1353,6 +1393,12 @@ async function seleccionarInstitucionMatriz(codigo) {
   }
   matrizCargando = false;
   renderMatrizInstitucional();
+  // FASE 6.0I -- carga perezosa, una sola vez (no depende de la institucion
+  // seleccionada). No se espera (await) porque no debe bloquear el render
+  // del resto de la Matriz.
+  if (!matrizDispSolicitudesCargadas && !matrizDispSolicitudesCargando) {
+    cargarSolicitudesDisponibilidad();
+  }
 }
 
 function refrescarMatriz() {
@@ -1867,6 +1913,11 @@ function abrirSimulacionVisibilidad(productoId) {
   matrizSimVisAbierto = producto;
   matrizSimVisImpacto = null;
   matrizSimVisCalculando = true;
+  // FASE 6.0I -- limpiar cualquier estado de una solicitud anterior al
+  // abrir una simulacion nueva.
+  matrizDispMotivo = '';
+  matrizDispCrearError = '';
+  matrizDispCrearExito = null;
   renderMatrizInstitucional();
   calcularImpactoVisibilidad(producto);
 }
@@ -1875,6 +1926,10 @@ function cerrarSimulacionVisibilidad() {
   matrizSimVisAbierto = null;
   matrizSimVisImpacto = null;
   matrizSimVisCalculando = false;
+  matrizDispMotivo = '';
+  matrizDispCreando = false;
+  matrizDispCrearError = '';
+  matrizDispCrearExito = null;
   renderMatrizInstitucional();
 }
 
@@ -1937,6 +1992,193 @@ async function calcularImpactoVisibilidad(producto) {
     disponibilidad: disponibilidad,
   };
   matrizSimVisCalculando = false;
+  renderMatrizInstitucional();
+}
+
+// ============================================================
+// FASE 6.0I -- crear solicitud de disponibilidad desde el modal de
+// simulacion. Unica escritura: sb.rpc('crear_solicitud_disponibilidad_producto').
+// No ejecuta el cambio real -- eso es una accion aparte, sobre la
+// solicitud ya creada, y requiere aprobacion previa.
+// ============================================================
+async function crearSolicitudDisponibilidad() {
+  if (matrizDispCreando) return; // evita doble clic / doble envio
+  if (!matrizSimVisAbierto || !matrizSimVisImpacto) return;
+
+  const motivo = (matrizDispMotivo || '').trim();
+  matrizDispCrearError = '';
+  if (!motivo) {
+    matrizDispCrearError = 'El motivo es obligatorio.';
+    renderMatrizInstitucional();
+    return;
+  }
+
+  const p = matrizSimVisAbierto;
+  const disp = matrizSimVisImpacto.disponibilidad;
+  // Regla del enunciado: producto visible -> desactivar; no visible -> activar.
+  const accion = disp.disponible ? 'desactivar' : 'activar';
+
+  // Confirmar todos los datos antes de llamar la RPC (institucion, producto_id,
+  // codigo, descripcion, accion, motivo) -- se arman explicitos aqui, no se
+  // infieren dentro de la RPC a partir de nada ambiguo.
+  const params = {
+    p_institucion_codigo: matrizInstitucionSel,
+    p_producto_id: p.producto_id,
+    p_accion: accion,
+    p_motivo: motivo,
+  };
+
+  matrizDispCreando = true;
+  renderMatrizInstitucional();
+  try {
+    const { data, error } = await sb.rpc('crear_solicitud_disponibilidad_producto', params);
+    if (error) throw error;
+    matrizDispCrearExito = data;
+    matrizDispMotivo = '';
+    await cargarSolicitudesDisponibilidad();
+  } catch (e) {
+    matrizDispCrearError = mensajeErrorSeguro(e);
+  }
+  matrizDispCreando = false;
+  renderMatrizInstitucional();
+}
+
+// ============================================================
+// FASE 6.0I -- listado de solicitudes. Unica lectura: sb.rpc(
+// 'listar_solicitudes_disponibilidad_producto'). Nunca sb.from(...) contra
+// producto_exclusion_institucion ni solicitudes_cambio_disponibilidad_producto.
+// ============================================================
+async function cargarSolicitudesDisponibilidad() {
+  matrizDispSolicitudesCargando = true;
+  renderMatrizInstitucional();
+  try {
+    const filtroInst = (matrizDispFiltroInstitucion === 'todas') ? null : matrizDispFiltroInstitucion;
+    const { data, error } = await sb.rpc('listar_solicitudes_disponibilidad_producto', {
+      p_institucion_codigo: filtroInst,
+      p_estado: null,
+    });
+    if (error) throw error;
+
+    // listar_solicitudes_disponibilidad_producto (Fase 6.0F) no expone
+    // ejecutado_por/ejecutado_en/validacion_posterior/auditoria_id/
+    // revertido_por/revertido_en -- por diseno de esa fase. Si esta misma
+    // sesion ya ejecuto o revirtio alguna de estas filas, conservamos esos
+    // campos enriquecidos (recibidos directo de ejecutar_.../revertir_...,
+    // que si devuelven la fila completa) en vez de perderlos al refrescar.
+    const enriquecidoPorId = {};
+    matrizDispSolicitudesRows.forEach(function (r) {
+      if (r.ejecutado_en || r.revertido_en) enriquecidoPorId[r.id] = r;
+    });
+    matrizDispSolicitudesRows = (data || []).map(function (r) {
+      return enriquecidoPorId[r.id] ? Object.assign({}, r, enriquecidoPorId[r.id]) : r;
+    });
+  } catch (e) {
+    matrizDispSolicitudesRows = [];
+    console.error('[disponibilidad] Error al listar solicitudes:', mensajeErrorSeguro(e), e);
+  }
+  matrizDispSolicitudesCargando = false;
+  matrizDispSolicitudesCargadas = true;
+  renderMatrizInstitucional();
+}
+
+function solicitudesDisponibilidadFiltradas() {
+  const texto = (matrizDispFiltroTexto || '').trim().toLowerCase();
+  return matrizDispSolicitudesRows.filter(function (s) {
+    if (matrizDispFiltroEstado !== 'todos' && s.estado !== matrizDispFiltroEstado) return false;
+    if (texto &&
+        (s.codigo_snapshot || '').toLowerCase().indexOf(texto) === -1 &&
+        (s.descripcion_snapshot || '').toLowerCase().indexOf(texto) === -1) return false;
+    return true;
+  });
+}
+
+function abrirDetalleDisponibilidad(id) {
+  matrizDispDetalleAbierta = matrizDispSolicitudesRows.find(function (s) { return s.id === id; }) || null;
+  renderMatrizInstitucional();
+}
+
+function cerrarDetalleDisponibilidad() {
+  matrizDispDetalleAbierta = null;
+  renderMatrizInstitucional();
+}
+
+// ============================================================
+// FASE 6.0I -- aprobar / rechazar / ejecutar / revertir. Cada una llama
+// UNA sola RPC de escritura (la que corresponde a `tipo`), nunca mas de
+// una, y nunca un INSERT/UPDATE/DELETE directo a ninguna tabla.
+// ============================================================
+function abrirAccionDisponibilidad(id, tipo) {
+  const fila = matrizDispSolicitudesRows.find(function (s) { return s.id === id; });
+  if (!fila) return;
+  matrizDispAccionAbierta = { id: id, tipo: tipo, fila: fila };
+  matrizDispAccionMotivo = '';
+  matrizDispAccionError = '';
+  matrizDispAccionResultado = null;
+  renderMatrizInstitucional();
+}
+
+function cerrarAccionDisponibilidad() {
+  matrizDispAccionAbierta = null;
+  matrizDispAccionMotivo = '';
+  matrizDispAccionError = '';
+  matrizDispAccionResultado = null;
+  renderMatrizInstitucional();
+}
+
+async function confirmarAccionDisponibilidad() {
+  if (matrizDispAccionGuardando) return; // evita doble clic / doble envio
+  if (!matrizDispAccionAbierta) return;
+  const id = matrizDispAccionAbierta.id;
+  const tipo = matrizDispAccionAbierta.tipo;
+  matrizDispAccionError = '';
+
+  if (tipo === 'rechazar') {
+    const motivo = (matrizDispAccionMotivo || '').trim();
+    if (!motivo) {
+      matrizDispAccionError = 'El motivo de rechazo es obligatorio.';
+      renderMatrizInstitucional();
+      return;
+    }
+  }
+
+  const RPC_POR_TIPO = {
+    aprobar: 'aprobar_solicitud_disponibilidad_producto',
+    rechazar: 'rechazar_solicitud_disponibilidad_producto',
+    ejecutar: 'ejecutar_solicitud_disponibilidad_producto',
+    revertir: 'revertir_cambio_disponibilidad_producto',
+  };
+  const nombreRpc = RPC_POR_TIPO[tipo];
+  if (!nombreRpc) return;
+
+  const params = (tipo === 'rechazar')
+    ? { p_solicitud_id: id, p_motivo_rechazo: matrizDispAccionMotivo.trim() }
+    : { p_solicitud_id: id };
+
+  matrizDispAccionGuardando = true;
+  renderMatrizInstitucional();
+  try {
+    const { data, error } = await sb.rpc(nombreRpc, params);
+    if (error) throw error;
+    matrizDispAccionResultado = data;
+
+    // Refrescar solicitudes, matriz de catalogo y busqueda del producto --
+    // requerido explicitamente para ejecutar/revertir, se aplica a las 4
+    // acciones por consistencia (aprobar/rechazar tambien cambian el estado
+    // visible en el listado).
+    await cargarSolicitudesDisponibilidad();
+    if (matrizInstitucionSel) {
+      const { data: catData } = await sb.rpc('matriz_catalogo_institucion', { p_institucion_codigo: matrizInstitucionSel });
+      if (catData) matrizCatalogoRows = catData;
+    }
+    if (matrizSimVisBusqueda) {
+      await buscarProductoVisibilidad();
+    }
+  } catch (e) {
+    // Regla explicita: no cerrar el modal si la RPC falla -- se deja
+    // matrizDispAccionAbierta intacto, solo se muestra el error.
+    matrizDispAccionError = mensajeErrorSeguro(e);
+  }
+  matrizDispAccionGuardando = false;
   renderMatrizInstitucional();
 }
 
@@ -2046,6 +2288,11 @@ function cambiarSubTabMatriz(tab) {
   if (tab === 'comparador' && !matrizComparadorCargado) { cargarMatrizComparador(); return; }
   if (tab === 'auditoria' && !matrizAuditoriaCargada) { cargarMatrizAuditoria(); return; }
   if (tab === 'solicitudes' && !matrizSolicitudesCargadas) { cargarMatrizSolicitudes(); return; }
+  // FASE 6.0I -- el listado de disponibilidad no depende de la institucion
+  // seleccionada (por defecto muestra todas las que el rol puede ver), asi
+  // que se carga una sola vez, la primera vez que se entra al sub-tab
+  // Catalogo (donde vive el bloque de disponibilidad).
+  if (tab === 'catalogo' && !matrizDispSolicitudesCargadas) { cargarSolicitudesDisponibilidad(); }
   renderMatrizInstitucional();
 }
 
@@ -2720,10 +2967,38 @@ function renderMatrizInstitucional() {
       advertencias += '<div style="margin-top:8px;padding:8px 12px;background:#fef3c7;border:1px solid #fde68a;border-radius:7px;font-size:12px;color:#92400e;">⚠️ La visibilidad según la RPC en producción (<code>obtener_catalogo_institucion</code>, solo exclusión por marca) difiere de la que resultaría de la configuración completa (marca + familia): configuración completa = ' + (p.visible_segun_config_completa ? 'Disponible' : 'No disponible') + (p.causa_no_visible_config_completa ? ' -- ' + esc(p.causa_no_visible_config_completa) : '') + '.</div>';
     }
 
+    // FASE 6.0I -- si ya se creo la solicitud con exito, se muestra la
+    // confirmacion en vez del formulario (evita reenvios y deja claro que
+    // la solicitud quedo pendiente de aprobacion -- el cambio real NO se
+    // aplico todavia).
+    if (matrizDispCrearExito) {
+      const s = matrizDispCrearExito;
+      return '<div style="position:fixed;inset:0;background:rgba(0,0,0,0.5);display:flex;align-items:center;justify-content:center;z-index:1002;">' +
+        '<div style="background:#fff;border-radius:12px;padding:24px;max-width:480px;width:92%;box-shadow:0 10px 40px rgba(0,0,0,0.25);">' +
+          '<h3 style="margin:0 0 6px;">✅ Solicitud creada</h3>' +
+          '<div style="font-size:13px;line-height:1.8;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;padding:10px 14px;">' +
+            '<b>Institución:</b> ' + esc(s.institucion_codigo) + '<br>' +
+            '<b>Producto:</b> ' + esc(s.codigo_snapshot) + ' -- ' + esc(s.descripcion_snapshot) + '<br>' +
+            '<b>Acción solicitada:</b> ' + esc(s.accion) + '<br>' +
+            '<b>Estado:</b> ' + esc(s.estado) + '<br>' +
+            '<b>Motivo:</b> ' + esc(s.motivo) +
+          '</div>' +
+          '<p style="margin:10px 0 0;font-size:12px;color:var(--muted);">La solicitud queda pendiente de aprobación -- el catálogo real todavía no cambió. Revisa el listado de "Solicitudes de disponibilidad" más abajo.</p>' +
+          '<div style="display:flex;justify-content:flex-end;margin-top:16px;">' +
+            '<button class="btn-logout" onclick="cerrarSimulacionVisibilidad()" style="background:#1a1a1a;color:#fff;">Cerrar</button>' +
+          '</div>' +
+        '</div>' +
+      '</div>';
+    }
+
+    // FASE 6.0I -- observador nunca puede solicitar; el boton ni siquiera
+    // se muestra (ademas de que la RPC lo denegaria igual, fail-closed).
+    const puedeSolicitar = !esObservador();
+
     return '<div style="position:fixed;inset:0;background:rgba(0,0,0,0.5);display:flex;align-items:center;justify-content:center;z-index:1002;" onclick="if(event.target===this){cerrarSimulacionVisibilidad();}">' +
       '<div style="background:#fff;border-radius:12px;padding:24px;max-width:480px;width:92%;box-shadow:0 10px 40px rgba(0,0,0,0.25);">' +
         '<h3 style="margin:0 0 6px;">🔍 Simulación -- ' + esc(accion) + '</h3>' +
-        '<p style="margin:0 0 12px;font-size:12px;color:var(--muted);">Esta es solo una simulación visual. No se modificará ningún dato en Supabase.</p>' +
+        '<p style="margin:0 0 12px;font-size:12px;color:var(--muted);">Esta simulación no modifica nada. Para aplicar el cambio real hace falta crear una solicitud, que luego debe ser aprobada y ejecutada por separado.</p>' +
         '<div style="font-size:13px;line-height:1.8;background:var(--bg);border-radius:8px;padding:10px 14px;">' +
           '<b>Institución:</b> ' + esc(matrizInstitucionSel) + '<br>' +
           '<b>Producto:</b> ' + esc(p.codigo) + ' -- ' + esc(p.descripcion) + '<br>' +
@@ -2738,8 +3013,177 @@ function renderMatrizInstitucional() {
         '</div>' +
         (matrizSimVisImpacto.impactoHistoricoDisponible ? '' : '<div style="margin-top:8px;padding:8px 12px;background:#f4f4f5;border-radius:7px;font-size:12px;color:var(--muted);">La activación o desactivación no modifica cotizaciones históricas.</div>') +
         advertencias +
+        (puedeSolicitar ?
+          ('<div style="margin-top:14px;">' +
+            '<label style="font-size:11px;font-weight:600;color:var(--muted);display:block;margin-bottom:3px;">Motivo de la solicitud (obligatorio)</label>' +
+            '<textarea id="disp-solicitud-motivo" rows="3" placeholder="Explica por qué..." style="width:100%;padding:8px 10px;border-radius:7px;border:1px solid var(--border);font-size:13px;box-sizing:border-box;font-family:inherit;">' + esc(matrizDispMotivo) + '</textarea>' +
+          '</div>')
+          : '<div style="margin-top:14px;padding:8px 12px;background:#f4f4f5;border-radius:7px;font-size:12px;color:var(--muted);">🔒 Modo observador: solo lectura, no puedes crear solicitudes.</div>') +
+        (matrizDispCrearError ? '<div style="background:#fef2f2;color:#991b1b;border:1px solid #fecaca;border-radius:8px;padding:8px 12px;font-size:12px;margin-top:8px;">⚠️ ' + esc(matrizDispCrearError) + '</div>' : '') +
+        '<div style="display:flex;justify-content:flex-end;gap:8px;margin-top:16px;">' +
+          '<button class="btn-logout" onclick="cerrarSimulacionVisibilidad()">Cerrar</button>' +
+          (puedeSolicitar ?
+            ('<button class="btn-logout" onclick="crearSolicitudDisponibilidad()"' + (matrizDispCreando ? ' disabled' : '') + ' style="background:#1a1a1a;color:#fff;">' + (matrizDispCreando ? 'Creando...' : 'Crear solicitud') + '</button>')
+            : '') +
+        '</div>' +
+      '</div>' +
+    '</div>';
+  }
+
+  // ============================================================
+  // FASE 6.0I -- listado de solicitudes de disponibilidad. Toda la data
+  // viene de listar_solicitudes_disponibilidad_producto -- sin acceso
+  // directo a ninguna tabla.
+  // ============================================================
+  function construirListadoSolicitudesDisponibilidad() {
+    const filas = solicitudesDisponibilidadFiltradas();
+    const puedeGestionar = esSuperAdmin(); // solo super admin aprueba/rechaza/ejecuta/revierte
+
+    let filasHtml = '';
+    filas.forEach(function (s) {
+      let botones = '';
+      if (puedeGestionar) {
+        if (s.estado === 'pendiente_aprobacion') {
+          botones =
+            '<button class="btn-logout" onclick="abrirAccionDisponibilidad(\'' + esc(s.id) + '\',\'aprobar\')" style="font-size:11px;">Aprobar</button> ' +
+            '<button class="btn-logout" onclick="abrirAccionDisponibilidad(\'' + esc(s.id) + '\',\'rechazar\')" style="font-size:11px;">Rechazar</button>';
+        } else if (s.estado === 'aprobada') {
+          botones = '<button class="btn-logout" onclick="abrirAccionDisponibilidad(\'' + esc(s.id) + '\',\'ejecutar\')" style="font-size:11px;background:#92400e;color:#fff;">Ejecutar</button>';
+        } else if (s.estado === 'ejecutada') {
+          botones = '<button class="btn-logout" onclick="abrirAccionDisponibilidad(\'' + esc(s.id) + '\',\'revertir\')" style="font-size:11px;background:#9a3412;color:#fff;">Revertir</button>';
+        }
+        // rechazada / revertida: solo lectura, sin botones -- regla explicita.
+      }
+      botones += ' <button class="btn-logout" onclick="abrirDetalleDisponibilidad(\'' + esc(s.id) + '\')" style="font-size:11px;">Ver detalle</button>';
+
+      filasHtml += '<tr>' +
+        '<td class="mono" style="font-size:11px;">' + esc(s.institucion_codigo) + '</td>' +
+        '<td><span class="mono">' + esc(s.codigo_snapshot) + '</span><br><span style="font-size:11px;color:var(--muted);">' + esc(s.descripcion_snapshot) + '</span></td>' +
+        '<td style="font-size:11px;">' + esc(s.accion) + '</td>' +
+        '<td style="font-size:11px;">' + (s.estado_actual ? 'Disponible' : 'No disponible') + ' → ' + (s.estado_propuesto ? 'Disponible' : 'No disponible') + '</td>' +
+        '<td style="font-size:11px;">' + fechaCorta(s.solicitado_en) + '</td>' +
+        '<td>' + badgeEstadoSolicitud(s.estado) + '</td>' +
+        '<td>' + botones + '</td>' +
+      '</tr>';
+    });
+
+    const opcionesInst = '<option value="todas">Todas</option>' +
+      DISP_INSTITUCIONES.map(function (c) { return '<option value="' + esc(c) + '"' + (matrizDispFiltroInstitucion === c ? ' selected' : '') + '>' + esc(c) + '</option>'; }).join('');
+    const ESTADOS_DISP = ['todos', 'pendiente_aprobacion', 'aprobada', 'rechazada', 'ejecutada', 'revertida'];
+    const opcionesEstado = ESTADOS_DISP.map(function (e) {
+      return '<option value="' + e + '"' + (matrizDispFiltroEstado === e ? ' selected' : '') + '>' + (e === 'todos' ? 'Todos' : esc(e)) + '</option>';
+    }).join('');
+
+    return '<div class="dash-section" style="margin-top:14px;border:1px dashed var(--border);">' +
+      '<h3 style="margin:0 0 4px;">📋 Solicitudes de disponibilidad <span style="font-size:11px;font-weight:400;color:var(--muted);">(crear/aprobar/rechazar/ejecutar/revertir vía RPC exclusivamente)</span></h3>' +
+      '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:flex-end;margin:10px 0;">' +
+        '<div><label style="font-size:11px;font-weight:600;color:var(--muted);display:block;margin-bottom:3px;">Institución</label>' +
+          '<select id="disp-filtro-institucion" style="padding:7px 10px;border-radius:7px;border:1px solid var(--border);font-size:13px;">' + opcionesInst + '</select></div>' +
+        '<div><label style="font-size:11px;font-weight:600;color:var(--muted);display:block;margin-bottom:3px;">Estado</label>' +
+          '<select id="disp-filtro-estado" style="padding:7px 10px;border-radius:7px;border:1px solid var(--border);font-size:13px;">' + opcionesEstado + '</select></div>' +
+        '<div><label style="font-size:11px;font-weight:600;color:var(--muted);display:block;margin-bottom:3px;">Buscar código o descripción</label>' +
+          '<input id="disp-filtro-texto" type="text" value="' + esc(matrizDispFiltroTexto) + '" placeholder="Código o descripción..." style="padding:7px 10px;border-radius:7px;border:1px solid var(--border);font-size:13px;min-width:200px;"></div>' +
+        '<button class="btn-logout" onclick="cargarSolicitudesDisponibilidad()">🔄 Refrescar</button>' +
+      '</div>' +
+      (matrizDispSolicitudesCargando
+        ? '<div style="color:var(--muted);padding:16px 10px;font-size:13px;">Cargando solicitudes...</div>'
+        : (filas.length === 0
+          ? '<p style="margin-top:10px;font-size:12px;color:var(--muted);">Sin solicitudes para este filtro.</p>'
+          : '<div style="overflow-x:auto;margin-top:10px;"><table class="dash-table"><thead><tr>' +
+              '<th>Institución</th><th>Producto</th><th>Acción</th><th>Estado actual → propuesto</th><th>Solicitado</th><th>Estado</th><th>Acciones</th>' +
+            '</tr></thead><tbody>' + filasHtml + '</tbody></table></div>')) +
+    '</div>';
+  }
+
+  // Modal de confirmacion para aprobar/rechazar/ejecutar/revertir. Una sola
+  // RPC de escritura por accion -- nunca mas de una, nunca INSERT/UPDATE/
+  // DELETE directo.
+  function construirModalAccionDisponibilidad() {
+    if (!matrizDispAccionAbierta) return '';
+    const tipo = matrizDispAccionAbierta.tipo;
+    const s = matrizDispAccionAbierta.fila;
+
+    const TITULOS = { aprobar: 'Aprobar solicitud', rechazar: 'Rechazar solicitud', ejecutar: 'Ejecutar cambio real', revertir: 'Revertir cambio ejecutado' };
+    const BOTONES = { aprobar: 'Aprobar', rechazar: 'Rechazar', ejecutar: 'Ejecutar', revertir: 'Revertir' };
+    const COLORES = { aprobar: '#166534', rechazar: '#991b1b', ejecutar: '#92400e', revertir: '#9a3412' };
+
+    // Resultado ya disponible -- mostrar confirmacion en vez del formulario.
+    if (matrizDispAccionResultado) {
+      const r = matrizDispAccionResultado;
+      return '<div style="position:fixed;inset:0;background:rgba(0,0,0,0.5);display:flex;align-items:center;justify-content:center;z-index:1003;">' +
+        '<div style="background:#fff;border-radius:12px;padding:24px;max-width:480px;width:92%;box-shadow:0 10px 40px rgba(0,0,0,0.25);">' +
+          '<h3 style="margin:0 0 6px;">✅ ' + esc(TITULOS[tipo] || 'Acción') + ' -- listo</h3>' +
+          '<div style="font-size:13px;line-height:1.8;background:#f0fdf4;border:1px solid #bbf7d0;border-radius:8px;padding:10px 14px;">' +
+            '<b>Estado resultante:</b> ' + esc(r.estado) + '<br>' +
+            (r.validacion_posterior ? '<b>Validación posterior:</b> ' + esc(JSON.stringify(r.validacion_posterior)) : '') +
+          '</div>' +
+          '<div style="display:flex;justify-content:flex-end;margin-top:16px;">' +
+            '<button class="btn-logout" onclick="cerrarAccionDisponibilidad()" style="background:#1a1a1a;color:#fff;">Cerrar</button>' +
+          '</div>' +
+        '</div>' +
+      '</div>';
+    }
+
+    let advertencia = '';
+    if (tipo === 'ejecutar') {
+      advertencia = '<div style="margin-top:10px;padding:8px 12px;background:#fef3c7;border:1px solid #fde68a;border-radius:7px;font-size:12px;color:#92400e;">⚠️ Esta acción modificará el catálogo real de la institución -- el producto ' + (s.estado_propuesto ? 'volverá a aparecer' : 'dejará de aparecer') + ' en el recetario correspondiente.</div>';
+    } else if (tipo === 'revertir') {
+      advertencia = '<div style="margin-top:10px;padding:8px 12px;background:#fef3c7;border:1px solid #fde68a;border-radius:7px;font-size:12px;color:#92400e;">⚠️ Esta acción restaurará exactamente el estado anterior a la ejecución -- el producto volverá a quedar ' + (s.estado_propuesto ? 'no disponible' : 'disponible') + '.</div>';
+    }
+
+    return '<div style="position:fixed;inset:0;background:rgba(0,0,0,0.5);display:flex;align-items:center;justify-content:center;z-index:1003;" onclick="if(event.target===this && !matrizDispAccionGuardando){cerrarAccionDisponibilidad();}">' +
+      '<div style="background:#fff;border-radius:12px;padding:24px;max-width:480px;width:92%;box-shadow:0 10px 40px rgba(0,0,0,0.25);">' +
+        '<h3 style="margin:0 0 6px;">' + esc(TITULOS[tipo] || 'Acción') + '</h3>' +
+        '<div style="font-size:13px;line-height:1.8;background:var(--bg);border-radius:8px;padding:10px 14px;">' +
+          '<b>Institución:</b> ' + esc(s.institucion_codigo) + '<br>' +
+          '<b>Producto:</b> ' + esc(s.codigo_snapshot) + ' -- ' + esc(s.descripcion_snapshot) + '<br>' +
+          '<b>Acción solicitada:</b> ' + esc(s.accion) + '<br>' +
+          '<b>Estado actual → propuesto:</b> ' + (s.estado_actual ? 'Disponible' : 'No disponible') + ' → ' + (s.estado_propuesto ? 'Disponible' : 'No disponible') + '<br>' +
+          '<b>Motivo original:</b> ' + esc(s.motivo) +
+        '</div>' +
+        advertencia +
+        (tipo === 'rechazar' ?
+          ('<div style="margin-top:14px;">' +
+            '<label style="font-size:11px;font-weight:600;color:var(--muted);display:block;margin-bottom:3px;">Motivo de rechazo (obligatorio)</label>' +
+            '<textarea id="disp-accion-motivo" rows="3" placeholder="Explica por qué se rechaza..." style="width:100%;padding:8px 10px;border-radius:7px;border:1px solid var(--border);font-size:13px;box-sizing:border-box;font-family:inherit;">' + esc(matrizDispAccionMotivo) + '</textarea>' +
+          '</div>')
+          : '') +
+        (matrizDispAccionError ? '<div style="background:#fef2f2;color:#991b1b;border:1px solid #fecaca;border-radius:8px;padding:8px 12px;font-size:12px;margin-top:8px;">⚠️ ' + esc(matrizDispAccionError) + '</div>' : '') +
+        '<div style="display:flex;justify-content:flex-end;gap:8px;margin-top:16px;">' +
+          '<button class="btn-logout" onclick="cerrarAccionDisponibilidad()"' + (matrizDispAccionGuardando ? ' disabled' : '') + '>Cancelar</button>' +
+          '<button class="btn-logout" onclick="confirmarAccionDisponibilidad()"' + (matrizDispAccionGuardando ? ' disabled' : '') + ' style="background:' + (COLORES[tipo] || '#1a1a1a') + ';color:#fff;">' + (matrizDispAccionGuardando ? 'Procesando...' : (BOTONES[tipo] || 'Confirmar')) + '</button>' +
+        '</div>' +
+      '</div>' +
+    '</div>';
+  }
+
+  // Modal de detalle -- solo lectura, sin ningun boton de escritura.
+  function construirModalDetalleDisponibilidad() {
+    if (!matrizDispDetalleAbierta) return '';
+    const s = matrizDispDetalleAbierta;
+    return '<div style="position:fixed;inset:0;background:rgba(0,0,0,0.5);display:flex;align-items:center;justify-content:center;z-index:1002;" onclick="if(event.target===this){cerrarDetalleDisponibilidad();}">' +
+      '<div style="background:#fff;border-radius:12px;padding:24px;max-width:520px;width:92%;box-shadow:0 10px 40px rgba(0,0,0,0.25);max-height:80vh;overflow-y:auto;">' +
+        '<h3 style="margin:0 0 6px;">Detalle de la solicitud</h3>' +
+        '<div style="font-size:13px;line-height:1.9;background:var(--bg);border-radius:8px;padding:10px 14px;">' +
+          '<b>Institución:</b> ' + esc(s.institucion_codigo) + '<br>' +
+          '<b>Producto:</b> ' + esc(s.codigo_snapshot) + ' -- ' + esc(s.descripcion_snapshot) + '<br>' +
+          '<b>Producto ID:</b> <span class="mono">' + esc(s.producto_id) + '</span><br>' +
+          '<b>Acción:</b> ' + esc(s.accion) + '<br>' +
+          '<b>Estado actual → propuesto:</b> ' + (s.estado_actual ? 'Disponible' : 'No disponible') + ' → ' + (s.estado_propuesto ? 'Disponible' : 'No disponible') + '<br>' +
+          '<b>Motivo:</b> ' + esc(s.motivo) + '<br>' +
+          '<b>Estado de la solicitud:</b> ' + badgeEstadoSolicitud(s.estado) + '<br>' +
+          '<b>Solicitado por:</b> <span class="mono">' + esc(s.solicitado_por) + '</span> el ' + fechaCorta(s.solicitado_en) + '<br>' +
+          (s.aprobado_por ? '<b>Aprobado por:</b> <span class="mono">' + esc(s.aprobado_por) + '</span> el ' + fechaCorta(s.aprobado_en) + '<br>' : '') +
+          (s.rechazado_por ? '<b>Rechazado por:</b> <span class="mono">' + esc(s.rechazado_por) + '</span> el ' + fechaCorta(s.rechazado_en) + '<br><b>Motivo de rechazo:</b> ' + esc(s.motivo_rechazo) + '<br>' : '') +
+          (s.ejecutado_por ? '<b>Ejecutado por:</b> <span class="mono">' + esc(s.ejecutado_por) + '</span> el ' + fechaCorta(s.ejecutado_en) + '<br>' : '') +
+          (s.revertido_por ? '<b>Revertido por:</b> <span class="mono">' + esc(s.revertido_por) + '</span> el ' + fechaCorta(s.revertido_en) + '<br>' : '') +
+          (s.validacion_posterior ? '<b>Validación posterior:</b> <span style="font-size:11px;">' + esc(JSON.stringify(s.validacion_posterior)) + '</span><br>' : '') +
+        '</div>' +
+        (!s.ejecutado_por && (s.estado === 'ejecutada' || s.estado === 'revertida') ?
+          '<div style="margin-top:8px;padding:8px 12px;background:#f4f4f5;border-radius:7px;font-size:12px;color:var(--muted);">ℹ️ El detalle de ejecución/reversión de esta solicitud no está disponible en este listado -- <code>listar_solicitudes_disponibilidad_producto</code> no expone esos campos históricamente (solo se ven si la acción se realizó en esta misma sesión). Consultar <code>auditoria_cambios</code> directamente si hace falta el detalle completo.</div>'
+          : '') +
         '<div style="display:flex;justify-content:flex-end;margin-top:16px;">' +
-          '<button class="btn-logout" onclick="cerrarSimulacionVisibilidad()" style="background:#1a1a1a;color:#fff;">Cerrar</button>' +
+          '<button class="btn-logout" onclick="cerrarDetalleDisponibilidad()" style="background:#1a1a1a;color:#fff;">Cerrar</button>' +
         '</div>' +
       '</div>' +
     '</div>';
@@ -2846,7 +3290,8 @@ function renderMatrizInstitucional() {
   } else if (requiereInstitucion && matrizCargando && matrizSubTab !== 'simulador') {
     seccionesHtml = '<div style="color:var(--muted);padding:16px 10px;font-size:13px;">Cargando datos de ' + esc(matrizInstitucionSel) + '...</div>';
   } else if (matrizSubTab === 'catalogo') {
-    seccionesHtml = construirTablaCatalogo() + construirModalSimulacionVisibilidad();
+    seccionesHtml = construirTablaCatalogo() + construirListadoSolicitudesDisponibilidad() +
+      construirModalSimulacionVisibilidad() + construirModalAccionDisponibilidad() + construirModalDetalleDisponibilidad();
   } else if (matrizSubTab === 'descuentos') {
     seccionesHtml = construirTablaDescuentos();
   } else if (matrizSubTab === 'duplicados') {
@@ -2916,6 +3361,43 @@ function renderMatrizInstitucional() {
   if (svq) {
     svq.addEventListener('input', function (e) { matrizSimVisBusqueda = e.target.value; });
     svq.addEventListener('keydown', function (e) { if (e.key === 'Enter') buscarProductoVisibilidad(); });
+  }
+
+  // FASE 6.0I -- textarea de motivo al crear una solicitud de disponibilidad
+  const dsm = document.getElementById('disp-solicitud-motivo');
+  if (dsm) {
+    dsm.addEventListener('input', function (e) { matrizDispMotivo = e.target.value; matrizDispMotivoFoco = true; renderMatrizInstitucional(); });
+    if (matrizDispMotivoFoco) {
+      dsm.focus();
+      const p = dsm.value.length;
+      try { dsm.setSelectionRange(p, p); } catch (e) {}
+    }
+  }
+
+  // FASE 6.0I -- textarea de motivo de rechazo en el modal de accion
+  const dam = document.getElementById('disp-accion-motivo');
+  if (dam) {
+    dam.addEventListener('input', function (e) { matrizDispAccionMotivo = e.target.value; matrizDispAccionMotivoFoco = true; renderMatrizInstitucional(); });
+    if (matrizDispAccionMotivoFoco) {
+      dam.focus();
+      const p = dam.value.length;
+      try { dam.setSelectionRange(p, p); } catch (e) {}
+    }
+  }
+
+  // FASE 6.0I -- filtros del listado de solicitudes de disponibilidad
+  const dfi = document.getElementById('disp-filtro-institucion');
+  if (dfi) dfi.addEventListener('change', function (e) { matrizDispFiltroInstitucion = e.target.value; cargarSolicitudesDisponibilidad(); });
+  const dfe = document.getElementById('disp-filtro-estado');
+  if (dfe) dfe.addEventListener('change', function (e) { matrizDispFiltroEstado = e.target.value; renderMatrizInstitucional(); });
+  const dft = document.getElementById('disp-filtro-texto');
+  if (dft) {
+    dft.addEventListener('input', function (e) { matrizDispFiltroTexto = e.target.value; matrizDispFiltroTextoFoco = true; renderMatrizInstitucional(); });
+    if (matrizDispFiltroTextoFoco) {
+      dft.focus();
+      const p = dft.value.length;
+      try { dft.setSelectionRange(p, p); } catch (e) {}
+    }
   }
 
   // Fase 4.2B -- filtros del Comparador (mismo patron de "no perder foco" que
