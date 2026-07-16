@@ -46,6 +46,25 @@
   .view-tab { padding:9px 18px; font-size:13px; font-weight:600; cursor:pointer; border:none; background:none; color:var(--muted); border-bottom:3px solid transparent; margin-bottom:-2px; border-radius:0; transition:color 0.15s; }
   .view-tab:hover { color:var(--ink); }
   .view-tab.active { color:var(--red); border-bottom-color:var(--red); }
+
+  /* FASE 6.1A.1 -- hotfix visual movil, exclusivo para navegacion.
+     No toca el flujo interno del Cotizador ni ningun otro contenido --
+     solo la barra de pestanas principales y el header, y solo por debajo
+     de 700px. La version de escritorio (arriba) queda intacta. */
+  @media (max-width: 700px) {
+    header.topbar { padding:10px 12px; gap:8px; }
+    .brand-name { font-size:15px; }
+    .brand-sub { font-size:8px; letter-spacing:0.15em; }
+    header.topbar > div:last-child { flex-wrap:wrap; justify-content:flex-end; gap:6px; max-width:60%; }
+    header.topbar > div:last-child > span { order:2; flex-basis:100%; text-align:right; font-size:9px; white-space:normal; }
+    header.topbar > div:last-child > .btn-logout { order:1; padding:6px 10px; font-size:11px; white-space:nowrap; flex-shrink:0; }
+
+    main { padding:16px 12px 60px; }
+
+    .view-tabs { display:grid; grid-template-columns:1fr 1fr; gap:8px; border-bottom:none; margin-bottom:16px; }
+    .view-tab { border:1px solid var(--border); border-radius:10px; padding:12px 8px; text-align:center; white-space:normal; line-height:1.3; margin-bottom:0; background:#fff; min-height:44px; display:flex; align-items:center; justify-content:center; }
+    .view-tab.active { background:var(--red); color:#fff; border-color:var(--red); }
+  }
   .dash-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(170px,1fr)); gap:14px; margin-bottom:24px; }
   .dash-card { background:#fff; border:1px solid var(--border); border-radius:12px; padding:16px 18px; }
   .dash-card .dc-label { font-size:11px; font-weight:600; color:var(--muted); letter-spacing:0.05em; text-transform:uppercase; margin-bottom:6px; }
@@ -135,7 +154,7 @@
 // segundos si el navegador esta sirviendo una version cacheada antigua
 // (incidente real: Fase 5.6A quedo con cache de una version anterior en
 // una sesion, sin esta marca hubiera sido mucho mas lento de detectar).
-const ADMIN_VERSION = '6.1A-2026-07-16';
+const ADMIN_VERSION = '6.1A.1-2026-07-16';
 console.log('Admin version:', ADMIN_VERSION);
 
 const SUPABASE_URL = 'https://gzimllusbxjorbsbtsse.supabase.co';
@@ -3912,7 +3931,7 @@ function renderCotizadorComercial() {
   }
 
   var subtabsHtml = '';
-  if (esCoordinadorComercial() || esSuperAdmin()) {
+  if (esCoordinadorComercial() || esSuperAdmin() || esObservador()) {
     subtabsHtml = '<div class="cc-subtabs">' +
       '<button class="cc-subtab' + (cotComVista === 'nueva' ? ' active' : '') + '" onclick="cotComVistaElegidaManualmente=true;cotComVista=\'nueva\';renderCotizadorComercial()">Nueva cotización</button>' +
       '<button class="cc-subtab' + (cotComVista === 'equipo' ? ' active' : '') + '" onclick="cotComVistaElegidaManualmente=true;cotComVista=\'equipo\';renderCotizadorComercial()">Equipo</button>' +
