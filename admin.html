@@ -87,7 +87,7 @@
 // segundos si el navegador esta sirviendo una version cacheada antigua
 // (incidente real: Fase 5.6A quedo con cache de una version anterior en
 // una sesion, sin esta marca hubiera sido mucho mas lento de detectar).
-const ADMIN_VERSION = '5.9A-2026-07-09';
+const ADMIN_VERSION = '6.0C-2026-07-16';
 console.log('Admin version:', ADMIN_VERSION);
 
 const SUPABASE_URL = 'https://gzimllusbxjorbsbtsse.supabase.co';
@@ -1817,8 +1817,17 @@ async function confirmarEjecutarCambio() {
 // escritura conocido (ejecutar_*, aprobar_*, crear_*).
 // ============================================================
 
-function buscarProductoVisibilidad() {
-  const termino = (matrizSimVisBusqueda || '').trim().toLowerCase();
+// FASE 6.0C -- reemplaza el filtro en memoria sobre matrizCatalogoRows
+// (que solo veia productos ya visibles, hotfix de Fase 6.0A) por una
+// llamada de solo lectura a la RPC buscar_productos_visibilidad_institucion
+// (Fase 6.0B, SECURITY DEFINER, search_path=pg_catalog, EXECUTE solo para
+// authenticated). Esta RPC cubre tanto productos visibles como no
+// visibles y ya calcula, del lado de Supabase, ambos estados de
+// visibilidad (RPC actual vs configuracion completa), duplicados y la
+// advertencia de HOSMIL -- por eso ya no hace falta cruzar nada en el
+// cliente contra matrizCatalogoRows para este simulador.
+async function buscarProductoVisibilidad() {
+  const termino = (matrizSimVisBusqueda || '').trim();
   matrizSimVisError = '';
   matrizSimVisResultados = [];
   if (!termino || !matrizInstitucionSel) {
@@ -1826,60 +1835,34 @@ function buscarProductoVisibilidad() {
     return;
   }
 
-  // FASE 6.0A-HOTFIX -- CAUSA RAIZ del bug original: la version anterior
-  // consultaba productos/producto_familias directamente via sb.from(...),
-  // ejecutandose como el rol 'authenticated' del admin logueado. Ambas
-  // tablas tienen RLS activo con 0 politicas definidas -- confirmado con
-  // SET ROLE authenticated + SELECT real, que devolvio 0 filas SIN
-  // ningun error (RLS filtra filas silenciosamente, no lanza excepcion).
-  // Por eso nunca aparecia resultado ni mensaje de error.
-  //
-  // Correccion: buscar exclusivamente dentro de matrizCatalogoRows, que
-  // ya esta cargado en memoria via matriz_catalogo_institucion (RPC
-  // SECURITY DEFINER, sin problema de RLS -- mismo dato que ya usa la
-  // tabla del sub-tab Catalogo). Sin ninguna consulta de red nueva.
-  //
-  // LIMITACION CONOCIDA que este hotfix acepta explicitamente: esto solo
-  // encuentra productos actualmente VISIBLES para la institucion
-  // seleccionada. Un producto excluido por marca (marca_excluida) no
-  // aparece en matrizCatalogoRows y por lo tanto no aparecera en esta
-  // busqueda -- restaurar esa capacidad requeriria una RPC de solo
-  // lectura nueva en Supabase, fuera de alcance de este hotfix (que
-  // tiene prohibido modificar Supabase o crear RPC).
-  matrizSimVisResultados = matrizCatalogoRows.filter(function (r) {
-    return (r.codigo || '').toLowerCase().indexOf(termino) !== -1 ||
-           (r.descripcion || '').toLowerCase().indexOf(termino) !== -1 ||
-           (r.familia || '').toLowerCase().indexOf(termino) !== -1;
-  }).slice(0, 20);
+  matrizSimVisBuscando = true;
+  renderMatrizInstitucional();
 
+  try {
+    const { data, error } = await sb.rpc('buscar_productos_visibilidad_institucion', {
+      p_institucion_codigo: matrizInstitucionSel,
+      p_busqueda: termino,
+      p_limite: 50,
+    });
+    if (error) throw error;
+    matrizSimVisResultados = data || [];
+  } catch (e) {
+    // Nunca abrir simulacion ni asumir un estado si la RPC falla --
+    // se limpia el resultado y se muestra el error de forma legible.
+    matrizSimVisResultados = [];
+    matrizSimVisError = 'No se pudo completar la búsqueda: ' + mensajeErrorSeguro(e);
+  }
+
+  matrizSimVisBuscando = false;
   renderMatrizInstitucional();
 }
 
-// Determina disponibilidad actual de un producto para la institucion
-// seleccionada, cruzando contra matrizCatalogoRows (fuente unica de
-// verdad de "que ve la RPC hoy"). Funcion PURA, sin ningun acceso a red.
-function determinarDisponibilidadVisibilidad(producto) {
-  const filaVisible = matrizCatalogoRows.find(function (r) { return r.codigo === producto.codigo; });
-  if (filaVisible) {
-    return {
-      disponible: true,
-      motivo: null,
-      precioFinalRef: filaVisible.precioFinal,
-      tieneOverride: !!filaVisible.tiene_override,
-      overrideInfo: filaVisible.tiene_override ? { tipo: filaVisible.tipo_override, motivo: filaVisible.motivo_override } : null,
-    };
-  }
-  return {
-    disponible: false,
-    motivo: 'No aparece en el catálogo maestro de ' + matrizInstitucionSel + ' -- probablemente excluido por marca (marca_excluida). No se pudo confirmar la causa exacta de forma automática; verificar institucion_catalogo manualmente si es necesario.',
-    precioFinalRef: null,
-    tieneOverride: false,
-    overrideInfo: null,
-  };
-}
-
-function abrirSimulacionVisibilidad(codigo) {
-  const producto = matrizSimVisResultados.find(function (p) { return p.codigo === codigo; });
+// FASE 6.0C -- se identifica por producto_id (no por codigo) porque la
+// RPC puede devolver codigos duplicados (es_codigo_duplicado=true) como
+// filas distintas; codigo por si solo dejaria de ser un identificador
+// inequivoco dentro de matrizSimVisResultados.
+function abrirSimulacionVisibilidad(productoId) {
+  const producto = matrizSimVisResultados.find(function (p) { return String(p.producto_id) === String(productoId); });
   if (!producto) return;
   matrizSimVisAbierto = producto;
   matrizSimVisImpacto = null;
@@ -1906,7 +1889,10 @@ function mensajeErrorSeguro(error) {
 }
 
 async function calcularImpactoVisibilidad(producto) {
-  const disponibilidad = determinarDisponibilidadVisibilidad(producto);
+  // FASE 6.0C -- el estado ya viene calculado por la RPC (regla del
+  // enunciado: usar visible_segun_rpc_actual como estado principal), no
+  // se recalcula nada en el cliente.
+  const disponibilidad = { disponible: !!producto.visible_segun_rpc_actual, motivo: producto.causa_no_visible_actual || null };
   const familiaLower = (producto.familia || '').toLowerCase();
   const esPosibleCierre = familiaLower.indexOf('tapa') !== -1 || familiaLower.indexOf('cicatrizador') !== -1;
 
@@ -2166,32 +2152,52 @@ function renderMatrizInstitucional() {
   function construirBuscadorVisibilidad() {
     let filasResultado = '';
     matrizSimVisResultados.forEach(function (p) {
-      const disp = determinarDisponibilidadVisibilidad(p);
-      const badgeEstado = disp.disponible
+      const disponible = !!p.visible_segun_rpc_actual;
+      const badgeEstado = disponible
         ? '<span style="font-size:10px;font-weight:700;background:#d1fae5;color:#065f46;border-radius:5px;padding:2px 8px;">✓ Disponible</span>'
         : '<span style="font-size:10px;font-weight:700;background:#fee2e2;color:#991b1b;border-radius:5px;padding:2px 8px;">✗ No disponible</span>';
-      const etiquetaAccion = disp.disponible ? 'Simular desactivación' : 'Simular activación';
+      const causaTexto = (!disponible && p.causa_no_visible_actual)
+        ? '<div style="font-size:10px;color:var(--muted);margin-top:2px;">' + esc(p.causa_no_visible_actual) + '</div>'
+        : '';
+      const etiquetaAccion = disponible ? 'Simular desactivación' : 'Simular activación';
+
+      let advertenciasHtml = '';
+      if (p.es_codigo_duplicado) {
+        advertenciasHtml += '<div style="font-size:10px;color:#92400e;">⚠️ Código duplicado — ID <span class="mono">' + esc(p.producto_id) + '</span></div>';
+      }
+      if (p.desalineacion_configuracion) {
+        advertenciasHtml += '<div style="font-size:10px;color:#92400e;">⚠️ Difiere de la configuración completa' + (p.causa_no_visible_config_completa ? ' (' + esc(p.causa_no_visible_config_completa) + ')' : '') + '</div>';
+      }
+      if (p.advertencia_limitacion) {
+        advertenciasHtml += '<div style="font-size:10px;color:var(--muted);">ℹ️ ' + esc(p.advertencia_limitacion) + '</div>';
+      }
+
       filasResultado += '<tr>' +
         '<td class="mono">' + esc(p.codigo) + '</td>' +
         '<td>' + esc(p.descripcion) + '</td>' +
+        '<td style="font-size:11px;">' + esc(p.marca || '-') + '</td>' +
         '<td style="font-size:11px;">' + esc(p.familia || '-') + '</td>' +
         '<td class="num">' + fmt(p.precioLista) + '</td>' +
-        '<td>' + badgeEstado + '</td>' +
-        '<td><button class="btn-logout" onclick="abrirSimulacionVisibilidad(\'' + esc(p.codigo) + '\')" style="font-size:11px;">' + etiquetaAccion + '</button></td>' +
+        '<td>' + badgeEstado + causaTexto + '</td>' +
+        '<td>' + (advertenciasHtml || '-') + '</td>' +
+        '<td><button class="btn-logout" onclick="abrirSimulacionVisibilidad(\'' + esc(p.producto_id) + '\')" style="font-size:11px;">' + etiquetaAccion + '</button></td>' +
       '</tr>';
     });
 
+    const sinResultados = (!matrizSimVisBuscando && !matrizSimVisError && matrizSimVisBusqueda.trim() && matrizSimVisResultados.length === 0);
+
     return '<div class="dash-section" style="margin-top:8px;margin-bottom:14px;border:1px dashed var(--border);">' +
       '<h3 style="margin:0 0 4px;">🔍 Simulador de visibilidad institucional <span style="font-size:11px;font-weight:400;color:var(--muted);">(solo simulación — no modifica nada)</span></h3>' +
-      '<p style="margin:0 0 10px;font-size:12px;color:var(--muted);">Busca cualquier producto (incluso los no visibles hoy) por código SAP, descripción o familia, para revisar su disponibilidad actual en ' + esc(matrizInstitucionSel) + '.</p>' +
+      '<p style="margin:0 0 10px;font-size:12px;color:var(--muted);">Busca cualquier producto (visible o no visible hoy) por código SAP, descripción o familia, para revisar su disponibilidad actual en ' + esc(matrizInstitucionSel) + '.</p>' +
       '<div style="display:flex;gap:8px;flex-wrap:wrap;">' +
         '<input id="matriz-simvis-busqueda" type="text" placeholder="Código SAP, descripción o familia..." value="' + esc(matrizSimVisBusqueda) + '" style="padding:7px 10px;border-radius:7px;border:1px solid var(--border);font-size:13px;flex:1;min-width:220px;">' +
         '<button class="btn-logout" onclick="buscarProductoVisibilidad()"' + (matrizSimVisBuscando ? ' disabled' : '') + '>' + (matrizSimVisBuscando ? 'Buscando...' : 'Buscar') + '</button>' +
       '</div>' +
       (matrizSimVisError ? '<div style="margin-top:8px;color:#991b1b;font-size:12px;">' + esc(matrizSimVisError) + '</div>' : '') +
+      (sinResultados ? '<p style="margin-top:10px;font-size:12px;color:var(--muted);">Sin resultados para esta búsqueda.</p>' : '') +
       (matrizSimVisResultados.length > 0
         ? '<div style="overflow-x:auto;margin-top:10px;"><table class="dash-table"><thead><tr>' +
-            '<th>Código</th><th>Descripción</th><th>Familia</th><th class="num">Precio lista</th><th>Estado</th><th>Acción</th>' +
+            '<th>Código</th><th>Descripción</th><th>Marca</th><th>Familia</th><th class="num">Precio lista</th><th>Estado</th><th>Advertencias</th><th>Acción</th>' +
           '</tr></thead><tbody>' + filasResultado + '</tbody></table></div>'
         : '') +
     '</div>';
@@ -2698,14 +2704,20 @@ function renderMatrizInstitucional() {
     if (matrizSimVisImpacto.esPosibleCierre) {
       advertencias += '<div style="margin-top:8px;padding:8px 12px;background:#fef3c7;border:1px solid #fde68a;border-radius:7px;font-size:12px;color:#92400e;">⚠️ La familia de este producto sugiere que podría participar en la regla de tapa/cicatrizador automático al 99%. Esa regla se calcula desde <code>precioLista</code> directamente, no depende de <code>precioFinal</code> ni de este simulador, pero cambiar la disponibilidad de este código podría afectar el flujo de agregado automático. Verificar manualmente en el recetario antes de un cambio real.</div>';
     }
-    if (matrizSimVisImpacto.esHosmil) {
-      advertencias += '<div style="margin-top:8px;padding:8px 12px;background:#f4f4f5;border-radius:7px;font-size:12px;color:var(--muted);">ℹ️ HOSMIL tiene una lista adicional de productos ocultos (<code>PRODUCTOS_OCULTOS</code>) hardcodeada directamente en <code>recetario.html</code> -- no está en Supabase, por lo que este simulador no puede confirmar si este código está en esa lista. Verificar manualmente el archivo si es relevante.</div>';
+    // FASE 6.0C -- advertencia_limitacion ahora la calcula la RPC del lado
+    // de Supabase (ya no es un texto fijo hardcodeado para HOSMIL en el
+    // cliente); se muestra tal cual la devuelve la fila.
+    if (p.advertencia_limitacion) {
+      advertencias += '<div style="margin-top:8px;padding:8px 12px;background:#f4f4f5;border-radius:7px;font-size:12px;color:var(--muted);">ℹ️ ' + esc(p.advertencia_limitacion) + '</div>';
     }
-    if (!disp.disponible) {
+    if (!disp.disponible && disp.motivo) {
       advertencias += '<div style="margin-top:8px;padding:8px 12px;background:#f4f4f5;border-radius:7px;font-size:12px;color:var(--muted);">' + esc(disp.motivo) + '</div>';
     }
-    if (disp.tieneOverride) {
-      advertencias += '<div style="margin-top:8px;padding:8px 12px;background:#d1fae5;border-radius:7px;font-size:12px;color:#065f46;">🔒 Este producto tiene un override de precio activo (' + esc(disp.overrideInfo.tipo || '-') + '). Activar/desactivar visibilidad no modifica el override ni el precio.</div>';
+    if (p.es_codigo_duplicado) {
+      advertencias += '<div style="margin-top:8px;padding:8px 12px;background:#fef3c7;border:1px solid #fde68a;border-radius:7px;font-size:12px;color:#92400e;">⚠️ Este código SAP está duplicado en el catálogo -- esta simulación corresponde específicamente al producto con ID <span class="mono">' + esc(p.producto_id) + '</span>, no a otras variantes con el mismo código.</div>';
+    }
+    if (p.desalineacion_configuracion) {
+      advertencias += '<div style="margin-top:8px;padding:8px 12px;background:#fef3c7;border:1px solid #fde68a;border-radius:7px;font-size:12px;color:#92400e;">⚠️ La visibilidad según la RPC en producción (<code>obtener_catalogo_institucion</code>, solo exclusión por marca) difiere de la que resultaría de la configuración completa (marca + familia): configuración completa = ' + (p.visible_segun_config_completa ? 'Disponible' : 'No disponible') + (p.causa_no_visible_config_completa ? ' -- ' + esc(p.causa_no_visible_config_completa) : '') + '.</div>';
     }
 
     return '<div style="position:fixed;inset:0;background:rgba(0,0,0,0.5);display:flex;align-items:center;justify-content:center;z-index:1002;" onclick="if(event.target===this){cerrarSimulacionVisibilidad();}">' +
@@ -2715,7 +2727,9 @@ function renderMatrizInstitucional() {
         '<div style="font-size:13px;line-height:1.8;background:var(--bg);border-radius:8px;padding:10px 14px;">' +
           '<b>Institución:</b> ' + esc(matrizInstitucionSel) + '<br>' +
           '<b>Producto:</b> ' + esc(p.codigo) + ' -- ' + esc(p.descripcion) + '<br>' +
+          '<b>Marca:</b> ' + esc(p.marca || '-') + '<br>' +
           '<b>Familia:</b> ' + esc(p.familia || '-') + '<br>' +
+          '<b>Precio lista:</b> ' + fmt(p.precioLista) + '<br>' +
           '<b>Estado actual:</b> ' + (disp.disponible ? '<span style="color:#166534;">Disponible</span>' : '<span style="color:#991b1b;">No disponible</span>') + '<br>' +
           '<b>Estado propuesto:</b> ' + estadoPropuesto + '<br>' +
           '<b>Cambio de visibilidad:</b> ' + (disp.disponible ? 'Dejaría de aparecer en nuevas cotizaciones' : 'Aparecería en el catálogo institucional en la próxima carga') + '<br>' +
