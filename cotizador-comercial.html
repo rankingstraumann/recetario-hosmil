@@ -137,7 +137,7 @@
 // -- solo llama las 5 RPC autorizadas: buscar_productos_comercial,
 // listar_modalidades_comerciales, simular_cotizacion_comercial,
 // crear_cotizacion_comercial, listar_cotizaciones_comerciales.
-const APP_VERSION = '0.4-2026-07-17';
+const APP_VERSION = '0.4.1-2026-07-17';
 console.log('Cotizador Comercial version:', APP_VERSION);
 
 const SUPABASE_URL = 'https://gzimllusbxjorbsbtsse.supabase.co';
@@ -661,22 +661,34 @@ function renderNuevaCotizacion() {
 function wireCotizadorComercialInputs() {
   var rutEl = document.getElementById('cc-input-rut');
   if (rutEl) {
+    // FASE D1.2 -- banderas de foco mutuamente excluyentes: entrar a un
+    // campo apaga la bandera del otro. Antes ambas podian quedar en true
+    // al mismo tiempo (nunca se reseteaban), y el bloque que se ejecuta
+    // despues en esta misma funcion (Doctor) le robaba el foco a RUT.
+    rutEl.addEventListener('focus', function () { cotComRutFoco = true; cotComDoctorFoco = false; });
     rutEl.addEventListener('input', function (e) {
       var limpio = e.target.value.replace(/\D/g, '').slice(0, 9);
       e.target.value = limpio;
       cotComState.cliente.rut = limpio;
       cotComRutFoco = true;
+      cotComDoctorFoco = false;
       renderApp();
     });
     if (cotComRutFoco) { rutEl.focus(); var p1 = rutEl.value.length; try { rutEl.setSelectionRange(p1, p1); } catch (er) {} }
   }
   var doctorEl = document.getElementById('cc-input-doctor');
   if (doctorEl) {
-    doctorEl.addEventListener('input', function (e) { cotComState.cliente.doctorNombre = e.target.value; cotComDoctorFoco = true; renderApp(); });
+    doctorEl.addEventListener('focus', function () { cotComDoctorFoco = true; cotComRutFoco = false; });
+    doctorEl.addEventListener('input', function (e) {
+      cotComState.cliente.doctorNombre = e.target.value;
+      cotComDoctorFoco = true;
+      cotComRutFoco = false;
+      renderApp();
+    });
     if (cotComDoctorFoco) { doctorEl.focus(); var p2 = doctorEl.value.length; try { doctorEl.setSelectionRange(p2, p2); } catch (er) {} }
   }
   var modalidadEl = document.getElementById('cc-select-modalidad');
-  if (modalidadEl) { modalidadEl.addEventListener('change', function (e) { cotComSeleccionarModalidad(e.target.value); }); }
+  if (modalidadEl) { modalidadEl.addEventListener('change', function (e) { cotComRutFoco = false; cotComDoctorFoco = false; cotComSeleccionarModalidad(e.target.value); }); }
   [['razon', 'razonSocial'], ['direccion', 'direccion'], ['correo', 'correo'], ['telefono', 'telefono'], ['sap', 'codigoSap'], ['obs', 'observaciones']].forEach(function (par) {
     var el = document.getElementById('cc-input-' + par[0]);
     if (el) el.addEventListener('input', function (e) { cotComState.cliente[par[1]] = e.target.value; });
@@ -684,12 +696,12 @@ function wireCotizadorComercialInputs() {
   var busq = document.getElementById('cc-input-busqueda');
   if (busq) {
     busq.addEventListener('input', function (e) { cotComState.busqueda = e.target.value; });
-    busq.addEventListener('keydown', function (e) { if (e.key === 'Enter') cotComBuscarProductos(); });
+    busq.addEventListener('keydown', function (e) { if (e.key === 'Enter') { cotComRutFoco = false; cotComDoctorFoco = false; cotComBuscarProductos(); } });
   }
   var marcaSel = document.getElementById('cc-select-marca');
-  if (marcaSel) marcaSel.addEventListener('change', function (e) { cotComState.filtroMarca = e.target.value; cotComState.filtroFamilia = ''; renderApp(); });
+  if (marcaSel) marcaSel.addEventListener('change', function (e) { cotComRutFoco = false; cotComDoctorFoco = false; cotComState.filtroMarca = e.target.value; cotComState.filtroFamilia = ''; renderApp(); });
   var familiaSel = document.getElementById('cc-select-familia');
-  if (familiaSel) familiaSel.addEventListener('change', function (e) { cotComState.filtroFamilia = e.target.value; renderApp(); });
+  if (familiaSel) familiaSel.addEventListener('change', function (e) { cotComRutFoco = false; cotComDoctorFoco = false; cotComState.filtroFamilia = e.target.value; renderApp(); });
 }
 
 // ============================================================
