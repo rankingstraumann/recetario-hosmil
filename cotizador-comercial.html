@@ -1,0 +1,968 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<link rel="manifest" href="/manifest-cotizador-comercial.webmanifest">
+<meta name="theme-color" content="#991b1b">
+<link rel="icon" href="/favicon-32.png" sizes="32x32">
+<link rel="apple-touch-icon" href="/icon-180.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="apple-mobile-web-app-title" content="Cotizador Straumann">
+<meta name="mobile-web-app-capable" content="yes">
+<title>Cotizador Comercial | Straumann Group Chile</title>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>
+  /* FASE C6D.4 -- estilos tomados directamente del patron ya en
+     produccion en recetario.html (mismas clases, mismos valores) para
+     que el Cotizador se sienta como el mismo producto. Solo se adaptan
+     los textos y se quitan clases exclusivamente institucionales
+     (privacy-box de paciente, wsp-field, rule-summary, etc.). */
+  :root {
+    --red: #991b1b; --red-dark: #7f1d1d; --ink: #18181b; --muted: #71717a;
+    --border: #e4e4e7; --bg: #f8fafc; --emerald-bg: #ecfdf5; --emerald-text: #047857;
+  }
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html { overscroll-behavior-y: contain; }
+  body { margin:0; font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif; background:var(--bg); color:var(--ink); overflow-x:hidden; }
+
+  header.topbar { background:#fff; border-bottom:1px solid var(--border); padding:calc(10px + env(safe-area-inset-top)) 20px 10px; display:flex; align-items:center; justify-content:space-between; position:sticky; top:0; z-index:20; gap:10px; flex-wrap:wrap; }
+  .brand-name { color:var(--red); font-weight:800; font-size:18px; letter-spacing:-0.02em; line-height:1; }
+  .brand-sub { color:#a1a1aa; font-size:10px; letter-spacing:0.2em; font-weight:600; margin-top:2px; }
+  .topbar-right { font-size:12px; color:#a1a1aa; display:flex; align-items:center; gap:10px; }
+  .btn-logout { font-size:12px; color:#71717a; background:none; border:1px solid var(--border); border-radius:8px; padding:6px 12px; cursor:pointer; white-space:nowrap; }
+
+  .cc-subtabs { max-width:1180px; margin:14px auto 0; padding:0 16px; display:flex; gap:8px; }
+  .cc-subtab { flex:1; max-width:220px; padding:10px; border-radius:10px; border:1px solid var(--border); background:#fff; font-size:13px; font-weight:600; color:var(--muted); cursor:pointer; }
+  .cc-subtab.active { background:var(--ink); color:#fff; border-color:var(--ink); }
+
+  main.layout { max-width:1180px; margin:0 auto; padding:20px 16px 100px; display:grid; grid-template-columns: 1fr; gap:20px; }
+  @media (min-width: 1024px) { main.layout { grid-template-columns: 1fr 360px; } }
+
+  .card { background:#fff; border:1px solid var(--border); border-radius:14px; padding:16px; margin-bottom:16px; }
+  .card h2 { font-size:14px; font-weight:600; color:#3f3f46; margin:0 0 12px; display:flex; align-items:center; gap:6px; }
+  .form-grid { display:grid; grid-template-columns: 1fr; gap:10px; }
+  @media (min-width:640px) { .form-grid { grid-template-columns: 1fr 1fr; } }
+  .form-grid .span2 { grid-column: 1 / -1; }
+  input[type=text], input[type=email], input[type=tel], select {
+    width:100%; border:1px solid #d4d4d8; border-radius:8px; padding:9px 11px; font-size:16px; font-family:inherit; color:var(--ink);
+  }
+  input:focus, select:focus { outline:none; border-color:var(--red); box-shadow:0 0 0 3px rgba(153,27,27,0.12); }
+  .cc-inline-err { color:#b91c1c; font-size:11px; margin-top:4px; }
+  .cc-hint { font-size:11px; color:#a1a1aa; margin-top:6px; }
+  .cc-collapsible summary { cursor:pointer; font-size:12px; font-weight:600; color:var(--muted); padding:8px 0; list-style:none; }
+  .cc-collapsible summary::-webkit-details-marker { display:none; }
+  .cc-collapsible summary::before { content:'▸ '; }
+  .cc-collapsible[open] summary::before { content:'▾ '; }
+
+  .search-row { display:flex; gap:8px; margin-bottom:14px; flex-wrap:wrap; }
+  .search-row input { flex:1; min-width:200px; }
+
+  .prod-row { display:flex; flex-direction:column; gap:8px; border:1px solid #f4f4f5; border-radius:10px; padding:10px 12px; margin-bottom:6px; }
+  @media (min-width:640px) { .prod-row { flex-direction:row; align-items:center; justify-content:space-between; } }
+  .prod-row:hover { border-color:#e4e4e7; background:#fafafa; }
+  .prod-code { font-family:ui-monospace,monospace; font-size:11px; color:#a1a1aa; }
+  .prod-desc { font-size:14px; color:#27272a; margin-top:2px; }
+  .prod-price-row { display:flex; align-items:center; gap:8px; margin-top:4px; }
+  .prod-price-new { font-size:14px; font-weight:600; color:var(--red); }
+  .dup-tag { font-size:9px; font-weight:700; background:#fef3c7; color:#92400e; border-radius:4px; padding:1px 6px; margin-left:4px; }
+  .btn-add { flex-shrink:0; display:flex; align-items:center; justify-content:center; gap:5px; background:#18181b; color:#fff; font-size:12px; font-weight:600; padding:8px 12px; border:none; border-radius:8px; cursor:pointer; width:100%; }
+  @media (min-width:640px) { .btn-add { width:auto; } }
+  .btn-add:hover { background:var(--red); }
+  .btn-add:disabled { opacity:0.5; cursor:not-allowed; }
+  .empty-msg { text-align:center; padding:36px 16px; color:#a1a1aa; font-size:13px; }
+
+  aside.cart-aside { align-self:start; }
+  @media (min-width:1024px) { aside.cart-aside { position:sticky; top:80px; } }
+  .cart-card { background:#fff; border:1px solid var(--border); border-radius:14px; overflow:hidden; }
+  .cart-head { padding:12px 16px; border-bottom:1px solid #f4f4f5; display:flex; justify-content:space-between; align-items:center; }
+  .cart-head h3 { font-size:14px; font-weight:600; margin:0; display:flex; align-items:center; gap:6px; }
+  .cart-clear { font-size:11px; color:#a1a1aa; background:none; border:none; cursor:pointer; }
+  .cart-items { max-height:34vh; overflow-y:auto; }
+  .cart-item { padding:10px 16px; border-bottom:1px solid #f4f4f5; }
+  .cart-item-top { display:flex; justify-content:space-between; gap:8px; }
+  .cart-item-code { font-family:ui-monospace,monospace; font-size:10px; color:#a1a1aa; }
+  .cart-item-desc { font-size:12px; color:#27272a; line-height:1.3; }
+  .cart-item-bottom { display:flex; justify-content:space-between; align-items:center; margin-top:6px; gap:8px; }
+  .qty-stepper { display:flex; align-items:center; gap:6px; background:#f4f4f5; border-radius:8px; padding:4px 6px; }
+  .qty-stepper button { border:none; background:none; cursor:pointer; color:#52525b; font-size:14px; width:18px; }
+  .qty-val { font-size:12px; font-weight:600; width:18px; text-align:center; }
+  .remove-btn { border:none; background:none; color:#d4d4d8; cursor:pointer; font-size:13px; flex-shrink:0; }
+  .cart-foot { padding:14px 16px; border-top:1px solid #f4f4f5; background:#fafafa; }
+  .cart-total-row { display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; gap:8px; }
+  .cart-total-label { font-size:13px; font-weight:600; color:#3f3f46; }
+  .cart-total-value { font-size:18px; font-weight:800; color:var(--red); }
+  .btn-primary { width:100%; background:var(--red); color:#fff; border:none; border-radius:8px; padding:11px; font-size:14px; font-weight:600; cursor:pointer; }
+  .btn-primary:hover { background:var(--red-dark); }
+  .btn-primary:disabled { opacity:0.6; cursor:default; }
+  .btn-outline { width:100%; display:flex; align-items:center; justify-content:center; gap:6px; background:#fff; border:1px solid #d4d4d8; color:#3f3f46; font-size:13px; font-weight:600; padding:10px; border-radius:8px; cursor:pointer; }
+  .btn-outline:hover { border-color:var(--red); color:var(--red); }
+  .msg-error { display:flex; gap:6px; background:#fef2f2; color:#b91c1c; font-size:12px; border-radius:8px; padding:8px 10px; margin-bottom:10px; }
+
+  .floating-cart-btn { display:none; position:fixed; left:16px; right:16px; bottom:calc(16px + env(safe-area-inset-bottom)); z-index:30; background:var(--red); color:#fff; border:none; border-radius:12px; padding:14px 16px; align-items:center; justify-content:space-between; font-size:14px; font-weight:600; box-shadow:0 8px 20px rgba(127,29,29,0.25); cursor:pointer; }
+  @media (max-width:1023px) { .floating-cart-btn.visible { display:flex; } }
+
+  .compartir-wrap { max-width:560px; margin:0 auto; padding:32px 16px 60px; }
+  .ok-circle { width:48px; height:48px; border-radius:999px; background:var(--emerald-bg); display:flex; align-items:center; justify-content:center; margin:0 auto 12px; font-size:22px; }
+  .center-card { background:#fff; border:1px solid var(--border); border-radius:14px; padding:24px; text-align:center; margin-bottom:16px; }
+  .send-buttons { display:flex; flex-direction:column; gap:8px; margin-top:14px; }
+  @media (min-width:480px) { .send-buttons { flex-direction:row; } }
+  .btn-solid-red { flex:1; display:flex; align-items:center; justify-content:center; gap:6px; background:var(--red); color:#fff; border:none; font-size:14px; font-weight:600; padding:11px; border-radius:8px; cursor:pointer; }
+  .btn-solid-red:hover { background:var(--red-dark); }
+  .hint { font-size:11px; color:#a1a1aa; margin-top:8px; }
+
+  .login-wrap { max-width:360px; margin:60px auto; background:#fff; border:1px solid var(--border); border-radius:14px; padding:28px; }
+  .login-wrap h1 { font-size:18px; margin:0 0 4px; }
+  .login-wrap p { font-size:12px; color:#71717a; margin:0 0 18px; }
+  .login-wrap input { width:100%; border:1px solid #d4d4d8; border-radius:8px; padding:11px 12px; font-size:15px; margin-bottom:10px; }
+  .login-err { background:#fef2f2; color:#b91c1c; font-size:12px; border-radius:8px; padding:8px 10px; margin-bottom:10px; }
+
+  .cc-mis-wrap { max-width:720px; margin:0 auto; padding:20px 16px 60px; }
+  .cc-mis-filtros { display:flex; gap:8px; margin-bottom:14px; flex-wrap:wrap; }
+  .cc-mis-filtros input { flex:1; min-width:200px; }
+  .cc-mis-filtros select { flex:1; min-width:140px; }
+  .cc-estado-tag { font-size:10px; font-weight:700; background:#eff6ff; color:#1d4ed8; border-radius:6px; padding:2px 8px; white-space:nowrap; }
+</style>
+</head>
+<body>
+
+<div id="login-view"></div>
+<div id="app-view" style="display:none;"></div>
+
+<script>
+// FASE C6D.4 -- Cotizador Comercial, pantalla unica estilo Recetario
+// Institucional (sin asistente por pasos). Reutiliza el mismo backend ya
+// validado en C3A-C6D.3. Nunca accede directamente a tablas comerciales
+// -- solo llama las 5 RPC autorizadas: buscar_productos_comercial,
+// listar_modalidades_comerciales, simular_cotizacion_comercial,
+// crear_cotizacion_comercial, listar_cotizaciones_comerciales.
+const APP_VERSION = '0.5.1-2026-07-17';
+console.log('Cotizador Comercial version:', APP_VERSION);
+
+const SUPABASE_URL = 'https://gzimllusbxjorbsbtsse.supabase.co';
+const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imd6aW1sbHVzYnhqb3Jic2J0c3NlIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE5NDQ4NDcsImV4cCI6MjA5NzUyMDg0N30.DFq-_PY10hyr2QmMUXk-v8VW2LKYz3bAW37VCutwmzY';
+const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+let miPerfil = null;
+let vistaComercial = 'nueva'; // 'nueva' | 'mis'
+let errorConexion = false;
+let errorConexionMsg = '';
+
+function esc(s) {
+  if (s === undefined || s === null) return '';
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+function fmt(n) { return '$' + Math.round(n || 0).toLocaleString('es-CL'); }
+
+function interpretarError(e) {
+  var msg = (e && (e.message || e.details || '')) || '';
+  var low = msg.toLowerCase();
+  if (!msg) return 'Ocurrió un error inesperado. Intenta nuevamente.';
+  if (low.indexOf('jwt') !== -1 || low.indexOf('refresh_token') !== -1 || low.indexOf('session') !== -1) return 'Tu sesión expiró. Vuelve a iniciar sesión.';
+  if (low.indexOf('42501') !== -1 || low.indexOf('no autorizado') !== -1) return 'No tienes permiso para realizar esta acción.';
+  if (low.indexOf('modalidad') !== -1) return 'Esta modalidad comercial todavía no está activa. El cálculo real se habilitará cuando se active.';
+  if (low.indexOf('rut') !== -1) return 'El RUT ingresado no es válido. Revísalo e intenta de nuevo.';
+  if (low.indexOf('producto') !== -1 || low.indexOf('precio de lista') !== -1) return 'Uno de los productos seleccionados ya no está disponible. Actualiza la búsqueda.';
+  if (low.indexOf('failed to fetch') !== -1 || low.indexOf('networkerror') !== -1 || low.indexOf('load failed') !== -1 || low.indexOf('timeout') !== -1 || low.indexOf('network') !== -1) return 'No se pudo conectar con el servidor. Revisa tu conexión e intenta de nuevo.';
+  return msg;
+}
+
+// ============================================================
+// LOGIN
+// ============================================================
+function renderLogin(errMsg) {
+  document.getElementById('app-view').style.display = 'none';
+  const v = document.getElementById('login-view');
+  v.style.display = 'block';
+  v.innerHTML =
+    '<header class="topbar"><div><div class="brand-name">STRAUMANN</div><div class="brand-sub">COTIZADOR COMERCIAL</div></div></header>' +
+    (errorConexion ? '<div style="background:#fff3cd;border:1px solid #fde68a;border-radius:10px;padding:14px 18px;margin:16px;text-align:center;font-size:13px;">⚠️ ' + esc(errorConexionMsg || 'No se pudo conectar. Puede deberse a firewall, VPN o red corporativa.') + '<br><button onclick="location.reload()" style="margin-top:8px;padding:7px 18px;background:#1a1a1a;color:#fff;border:none;border-radius:7px;cursor:pointer;font-size:13px;">🔄 Reintentar</button></div>' : '') +
+    '<div class="login-wrap">' +
+      '<h1>Cotizador Comercial</h1>' +
+      '<p>Ingresa con tu correo corporativo</p>' +
+      (errMsg ? '<div class="login-err">⚠️ ' + esc(errMsg) + '</div>' : '') +
+      '<input type="email" id="li-email" placeholder="Correo" autocomplete="username">' +
+      '<input type="password" id="li-pass" placeholder="Contraseña" autocomplete="current-password">' +
+      '<button class="btn-primary" id="li-btn">Iniciar sesión</button>' +
+      '<p style="font-size:11px;color:var(--muted);margin-top:16px;text-align:center;line-height:1.5;">📲 Puedes instalar este Cotizador en la pantalla de inicio de tu celular.</p>' +
+    '</div>';
+  document.getElementById('li-btn').addEventListener('click', doLogin);
+  document.getElementById('li-pass').addEventListener('keydown', function (e) { if (e.key === 'Enter') doLogin(); });
+}
+
+async function doLogin() {
+  const email = document.getElementById('li-email').value.trim();
+  const pass = document.getElementById('li-pass').value;
+  const btn = document.getElementById('li-btn');
+  btn.disabled = true; btn.textContent = 'Ingresando...';
+  try {
+    const { error } = await sb.auth.signInWithPassword({ email: email, password: pass });
+    if (error) {
+      const msg = interpretarError(error);
+      const esRed = msg.indexOf('conectar') !== -1;
+      if (esRed) { errorConexion = true; }
+      renderLogin(esRed ? msg : 'Correo o contraseña incorrectos.');
+      return;
+    }
+  } catch (e) {
+    errorConexion = true;
+    renderLogin(interpretarError(e));
+    return;
+  }
+}
+
+// ============================================================
+// PERFIL Y ACCESO (fail-closed)
+// ============================================================
+function tieneAccesoComercial() {
+  return !!(miPerfil && (miPerfil.es_vendedor || miPerfil.es_super_admin || miPerfil.es_coordinador || miPerfil.es_observador));
+}
+function esSoloCustomerService() {
+  return !!(miPerfil && miPerfil.es_customer_service && !miPerfil.es_vendedor && !miPerfil.es_super_admin && !miPerfil.es_coordinador && !miPerfil.es_observador);
+}
+function puedeCrearCotizaciones() {
+  return !!(miPerfil && (miPerfil.es_vendedor || miPerfil.es_super_admin));
+}
+
+async function cargarMiPerfilYEntrar() {
+  try {
+    const { data: userData } = await sb.auth.getUser();
+    if (!userData || !userData.user) { miPerfil = null; renderLogin(); return; }
+    const { data, error } = await sb.from('admin_perfiles')
+      .select('es_super_admin, es_observador, es_vendedor, es_coordinador, es_customer_service, coordinador_id')
+      .eq('user_id', userData.user.id)
+      .maybeSingle();
+    miPerfil = (!error && data) ? data : null;
+  } catch (e) {
+    miPerfil = null;
+  }
+
+  if (!miPerfil || !tieneAccesoComercial()) {
+    if (!esSoloCustomerService()) {
+      await sb.auth.signOut();
+      miPerfil = null;
+      renderLogin('No tienes acceso habilitado al Cotizador Comercial.');
+      return;
+    }
+  }
+
+  vistaComercial = puedeCrearCotizaciones() ? 'nueva' : 'mis';
+  renderApp();
+}
+
+// ============================================================
+// COTIZADOR -- pantalla unica (FASE C6D.4, sin pasos)
+// ============================================================
+function cotComClienteVacio() {
+  return { rut: '', tipoCliente: 'prospecto', doctorNombre: '', razonSocial: '', direccion: '', correo: '', telefono: '', codigoSap: '', observaciones: '' };
+}
+function cotComModalidadPorDefecto() {
+  var com0 = cotComState.modalidades.find(function (m) { return m.codigo === 'COM0' && m.activa; });
+  return com0 ? 'COM0' : null;
+}
+let cotComState = {
+  modalidadCodigo: null,
+  modalidades: [],
+  modalidadesCargadas: false,
+  cliente: cotComClienteVacio(),
+  opcionalesAbierto: false,
+  // FASE D1.3 -- navegacion del catalogo por marca/familia (autorizada
+  // explicitamente), reemplaza el mecanismo anterior de "buscar primero,
+  // filtrar despues".
+  catalogoMarcas: [],
+  catalogoCargado: false,
+  marcaActiva: null,
+  familiaActivaId: null,
+  busquedaCatalogo: '',
+  productosCatalogo: [],
+  catalogoCargandoProductos: false,
+  catalogoErrorProductos: '',
+  catalogoOffset: 0,
+  catalogoHayMas: true,
+  carrito: [],
+  simulando: false,
+  simulacion: null,
+  simulacionError: '',
+  firmaSimulada: null,
+  creada: null
+};
+let cotComRutFoco = false;
+let cotComDoctorFoco = false;
+let cotComCreando = false;
+let cotComCrearError = '';
+
+function reiniciarCotizadorComercial() {
+  cotComState = {
+    modalidadCodigo: cotComModalidadPorDefecto(), modalidades: cotComState.modalidades, modalidadesCargadas: cotComState.modalidadesCargadas,
+    cliente: cotComClienteVacio(), opcionalesAbierto: false,
+    catalogoMarcas: cotComState.catalogoMarcas, catalogoCargado: cotComState.catalogoCargado,
+    marcaActiva: cotComState.marcaActiva, familiaActivaId: null,
+    busquedaCatalogo: '', productosCatalogo: [], catalogoCargandoProductos: false, catalogoErrorProductos: '',
+    catalogoOffset: 0, catalogoHayMas: true,
+    carrito: [], simulando: false, simulacion: null, simulacionError: '', firmaSimulada: null,
+    creada: null
+  };
+  cotComRutFoco = false;
+  cotComDoctorFoco = false;
+  cotComCreando = false;
+  cotComCrearError = '';
+  cargarProductosCatalogo(true);
+  renderApp();
+}
+
+function rutFormatoBasicoValido(rut) {
+  var limpio = (rut || '').replace(/\D/g, '');
+  return /^[0-9]{8,9}$/.test(limpio);
+}
+function cotComClienteValido() {
+  var c = cotComState.cliente;
+  return !!(c.rut && rutFormatoBasicoValido(c.rut) && c.doctorNombre && c.doctorNombre.trim() !== '');
+}
+
+function firmaCotizacion() {
+  var c = cotComState.cliente;
+  var items = cotComState.carrito.map(function (ci) { return ci.producto_id + ':' + ci.cantidad; }).sort().join('|');
+  return JSON.stringify([c.rut, c.tipoCliente, c.doctorNombre, c.razonSocial, c.direccion, c.correo, c.telefono, c.codigoSap, c.observaciones, cotComState.modalidadCodigo, items]);
+}
+function simulacionEstaVigente() {
+  return !!cotComState.simulacion && cotComState.firmaSimulada === firmaCotizacion();
+}
+
+function cotComSeleccionarModalidad(codigo) { cotComState.modalidadCodigo = codigo || null; renderApp(); }
+
+async function cargarModalidadesComerciales() {
+  cotComState.modalidadesCargadas = true;
+  try {
+    const { data, error } = await sb.rpc('listar_modalidades_comerciales');
+    if (error) throw error;
+    cotComState.modalidades = data || [];
+    if (!cotComState.modalidadCodigo) {
+      cotComState.modalidadCodigo = cotComModalidadPorDefecto();
+    }
+  } catch (e) {
+    cotComState.modalidades = [];
+  }
+  renderApp();
+}
+
+// FASE D1.3 -- navegacion del catalogo comercial por marca/familia, sin
+// necesidad de buscar primero (autorizado explicitamente). Usa las 2 RPC
+// nuevas de solo lectura: listar_marcas_familias_comerciales y
+// listar_productos_comercial_catalogo. buscar_productos_comercial ya no
+// se usa desde este frontend (sigue intacta en el backend).
+const ETIQUETAS_MARCA_CATALOGO = { Straumann: 'Straumann BLC/BLX', Neodent: 'Neodent', BLT: 'Straumann BLT', Compartida: 'Otras marcas' };
+const ORDEN_MARCAS_CATALOGO = ['Straumann', 'Neodent', 'BLT', 'Compartida'];
+
+async function cargarCatalogoMarcasFamilias() {
+  cotComState.catalogoCargado = true;
+  try {
+    const { data, error } = await sb.rpc('listar_marcas_familias_comerciales');
+    if (error) throw error;
+    var porMarca = {};
+    (data || []).forEach(function (fila) {
+      if (!porMarca[fila.marca]) porMarca[fila.marca] = { marca: fila.marca, total: 0, familias: [] };
+      porMarca[fila.marca].total += fila.cantidad_productos;
+      porMarca[fila.marca].familias.push({ familia_id: fila.familia_id, familia: fila.familia, cantidad: fila.cantidad_productos });
+    });
+    var marcas = Object.keys(porMarca).map(function (m) { return porMarca[m]; });
+    marcas.sort(function (a, b) {
+      var ia = ORDEN_MARCAS_CATALOGO.indexOf(a.marca); if (ia === -1) ia = 99;
+      var ib = ORDEN_MARCAS_CATALOGO.indexOf(b.marca); if (ib === -1) ib = 99;
+      return ia - ib || a.marca.localeCompare(b.marca);
+    });
+    marcas.forEach(function (m) { m.familias.sort(function (a, b) { return a.familia.localeCompare(b.familia); }); });
+    cotComState.catalogoMarcas = marcas;
+    if (!cotComState.marcaActiva && marcas.length > 0) { cotComState.marcaActiva = marcas[0].marca; }
+  } catch (e) {
+    cotComState.catalogoMarcas = [];
+  }
+  cargarProductosCatalogo(true);
+}
+
+function seleccionarMarcaCatalogo(marca) {
+  cotComRutFoco = false; cotComDoctorFoco = false;
+  cotComState.marcaActiva = marca;
+  cotComState.familiaActivaId = null;
+  cargarProductosCatalogo(true);
+}
+function seleccionarFamiliaCatalogo(familiaId) {
+  cotComRutFoco = false; cotComDoctorFoco = false;
+  cotComState.familiaActivaId = familiaId || null;
+  cargarProductosCatalogo(true);
+}
+
+async function cargarProductosCatalogo(reiniciar) {
+  if (reiniciar) { cotComState.catalogoOffset = 0; cotComState.productosCatalogo = []; cotComState.catalogoHayMas = true; }
+  cotComState.catalogoCargandoProductos = true;
+  cotComState.catalogoErrorProductos = '';
+  renderApp();
+  try {
+    const { data, error } = await sb.rpc('listar_productos_comercial_catalogo', {
+      p_marca: cotComState.marcaActiva || null,
+      p_familia_id: cotComState.familiaActivaId || null,
+      p_busqueda: cotComState.busquedaCatalogo || null,
+      p_limite: 30,
+      p_offset: cotComState.catalogoOffset
+    });
+    if (error) throw error;
+    var filas = data || [];
+    cotComState.productosCatalogo = cotComState.productosCatalogo.concat(filas);
+    cotComState.catalogoHayMas = filas.length === 30;
+    cotComState.catalogoOffset += filas.length;
+  } catch (e) {
+    cotComState.productosCatalogo = [];
+    cotComState.catalogoErrorProductos = interpretarError(e);
+  }
+  cotComState.catalogoCargandoProductos = false;
+  renderApp();
+}
+
+function cotComAgregarProductoCatalogo(productoId) {
+  var p = cotComState.productosCatalogo.find(function (r) { return String(r.producto_id) === String(productoId); });
+  if (!p) return;
+  var existente = cotComState.carrito.find(function (ci) { return ci.producto_id === p.producto_id; });
+  if (existente) {
+    existente.cantidad += 1;
+  } else {
+    cotComState.carrito.push({
+      producto_id: p.producto_id, codigo: p.codigo, descripcion: p.descripcion,
+      marca: p.marca, familia: p.familia, precio_lista: p.precio_lista, cantidad: 1,
+      es_codigo_duplicado: p.es_codigo_duplicado
+    });
+  }
+  renderApp();
+}
+function cotComCambiarCantidad(productoId, delta) {
+  var ci = cotComState.carrito.find(function (c) { return c.producto_id === productoId; });
+  if (!ci) return;
+  ci.cantidad += delta;
+  if (ci.cantidad <= 0) { cotComState.carrito = cotComState.carrito.filter(function (c) { return c.producto_id !== productoId; }); }
+  renderApp();
+}
+function cotComQuitarProducto(productoId) {
+  cotComState.carrito = cotComState.carrito.filter(function (c) { return c.producto_id !== productoId; });
+  renderApp();
+}
+function vaciarCarritoComercial() {
+  cotComState.carrito = [];
+  renderApp();
+}
+
+function cotComParamsRpc() {
+  var modalidadReal = cotComState.modalidades.find(function (m) { return m.codigo === cotComState.modalidadCodigo; });
+  var c = cotComState.cliente;
+  var items = cotComState.carrito.map(function (ci) { return { producto_id: ci.producto_id, cantidad: ci.cantidad }; });
+  return {
+    modalidadReal: modalidadReal,
+    params: {
+      p_rut: c.rut, p_tipo_cliente: c.tipoCliente, p_doctor_nombre: c.doctorNombre,
+      p_modalidad_id: modalidadReal ? modalidadReal.id : null, p_items: items,
+      p_razon_social: c.razonSocial || null, p_direccion: c.direccion || null,
+      p_correo: c.correo || null, p_telefono: c.telefono || null,
+      p_codigo_sap: c.codigoSap || null, p_observaciones: c.observaciones || null
+    }
+  };
+}
+
+async function intentarSimularCotizacion() {
+  if (!cotComState.modalidadCodigo) { cotComState.simulacionError = 'Selecciona el descuento comercial.'; renderApp(); return; }
+  if (!cotComClienteValido()) { cotComState.simulacionError = 'Completa el nombre del doctor y un RUT válido.'; renderApp(); return; }
+  if (cotComState.carrito.length === 0) { cotComState.simulacionError = 'Agrega al menos un producto antes de calcular.'; renderApp(); return; }
+
+  cotComState.simulando = true;
+  cotComState.simulacion = null;
+  cotComState.simulacionError = '';
+  renderApp();
+
+  var pr = cotComParamsRpc();
+  if (!pr.modalidadReal) {
+    cotComState.simulando = false;
+    cotComState.simulacionError = 'La modalidad ' + (cotComState.modalidadCodigo || '') + ' todavía no está disponible en el sistema.';
+    renderApp();
+    return;
+  }
+
+  try {
+    const { data, error } = await sb.rpc('simular_cotizacion_comercial', pr.params);
+    if (error) throw error;
+    cotComState.simulacion = data;
+    cotComState.firmaSimulada = firmaCotizacion();
+  } catch (e) {
+    cotComState.simulacion = null;
+    cotComState.simulacionError = interpretarError(e);
+  }
+  cotComState.simulando = false;
+  renderApp();
+}
+
+async function crearCotizacionReal() {
+  if (cotComCreando) return;
+  if (!simulacionEstaVigente()) {
+    cotComCrearError = 'Los datos cambiaron desde el último cálculo. Vuelve a calcular antes de generar.';
+    renderApp();
+    return;
+  }
+  cotComCreando = true;
+  cotComCrearError = '';
+  renderApp();
+
+  var pr = cotComParamsRpc();
+  try {
+    const { data, error } = await sb.rpc('crear_cotizacion_comercial', pr.params);
+    if (error) throw error;
+    cotComState.creada = { folio: data.folio, id: data.id };
+    misCotState.cargado = false;
+  } catch (e) {
+    cotComCrearError = interpretarError(e);
+  }
+  cotComCreando = false;
+  renderApp();
+}
+
+// ============================================================
+// RENDER -- panel de datos, panel de productos, carrito lateral
+// ============================================================
+function construirSelectorModalidad() {
+  var etiquetas = { COM0: '0%', COM10: '10%', COM25: '25%', COM30: '30%' };
+  var orden = ['COM0', 'COM10', 'COM25', 'COM30'];
+  var optionsHtml = '<option value="">Descuento comercial *</option>' + orden.map(function (codigo) {
+    var real = cotComState.modalidades.find(function (m) { return m.codigo === codigo; });
+    var disponible = !!(real && real.activa);
+    var label = disponible ? ('Descuento ' + etiquetas[codigo]) : (etiquetas[codigo] + ' — no disponible aún');
+    return '<option value="' + codigo + '"' +
+      (cotComState.modalidadCodigo === codigo ? ' selected' : '') +
+      (!disponible ? ' disabled' : '') +
+      '>' + label + '</option>';
+  }).join('');
+  return '<select id="cc-select-modalidad">' + optionsHtml + '</select>';
+}
+
+function construirCardDatosCotizacion() {
+  var c = cotComState.cliente;
+  var rutOk = !c.rut || rutFormatoBasicoValido(c.rut);
+  return '<div class="card">' +
+    '<h2><span>📋 Datos de la cotización</span></h2>' +
+    '<div class="form-grid">' +
+      '<div><input type="text" id="cc-input-doctor" placeholder="Nombre del doctor *" value="' + esc(c.doctorNombre) + '"></div>' +
+      '<div>' +
+        '<input type="text" id="cc-input-rut" inputmode="numeric" pattern="[0-9]*" autocomplete="off" maxlength="9" placeholder="RUT — solo números *" value="' + esc(c.rut) + '">' +
+        (c.rut && !rutOk ? '<div class="cc-inline-err">Revisa el formato del RUT.</div>' : '') +
+      '</div>' +
+      '<div>' + construirSelectorModalidad() + '</div>' +
+      '<div><input type="text" id="cc-input-razon" placeholder="Razón social (opcional)" value="' + esc(c.razonSocial) + '"></div>' +
+    '</div>' +
+    '<div class="cc-hint">Ingresa el RUT solo con números, sin puntos ni guion. Los RUT terminados en K se habilitarán en una próxima actualización.</div>' +
+    '<details class="cc-collapsible"' + (cotComState.opcionalesAbierto ? ' open' : '') + '>' +
+      '<summary onclick="cotComState.opcionalesAbierto=!cotComState.opcionalesAbierto;">Más datos (dirección, contacto, código SAP...)</summary>' +
+      '<div class="form-grid" style="margin-top:10px;">' +
+        '<input type="text" id="cc-input-direccion" placeholder="Dirección" value="' + esc(c.direccion) + '">' +
+        '<input type="email" id="cc-input-correo" placeholder="Correo" value="' + esc(c.correo) + '">' +
+        '<input type="tel" id="cc-input-telefono" placeholder="Teléfono" value="' + esc(c.telefono) + '">' +
+        '<input type="text" id="cc-input-sap" placeholder="Código SAP" value="' + esc(c.codigoSap) + '">' +
+        '<input type="text" id="cc-input-obs" class="span2" placeholder="Observaciones" value="' + esc(c.observaciones) + '">' +
+      '</div>' +
+    '</details>' +
+  '</div>';
+}
+
+function construirPestanasMarcaCatalogo() {
+  if (cotComState.catalogoMarcas.length === 0) return '';
+  return '<div class="cc-subtabs" style="margin:0 0 12px;max-width:none;padding:0;">' +
+    cotComState.catalogoMarcas.map(function (m) {
+      var etiqueta = ETIQUETAS_MARCA_CATALOGO[m.marca] || m.marca;
+      var activa = cotComState.marcaActiva === m.marca;
+      return '<button type="button" class="cc-subtab' + (activa ? ' active' : '') + '" onclick="seleccionarMarcaCatalogo(\'' + m.marca.replace(/'/g, "\\'") + '\')">' + esc(etiqueta) + '</button>';
+    }).join('') +
+  '</div>';
+}
+
+function construirSelectorFamiliaCatalogo() {
+  var marcaObj = cotComState.catalogoMarcas.find(function (m) { return m.marca === cotComState.marcaActiva; });
+  if (!marcaObj) return '';
+  var options = '<option value="">Todas las familias</option>' + marcaObj.familias.map(function (f) {
+    return '<option value="' + f.familia_id + '"' + (cotComState.familiaActivaId === f.familia_id ? ' selected' : '') + '>' + esc(f.familia) + ' (' + f.cantidad + ')</option>';
+  }).join('');
+  return '<select id="cc-select-familia-catalogo" style="flex:1;min-width:200px;">' + options + '</select>';
+}
+
+function construirResultadosCatalogo() {
+  if (cotComState.catalogoCargandoProductos && cotComState.productosCatalogo.length === 0) {
+    return '<div class="empty-msg">Cargando productos...</div>';
+  }
+  if (cotComState.catalogoErrorProductos) {
+    return '<div class="msg-error">⚠️ ' + esc(cotComState.catalogoErrorProductos) + '</div>';
+  }
+  if (cotComState.productosCatalogo.length === 0) {
+    return '<div class="empty-msg">Sin productos para este filtro.</div>';
+  }
+  var tarjetas = cotComState.productosCatalogo.map(function (p) {
+    var yaEnCarrito = cotComState.carrito.some(function (ci) { return ci.producto_id === p.producto_id; });
+    return '<div class="prod-row">' +
+      '<div>' +
+        '<div class="prod-code">' + esc(p.codigo) + (p.es_codigo_duplicado ? ' <span class="dup-tag">código duplicado</span>' : '') + '</div>' +
+        '<div class="prod-desc">' + esc(p.descripcion) + '</div>' +
+        '<div style="font-size:11px;color:#a1a1aa;margin-top:2px;">' + esc(p.familia) + '</div>' +
+        '<div class="prod-price-row"><span class="prod-price-new">' + fmt(p.precio_lista) + '</span></div>' +
+      '</div>' +
+      '<button type="button" class="btn-add" onclick="cotComAgregarProductoCatalogo(\'' + p.producto_id + '\')">' + (yaEnCarrito ? '✓ Agregar otra unidad' : '+ Agregar') + '</button>' +
+    '</div>';
+  }).join('');
+  var cargarMasHtml = '';
+  if (cotComState.catalogoCargandoProductos && cotComState.productosCatalogo.length > 0) {
+    cargarMasHtml = '<div class="empty-msg">Cargando más...</div>';
+  } else if (cotComState.catalogoHayMas) {
+    cargarMasHtml = '<button type="button" class="btn-outline" style="margin-top:8px;" onclick="cargarProductosCatalogo(false)">Cargar más</button>';
+  }
+  return tarjetas + cargarMasHtml;
+}
+
+function construirCardProductos() {
+  if (!cotComState.catalogoCargado) { cargarCatalogoMarcasFamilias(); }
+  return '<div class="card">' +
+    '<h2>🔍 Productos</h2>' +
+    construirPestanasMarcaCatalogo() +
+    '<div class="search-row">' +
+      construirSelectorFamiliaCatalogo() +
+      '<input type="text" id="cc-input-busqueda-catalogo" placeholder="Buscar dentro de esta marca..." value="' + esc(cotComState.busquedaCatalogo) + '">' +
+      '<button type="button" class="btn-add" style="width:auto;" onclick="cargarProductosCatalogo(true)">Buscar</button>' +
+    '</div>' +
+    '<div id="product-list-comercial" style="max-height:50vh;overflow-y:auto;padding-right:4px;">' + construirResultadosCatalogo() + '</div>' +
+  '</div>';
+}
+
+function construirLineasCierreAplicadas() {
+  if (!simulacionEstaVigente()) return '';
+  var cierres = (cotComState.simulacion.items || []).filter(function (it) { return it.tipo_linea === 'cierre'; });
+  if (cierres.length === 0) return '';
+  return '<div style="padding:10px 16px;background:#fffbeb;border-top:1px solid #fde68a;border-bottom:1px solid #fde68a;">' +
+    '<div style="font-size:11px;font-weight:700;color:#92400e;margin-bottom:4px;">🔧 Tapa/cicatrizador aplicado automáticamente (99%)</div>' +
+    cierres.map(function (c) {
+      return '<div style="font-size:11px;color:#78350f;display:flex;justify-content:space-between;gap:6px;padding:1px 0;">' +
+        '<span>' + esc(c.codigo) + ' — ' + esc(c.descripcion) + ' × ' + c.cantidad + '</span><span>' + fmt(c.subtotal_item) + '</span>' +
+      '</div>';
+    }).join('') +
+  '</div>';
+}
+
+function construirAsideCarrito() {
+  var totalUnidades = cotComState.carrito.reduce(function (s, ci) { return s + ci.cantidad; }, 0);
+  var itemsHtml = cotComState.carrito.length === 0
+    ? '<div class="empty-msg">Aún no agregaste productos.</div>'
+    : cotComState.carrito.map(function (ci) {
+      return '<div class="cart-item">' +
+        '<div class="cart-item-top"><div><div class="cart-item-code">' + esc(ci.codigo) + '</div><div class="cart-item-desc">' + esc(ci.descripcion) + '</div></div></div>' +
+        '<div class="cart-item-bottom">' +
+          '<div class="qty-stepper"><button type="button" onclick="cotComCambiarCantidad(\'' + ci.producto_id + '\',-1)">−</button><span class="qty-val">' + ci.cantidad + '</span><button type="button" onclick="cotComCambiarCantidad(\'' + ci.producto_id + '\',1)">+</button></div>' +
+          '<span style="font-size:11px;color:#71717a;">' + fmt(ci.precio_lista) + ' c/u</span>' +
+          '<button type="button" class="remove-btn" onclick="cotComQuitarProducto(\'' + ci.producto_id + '\')">✕</button>' +
+        '</div>' +
+      '</div>';
+    }).join('');
+
+  var vigente = simulacionEstaVigente();
+  var resumenHtml;
+  if (cotComState.simulando) {
+    resumenHtml = '<div style="text-align:center;color:#71717a;font-size:12px;padding:8px 0;">Calculando...</div>';
+  } else if (vigente) {
+    var s = cotComState.simulacion;
+    resumenHtml =
+      '<div class="cart-total-row"><span class="cart-total-label">Subtotal</span><span>' + fmt(s.subtotal) + '</span></div>' +
+      '<div class="cart-total-row"><span class="cart-total-label">IVA (19%)</span><span>' + fmt(s.iva) + '</span></div>' +
+      '<div class="cart-total-row"><span class="cart-total-label">Total</span><span class="cart-total-value">' + fmt(s.total) + '</span></div>' +
+      '<div class="cc-hint" style="margin-bottom:8px;">Vigencia estimada: ' + esc(s.vigencia_estimada) + '</div>';
+  } else {
+    resumenHtml = '<div class="cart-total-row"><span class="cart-total-label">Total</span><span style="color:#a1a1aa;font-size:13px;">Pendiente de calcular</span></div>';
+  }
+
+  var errorHtml = cotComState.simulacionError ? '<div class="msg-error">⚠️ ' + esc(cotComState.simulacionError) + '</div>' : '';
+  var crearErrorHtml = cotComCrearError ? '<div class="msg-error">⚠️ ' + esc(cotComCrearError) + '</div>' : '';
+
+  var botonesHtml = vigente
+    ? '<button class="btn-primary" ' + (cotComCreando ? 'disabled' : '') + ' onclick="crearCotizacionReal()">' + (cotComCreando ? 'Generando...' : 'Generar cotización') + '</button>' +
+      '<button class="btn-outline" style="margin-top:8px;" ' + (cotComCreando ? 'disabled' : '') + ' onclick="intentarSimularCotizacion()">Recalcular</button>'
+    : '<button class="btn-primary" ' + (cotComState.simulando ? 'disabled' : '') + ' onclick="intentarSimularCotizacion()">' + (cotComState.simulando ? 'Calculando...' : 'Calcular cotización') + '</button>';
+
+  return '<aside class="cart-aside" id="cart-aside-comercial">' +
+    '<div class="cart-card">' +
+      '<div class="cart-head"><h3>🧾 Cotización en curso</h3><button class="cart-clear" onclick="vaciarCarritoComercial()">Vaciar</button></div>' +
+      '<div class="cart-items">' + itemsHtml + '</div>' +
+      construirLineasCierreAplicadas() +
+      '<div class="cart-foot">' +
+        '<div class="cart-total-row"><span class="cart-total-label">' + cotComState.carrito.length + ' producto(s)</span><span style="font-size:12px;color:#71717a;">' + totalUnidades + ' unidad(es)</span></div>' +
+        resumenHtml + errorHtml + crearErrorHtml + botonesHtml +
+      '</div>' +
+    '</div>' +
+  '</aside>';
+}
+
+function construirBotonFlotanteCarrito() {
+  if (cotComState.carrito.length === 0) return '';
+  var totalTxt = simulacionEstaVigente() ? fmt(cotComState.simulacion.total) : 'Ver';
+  return '<button class="floating-cart-btn visible" id="floating-btn" onclick="document.getElementById(\'cart-aside-comercial\').scrollIntoView({behavior:\'smooth\'});">' +
+    '<span>🧾 Cotización (' + cotComState.carrito.length + ')</span><span>' + totalTxt + ' →</span>' +
+  '</button>';
+}
+
+function construirConfirmacionCreacion() {
+  var cr = cotComState.creada;
+  return '<div class="compartir-wrap">' +
+    '<div class="center-card">' +
+      '<div class="ok-circle">✅</div>' +
+      '<h2 style="margin:0 0 6px;">Cotización generada correctamente</h2>' +
+      '<p style="color:#71717a;font-size:13px;margin:0 0 4px;">Folio</p>' +
+      '<p style="font-size:20px;font-weight:800;color:var(--red);margin:0 0 4px;">' + esc(cr ? cr.folio : '') + '</p>' +
+      '<p class="hint">Envío por WhatsApp disponible en la próxima fase.</p>' +
+      '<div class="send-buttons">' +
+        '<button class="btn-outline" onclick="vistaComercial=\'mis\';cargarMisCotizaciones(true);">Ver Mis cotizaciones</button>' +
+        '<button class="btn-solid-red" onclick="reiniciarCotizadorComercial()">Nueva cotización</button>' +
+      '</div>' +
+    '</div>' +
+  '</div>';
+}
+
+function renderNuevaCotizacion() {
+  if (cotComState.creada) { return construirConfirmacionCreacion(); }
+  return '<main class="layout">' +
+    '<section>' + construirCardDatosCotizacion() + construirCardProductos() + '</section>' +
+    construirAsideCarrito() +
+  '</main>' + construirBotonFlotanteCarrito();
+}
+
+function wireCotizadorComercialInputs() {
+  var rutEl = document.getElementById('cc-input-rut');
+  if (rutEl) {
+    // FASE D1.2 -- banderas de foco mutuamente excluyentes: entrar a un
+    // campo apaga la bandera del otro. Antes ambas podian quedar en true
+    // al mismo tiempo (nunca se reseteaban), y el bloque que se ejecuta
+    // despues en esta misma funcion (Doctor) le robaba el foco a RUT.
+    rutEl.addEventListener('focus', function () { cotComRutFoco = true; cotComDoctorFoco = false; });
+    rutEl.addEventListener('input', function (e) {
+      var limpio = e.target.value.replace(/\D/g, '').slice(0, 9);
+      e.target.value = limpio;
+      cotComState.cliente.rut = limpio;
+      cotComRutFoco = true;
+      cotComDoctorFoco = false;
+      renderApp();
+    });
+    if (cotComRutFoco) { rutEl.focus(); var p1 = rutEl.value.length; try { rutEl.setSelectionRange(p1, p1); } catch (er) {} }
+  }
+  var doctorEl = document.getElementById('cc-input-doctor');
+  if (doctorEl) {
+    doctorEl.addEventListener('focus', function () { cotComDoctorFoco = true; cotComRutFoco = false; });
+    doctorEl.addEventListener('input', function (e) {
+      cotComState.cliente.doctorNombre = e.target.value;
+      cotComDoctorFoco = true;
+      cotComRutFoco = false;
+      renderApp();
+    });
+    if (cotComDoctorFoco) { doctorEl.focus(); var p2 = doctorEl.value.length; try { doctorEl.setSelectionRange(p2, p2); } catch (er) {} }
+  }
+  var modalidadEl = document.getElementById('cc-select-modalidad');
+  if (modalidadEl) { modalidadEl.addEventListener('change', function (e) { cotComRutFoco = false; cotComDoctorFoco = false; cotComSeleccionarModalidad(e.target.value); }); }
+  [['razon', 'razonSocial'], ['direccion', 'direccion'], ['correo', 'correo'], ['telefono', 'telefono'], ['sap', 'codigoSap'], ['obs', 'observaciones']].forEach(function (par) {
+    var el = document.getElementById('cc-input-' + par[0]);
+    if (el) el.addEventListener('input', function (e) { cotComState.cliente[par[1]] = e.target.value; });
+  });
+  var busqCat = document.getElementById('cc-input-busqueda-catalogo');
+  if (busqCat) {
+    busqCat.addEventListener('input', function (e) { cotComState.busquedaCatalogo = e.target.value; });
+    busqCat.addEventListener('keydown', function (e) { if (e.key === 'Enter') { cotComRutFoco = false; cotComDoctorFoco = false; cargarProductosCatalogo(true); } });
+  }
+  var familiaCatSel = document.getElementById('cc-select-familia-catalogo');
+  if (familiaCatSel) familiaCatSel.addEventListener('change', function (e) { seleccionarFamiliaCatalogo(e.target.value); });
+}
+
+// ============================================================
+// MIS COTIZACIONES
+// ============================================================
+const MIS_COT_PAGINA = 20;
+let misCotState = { cargado: false, cargando: false, error: '', filas: [], filtroBusqueda: '', filtroEstado: '', filtroFacturacion: '', offset: 0, hayMas: true };
+let misCotBusquedaFoco = false;
+
+async function cargarMisCotizaciones(reiniciar) {
+  if (reiniciar) { misCotState.offset = 0; misCotState.filas = []; misCotState.hayMas = true; }
+  misCotState.cargando = true;
+  misCotState.error = '';
+  renderApp();
+  try {
+    const { data, error } = await sb.rpc('listar_cotizaciones_comerciales', {
+      p_estado_comercial: misCotState.filtroEstado || null,
+      p_estado_facturacion: misCotState.filtroFacturacion || null,
+      p_fecha_desde: null, p_fecha_hasta: null,
+      p_busqueda: misCotState.filtroBusqueda || null,
+      p_limite: MIS_COT_PAGINA, p_offset: misCotState.offset
+    });
+    if (error) throw error;
+    var filas = data || [];
+    misCotState.filas = misCotState.filas.concat(filas);
+    misCotState.hayMas = filas.length === MIS_COT_PAGINA;
+    misCotState.offset += filas.length;
+    misCotState.cargado = true;
+  } catch (e) {
+    misCotState.error = interpretarError(e);
+  }
+  misCotState.cargando = false;
+  renderApp();
+}
+
+const ESTADOS_COMERCIALES = ['borrador', 'enviada', 'aceptada', 'rechazada', 'vencida', 'anulada'];
+const ESTADOS_FACTURACION = ['pendiente', 'enviada_customer_service', 'facturada', 'parcialmente_facturada', 'cerrada'];
+
+function construirMisCotizaciones() {
+  var opcionesEstado = '<option value="">Todos los estados</option>' + ESTADOS_COMERCIALES.map(function (e) {
+    return '<option value="' + e + '"' + (misCotState.filtroEstado === e ? ' selected' : '') + '>' + e + '</option>';
+  }).join('');
+  var opcionesFact = '<option value="">Toda facturación</option>' + ESTADOS_FACTURACION.map(function (e) {
+    return '<option value="' + e + '"' + (misCotState.filtroFacturacion === e ? ' selected' : '') + '>' + e + '</option>';
+  }).join('');
+
+  var filtrosHtml =
+    '<div class="cc-mis-filtros">' +
+      '<input id="mc-input-busqueda" type="text" placeholder="Folio, RUT o doctor..." value="' + esc(misCotState.filtroBusqueda) + '">' +
+      '<select id="mc-select-estado">' + opcionesEstado + '</select>' +
+      '<select id="mc-select-facturacion">' + opcionesFact + '</select>' +
+      '<button type="button" class="btn-add" style="width:auto;" onclick="cargarMisCotizaciones(true)">Buscar</button>' +
+    '</div>';
+
+  var listaHtml;
+  if (misCotState.cargando && misCotState.filas.length === 0) {
+    listaHtml = '<div class="empty-msg">Cargando...</div>';
+  } else if (misCotState.error) {
+    listaHtml = '<div class="msg-error">⚠️ ' + esc(misCotState.error) + '</div>';
+  } else if (misCotState.filas.length === 0) {
+    listaHtml = '<div class="empty-msg">Todavía no hay cotizaciones para mostrar.</div>';
+  } else {
+    listaHtml = misCotState.filas.map(function (f) {
+      return '<div class="prod-row" style="align-items:flex-start;">' +
+        '<div style="flex:1;">' +
+          '<div style="display:flex;justify-content:space-between;align-items:start;gap:8px;margin-bottom:4px;">' +
+            '<span class="prod-code" style="font-size:13px;font-weight:700;color:var(--ink);">' + esc(f.folio) + '</span>' +
+            '<span class="cc-estado-tag">' + esc(f.estado) + '</span>' +
+          '</div>' +
+          '<div class="prod-desc">' + esc(f.doctor_nombre) + '</div>' +
+          '<div style="font-size:11px;color:#a1a1aa;margin-top:2px;">' + esc(f.rut) + ' · ' + esc(f.modalidad_codigo) + ' · Facturación: ' + esc(f.estado_facturacion) + '</div>' +
+          (f.vigencia_hasta ? '<div style="font-size:11px;color:#a1a1aa;">Vigente hasta: ' + esc(f.vigencia_hasta) + '</div>' : '') +
+        '</div>' +
+        '<div style="text-align:right;">' +
+          '<div class="prod-price-new" style="font-size:16px;">' + fmt(f.total) + '</div>' +
+          (f.creado_en ? '<div style="font-size:11px;color:#a1a1aa;">' + esc(new Date(f.creado_en).toLocaleDateString('es-CL')) + '</div>' : '') +
+        '</div>' +
+      '</div>';
+    }).join('');
+  }
+
+  var cargarMasHtml = '';
+  if (misCotState.filas.length > 0 && misCotState.cargando) {
+    cargarMasHtml = '<div class="empty-msg">Cargando más...</div>';
+  } else if (misCotState.hayMas && misCotState.filas.length > 0) {
+    cargarMasHtml = '<button type="button" class="btn-outline" style="margin-top:10px;" onclick="cargarMisCotizaciones(false)">Cargar más</button>';
+  }
+
+  var alcanceTexto = miPerfil && miPerfil.es_coordinador && !miPerfil.es_vendedor && !miPerfil.es_super_admin
+    ? 'Cotizaciones de tu equipo.'
+    : (miPerfil && miPerfil.es_observador && !miPerfil.es_vendedor && !miPerfil.es_super_admin ? 'Todas las cotizaciones.' : 'Tus propias cotizaciones.');
+
+  return '<div class="cc-mis-wrap">' +
+    '<div class="card">' +
+      '<h2>🧾 Mis cotizaciones</h2>' +
+      '<p style="font-size:12px;color:var(--muted);margin:0 0 14px;">' + esc(alcanceTexto) + '</p>' +
+      filtrosHtml + listaHtml + cargarMasHtml +
+    '</div>' +
+  '</div>';
+}
+
+function wireMisCotizacionesInputs() {
+  var b = document.getElementById('mc-input-busqueda');
+  if (b) {
+    b.addEventListener('input', function (e) { misCotState.filtroBusqueda = e.target.value; misCotBusquedaFoco = true; });
+    b.addEventListener('keydown', function (e) { if (e.key === 'Enter') cargarMisCotizaciones(true); });
+    if (misCotBusquedaFoco) { b.focus(); var p = b.value.length; try { b.setSelectionRange(p, p); } catch (er) {} }
+  }
+  var se = document.getElementById('mc-select-estado');
+  if (se) se.addEventListener('change', function (e) { misCotState.filtroEstado = e.target.value; cargarMisCotizaciones(true); });
+  var sf = document.getElementById('mc-select-facturacion');
+  if (sf) sf.addEventListener('change', function (e) { misCotState.filtroFacturacion = e.target.value; cargarMisCotizaciones(true); });
+}
+
+// ============================================================
+// NAVEGACION Y RENDER PRINCIPAL
+// ============================================================
+function construirNavComercial() {
+  var botones = '';
+  if (puedeCrearCotizaciones()) {
+    botones += '<button class="cc-subtab' + (vistaComercial === 'nueva' ? ' active' : '') + '" onclick="vistaComercial=\'nueva\';renderApp();">Nueva cotización</button>';
+  }
+  botones += '<button class="cc-subtab' + (vistaComercial === 'mis' ? ' active' : '') + '" onclick="vistaComercial=\'mis\';cargarMisCotizaciones(true);">Mis cotizaciones</button>';
+  return '<div class="cc-subtabs">' + botones + '</div>';
+}
+
+function renderApp() {
+  document.getElementById('login-view').style.display = 'none';
+  const v = document.getElementById('app-view');
+  v.style.display = 'block';
+
+  if (!cotComState.modalidadesCargadas) { cargarModalidadesComerciales(); }
+
+  var contenidoHtml;
+  var mostrarNav = !esSoloCustomerService();
+  if (esSoloCustomerService()) {
+    contenidoHtml = '<div class="cc-mis-wrap"><div class="card"><div class="empty-msg">Este Cotizador es para Ejecutivos Comerciales.<br><span style="font-size:11px;">Tu rol de Customer Service gestiona facturación desde el Admin general.</span></div></div></div>';
+  } else if (vistaComercial === 'mis') {
+    contenidoHtml = construirMisCotizaciones();
+  } else if (!puedeCrearCotizaciones()) {
+    contenidoHtml = '<div class="cc-mis-wrap"><div class="card"><div class="empty-msg">Tu perfil no tiene el rol de Ejecutivo Comercial habilitado para crear cotizaciones.</div></div></div>';
+  } else {
+    contenidoHtml = renderNuevaCotizacion();
+  }
+
+  v.innerHTML =
+    '<header class="topbar">' +
+      '<div><div class="brand-name">STRAUMANN</div><div class="brand-sub">COTIZADOR COMERCIAL</div></div>' +
+      '<div class="topbar-right"><span>v' + APP_VERSION + '</span><button class="btn-logout" id="btn-logout">Cerrar sesión</button></div>' +
+    '</header>' +
+    (mostrarNav ? construirNavComercial() : '') +
+    contenidoHtml;
+
+  document.getElementById('btn-logout').addEventListener('click', function () { sb.auth.signOut(); });
+  wireCotizadorComercialInputs();
+  wireMisCotizacionesInputs();
+}
+
+// ============================================================
+// PWA
+// ============================================================
+if ('serviceWorker' in navigator) {
+  window.addEventListener('load', function () {
+    navigator.serviceWorker.register('/sw.js').catch(function () {});
+  });
+}
+
+// ============================================================
+// AUTENTICACION
+// ============================================================
+sb.auth.onAuthStateChange(function (event, session) {
+  if (session) {
+    cargarMiPerfilYEntrar();
+  } else {
+    miPerfil = null;
+    renderLogin();
+  }
+});
+
+(async function init() {
+  try {
+    const { data } = await sb.auth.getSession();
+    if (data && data.session) {
+      await cargarMiPerfilYEntrar();
+    } else {
+      renderLogin();
+    }
+  } catch (e) {
+    errorConexion = true;
+    renderLogin(interpretarError(e));
+  }
+})();
+</script>
+</body>
+</html>
