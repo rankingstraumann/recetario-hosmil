@@ -137,7 +137,7 @@
 // -- solo llama las 5 RPC autorizadas: buscar_productos_comercial,
 // listar_modalidades_comerciales, simular_cotizacion_comercial,
 // crear_cotizacion_comercial, listar_cotizaciones_comerciales.
-const APP_VERSION = '0.5-2026-07-17';
+const APP_VERSION = '0.5.1-2026-07-17';
 console.log('Cotizador Comercial version:', APP_VERSION);
 
 const SUPABASE_URL = 'https://gzimllusbxjorbsbtsse.supabase.co';
@@ -631,6 +631,20 @@ function construirCardProductos() {
   '</div>';
 }
 
+function construirLineasCierreAplicadas() {
+  if (!simulacionEstaVigente()) return '';
+  var cierres = (cotComState.simulacion.items || []).filter(function (it) { return it.tipo_linea === 'cierre'; });
+  if (cierres.length === 0) return '';
+  return '<div style="padding:10px 16px;background:#fffbeb;border-top:1px solid #fde68a;border-bottom:1px solid #fde68a;">' +
+    '<div style="font-size:11px;font-weight:700;color:#92400e;margin-bottom:4px;">🔧 Tapa/cicatrizador aplicado automáticamente (99%)</div>' +
+    cierres.map(function (c) {
+      return '<div style="font-size:11px;color:#78350f;display:flex;justify-content:space-between;gap:6px;padding:1px 0;">' +
+        '<span>' + esc(c.codigo) + ' — ' + esc(c.descripcion) + ' × ' + c.cantidad + '</span><span>' + fmt(c.subtotal_item) + '</span>' +
+      '</div>';
+    }).join('') +
+  '</div>';
+}
+
 function construirAsideCarrito() {
   var totalUnidades = cotComState.carrito.reduce(function (s, ci) { return s + ci.cantidad; }, 0);
   var itemsHtml = cotComState.carrito.length === 0
@@ -673,6 +687,7 @@ function construirAsideCarrito() {
     '<div class="cart-card">' +
       '<div class="cart-head"><h3>🧾 Cotización en curso</h3><button class="cart-clear" onclick="vaciarCarritoComercial()">Vaciar</button></div>' +
       '<div class="cart-items">' + itemsHtml + '</div>' +
+      construirLineasCierreAplicadas() +
       '<div class="cart-foot">' +
         '<div class="cart-total-row"><span class="cart-total-label">' + cotComState.carrito.length + ' producto(s)</span><span style="font-size:12px;color:#71717a;">' + totalUnidades + ' unidad(es)</span></div>' +
         resumenHtml + errorHtml + crearErrorHtml + botonesHtml +
