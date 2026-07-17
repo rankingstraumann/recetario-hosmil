@@ -137,7 +137,7 @@
 // -- solo llama las 5 RPC autorizadas: buscar_productos_comercial,
 // listar_modalidades_comerciales, simular_cotizacion_comercial,
 // crear_cotizacion_comercial, listar_cotizaciones_comerciales.
-const APP_VERSION = '0.4.1-2026-07-17';
+const APP_VERSION = '0.5-2026-07-17';
 console.log('Cotizador Comercial version:', APP_VERSION);
 
 const SUPABASE_URL = 'https://gzimllusbxjorbsbtsse.supabase.co';
@@ -267,12 +267,19 @@ let cotComState = {
   modalidadesCargadas: false,
   cliente: cotComClienteVacio(),
   opcionalesAbierto: false,
-  busqueda: '',
-  resultados: [],
-  filtroMarca: '',
-  filtroFamilia: '',
-  buscando: false,
-  errorBusqueda: '',
+  // FASE D1.3 -- navegacion del catalogo por marca/familia (autorizada
+  // explicitamente), reemplaza el mecanismo anterior de "buscar primero,
+  // filtrar despues".
+  catalogoMarcas: [],
+  catalogoCargado: false,
+  marcaActiva: null,
+  familiaActivaId: null,
+  busquedaCatalogo: '',
+  productosCatalogo: [],
+  catalogoCargandoProductos: false,
+  catalogoErrorProductos: '',
+  catalogoOffset: 0,
+  catalogoHayMas: true,
   carrito: [],
   simulando: false,
   simulacion: null,
@@ -289,7 +296,10 @@ function reiniciarCotizadorComercial() {
   cotComState = {
     modalidadCodigo: cotComModalidadPorDefecto(), modalidades: cotComState.modalidades, modalidadesCargadas: cotComState.modalidadesCargadas,
     cliente: cotComClienteVacio(), opcionalesAbierto: false,
-    busqueda: '', resultados: [], filtroMarca: '', filtroFamilia: '', buscando: false, errorBusqueda: '',
+    catalogoMarcas: cotComState.catalogoMarcas, catalogoCargado: cotComState.catalogoCargado,
+    marcaActiva: cotComState.marcaActiva, familiaActivaId: null,
+    busquedaCatalogo: '', productosCatalogo: [], catalogoCargandoProductos: false, catalogoErrorProductos: '',
+    catalogoOffset: 0, catalogoHayMas: true,
     carrito: [], simulando: false, simulacion: null, simulacionError: '', firmaSimulada: null,
     creada: null
   };
@@ -297,6 +307,7 @@ function reiniciarCotizadorComercial() {
   cotComDoctorFoco = false;
   cotComCreando = false;
   cotComCrearError = '';
+  cargarProductosCatalogo(true);
   renderApp();
 }
 
@@ -335,40 +346,80 @@ async function cargarModalidadesComerciales() {
   renderApp();
 }
 
-async function cotComBuscarProductos() {
-  var termino = (cotComState.busqueda || '').trim();
-  cotComState.errorBusqueda = '';
-  cotComState.filtroMarca = '';
-  cotComState.filtroFamilia = '';
-  if (!termino) { cotComState.resultados = []; renderApp(); return; }
-  cotComState.buscando = true;
+// FASE D1.3 -- navegacion del catalogo comercial por marca/familia, sin
+// necesidad de buscar primero (autorizado explicitamente). Usa las 2 RPC
+// nuevas de solo lectura: listar_marcas_familias_comerciales y
+// listar_productos_comercial_catalogo. buscar_productos_comercial ya no
+// se usa desde este frontend (sigue intacta en el backend).
+const ETIQUETAS_MARCA_CATALOGO = { Straumann: 'Straumann BLC/BLX', Neodent: 'Neodent', BLT: 'Straumann BLT', Compartida: 'Otras marcas' };
+const ORDEN_MARCAS_CATALOGO = ['Straumann', 'Neodent', 'BLT', 'Compartida'];
+
+async function cargarCatalogoMarcasFamilias() {
+  cotComState.catalogoCargado = true;
+  try {
+    const { data, error } = await sb.rpc('listar_marcas_familias_comerciales');
+    if (error) throw error;
+    var porMarca = {};
+    (data || []).forEach(function (fila) {
+      if (!porMarca[fila.marca]) porMarca[fila.marca] = { marca: fila.marca, total: 0, familias: [] };
+      porMarca[fila.marca].total += fila.cantidad_productos;
+      porMarca[fila.marca].familias.push({ familia_id: fila.familia_id, familia: fila.familia, cantidad: fila.cantidad_productos });
+    });
+    var marcas = Object.keys(porMarca).map(function (m) { return porMarca[m]; });
+    marcas.sort(function (a, b) {
+      var ia = ORDEN_MARCAS_CATALOGO.indexOf(a.marca); if (ia === -1) ia = 99;
+      var ib = ORDEN_MARCAS_CATALOGO.indexOf(b.marca); if (ib === -1) ib = 99;
+      return ia - ib || a.marca.localeCompare(b.marca);
+    });
+    marcas.forEach(function (m) { m.familias.sort(function (a, b) { return a.familia.localeCompare(b.familia); }); });
+    cotComState.catalogoMarcas = marcas;
+    if (!cotComState.marcaActiva && marcas.length > 0) { cotComState.marcaActiva = marcas[0].marca; }
+  } catch (e) {
+    cotComState.catalogoMarcas = [];
+  }
+  cargarProductosCatalogo(true);
+}
+
+function seleccionarMarcaCatalogo(marca) {
+  cotComRutFoco = false; cotComDoctorFoco = false;
+  cotComState.marcaActiva = marca;
+  cotComState.familiaActivaId = null;
+  cargarProductosCatalogo(true);
+}
+function seleccionarFamiliaCatalogo(familiaId) {
+  cotComRutFoco = false; cotComDoctorFoco = false;
+  cotComState.familiaActivaId = familiaId || null;
+  cargarProductosCatalogo(true);
+}
+
+async function cargarProductosCatalogo(reiniciar) {
+  if (reiniciar) { cotComState.catalogoOffset = 0; cotComState.productosCatalogo = []; cotComState.catalogoHayMas = true; }
+  cotComState.catalogoCargandoProductos = true;
+  cotComState.catalogoErrorProductos = '';
   renderApp();
   try {
-    const { data, error } = await sb.rpc('buscar_productos_comercial', { p_busqueda: termino, p_limite: 50 });
+    const { data, error } = await sb.rpc('listar_productos_comercial_catalogo', {
+      p_marca: cotComState.marcaActiva || null,
+      p_familia_id: cotComState.familiaActivaId || null,
+      p_busqueda: cotComState.busquedaCatalogo || null,
+      p_limite: 30,
+      p_offset: cotComState.catalogoOffset
+    });
     if (error) throw error;
-    cotComState.resultados = data || [];
+    var filas = data || [];
+    cotComState.productosCatalogo = cotComState.productosCatalogo.concat(filas);
+    cotComState.catalogoHayMas = filas.length === 30;
+    cotComState.catalogoOffset += filas.length;
   } catch (e) {
-    cotComState.resultados = [];
-    cotComState.errorBusqueda = interpretarError(e);
+    cotComState.productosCatalogo = [];
+    cotComState.catalogoErrorProductos = interpretarError(e);
   }
-  cotComState.buscando = false;
+  cotComState.catalogoCargandoProductos = false;
   renderApp();
 }
 
-// FASE C6D.5 -- filtros de marca/familia construidos dinamicamente desde
-// los resultados REALES ya devueltos por buscar_productos_comercial (no
-// se crea ninguna RPC nueva, no se hardcodea ninguna lista). La familia
-// se acota a la marca ya elegida, igual que en el Recetario.
-function cotComResultadosFiltrados() {
-  return cotComState.resultados.filter(function (p) {
-    if (cotComState.filtroMarca && p.marca !== cotComState.filtroMarca) return false;
-    if (cotComState.filtroFamilia && p.familia !== cotComState.filtroFamilia) return false;
-    return true;
-  });
-}
-
-function cotComAgregarProducto(productoId) {
-  var p = cotComState.resultados.find(function (r) { return String(r.producto_id) === String(productoId); });
+function cotComAgregarProductoCatalogo(productoId) {
+  var p = cotComState.productosCatalogo.find(function (r) { return String(r.producto_id) === String(productoId); });
   if (!p) return;
   var existente = cotComState.carrito.find(function (ci) { return ci.producto_id === p.producto_id; });
   if (existente) {
@@ -515,63 +566,68 @@ function construirCardDatosCotizacion() {
   '</div>';
 }
 
-function construirFiltrosMarcaFamilia() {
-  if (cotComState.resultados.length === 0) return '';
-  var marcas = Array.from(new Set(cotComState.resultados.map(function (p) { return p.marca; }))).sort();
-  var basesFamilia = cotComState.filtroMarca
-    ? cotComState.resultados.filter(function (p) { return p.marca === cotComState.filtroMarca; })
-    : cotComState.resultados;
-  var familias = Array.from(new Set(basesFamilia.map(function (p) { return p.familia; }))).sort();
-
-  var marcaOptions = '<option value="">Todas las marcas</option>' + marcas.map(function (m) {
-    return '<option value="' + esc(m) + '"' + (cotComState.filtroMarca === m ? ' selected' : '') + '>' + esc(m) + '</option>';
-  }).join('');
-  var familiaOptions = '<option value="">Todas las familias</option>' + familias.map(function (f) {
-    return '<option value="' + esc(f) + '"' + (cotComState.filtroFamilia === f ? ' selected' : '') + '>' + esc(f) + '</option>';
-  }).join('');
-
-  return '<div class="search-row">' +
-    '<select id="cc-select-marca" style="flex:1;min-width:160px;">' + marcaOptions + '</select>' +
-    '<select id="cc-select-familia" style="flex:1;min-width:160px;">' + familiaOptions + '</select>' +
+function construirPestanasMarcaCatalogo() {
+  if (cotComState.catalogoMarcas.length === 0) return '';
+  return '<div class="cc-subtabs" style="margin:0 0 12px;max-width:none;padding:0;">' +
+    cotComState.catalogoMarcas.map(function (m) {
+      var etiqueta = ETIQUETAS_MARCA_CATALOGO[m.marca] || m.marca;
+      var activa = cotComState.marcaActiva === m.marca;
+      return '<button type="button" class="cc-subtab' + (activa ? ' active' : '') + '" onclick="seleccionarMarcaCatalogo(\'' + m.marca.replace(/'/g, "\\'") + '\')">' + esc(etiqueta) + '</button>';
+    }).join('') +
   '</div>';
 }
 
-function construirCardProductos() {
-  var resultadosHtml = '';
-  var filtrados = cotComResultadosFiltrados();
-  if (cotComState.buscando) {
-    resultadosHtml = '<div class="empty-msg">Buscando...</div>';
-  } else if (cotComState.errorBusqueda) {
-    resultadosHtml = '<div class="msg-error">⚠️ ' + esc(cotComState.errorBusqueda) + '</div>';
-  } else if (cotComState.resultados.length > 0 && filtrados.length === 0) {
-    resultadosHtml = '<div class="empty-msg">Ningún producto de esta búsqueda coincide con la marca/familia elegida.</div>';
-  } else if (filtrados.length > 0) {
-    resultadosHtml = filtrados.map(function (p) {
-      var yaEnCarrito = cotComState.carrito.some(function (ci) { return ci.producto_id === p.producto_id; });
-      return '<div class="prod-row">' +
-        '<div>' +
-          '<div class="prod-code">' + esc(p.codigo) + (p.es_codigo_duplicado ? ' <span class="dup-tag">código duplicado</span>' : '') + '</div>' +
-          '<div class="prod-desc">' + esc(p.descripcion) + '</div>' +
-          '<div style="font-size:11px;color:#a1a1aa;margin-top:2px;">' + esc(p.marca) + ' · ' + esc(p.familia) + '</div>' +
-          '<div class="prod-price-row"><span class="prod-price-new">' + fmt(p.precio_lista) + '</span></div>' +
-        '</div>' +
-        '<button type="button" class="btn-add" onclick="cotComAgregarProducto(\'' + p.producto_id + '\')">' + (yaEnCarrito ? '✓ Agregar otra unidad' : '+ Agregar') + '</button>' +
-      '</div>';
-    }).join('');
-  } else if (cotComState.busqueda) {
-    resultadosHtml = '<div class="empty-msg">Sin resultados para "' + esc(cotComState.busqueda) + '".</div>';
-  } else {
-    resultadosHtml = '<div class="empty-msg">Busca un producto por código o descripción para comenzar.</div>';
-  }
+function construirSelectorFamiliaCatalogo() {
+  var marcaObj = cotComState.catalogoMarcas.find(function (m) { return m.marca === cotComState.marcaActiva; });
+  if (!marcaObj) return '';
+  var options = '<option value="">Todas las familias</option>' + marcaObj.familias.map(function (f) {
+    return '<option value="' + f.familia_id + '"' + (cotComState.familiaActivaId === f.familia_id ? ' selected' : '') + '>' + esc(f.familia) + ' (' + f.cantidad + ')</option>';
+  }).join('');
+  return '<select id="cc-select-familia-catalogo" style="flex:1;min-width:200px;">' + options + '</select>';
+}
 
+function construirResultadosCatalogo() {
+  if (cotComState.catalogoCargandoProductos && cotComState.productosCatalogo.length === 0) {
+    return '<div class="empty-msg">Cargando productos...</div>';
+  }
+  if (cotComState.catalogoErrorProductos) {
+    return '<div class="msg-error">⚠️ ' + esc(cotComState.catalogoErrorProductos) + '</div>';
+  }
+  if (cotComState.productosCatalogo.length === 0) {
+    return '<div class="empty-msg">Sin productos para este filtro.</div>';
+  }
+  var tarjetas = cotComState.productosCatalogo.map(function (p) {
+    var yaEnCarrito = cotComState.carrito.some(function (ci) { return ci.producto_id === p.producto_id; });
+    return '<div class="prod-row">' +
+      '<div>' +
+        '<div class="prod-code">' + esc(p.codigo) + (p.es_codigo_duplicado ? ' <span class="dup-tag">código duplicado</span>' : '') + '</div>' +
+        '<div class="prod-desc">' + esc(p.descripcion) + '</div>' +
+        '<div style="font-size:11px;color:#a1a1aa;margin-top:2px;">' + esc(p.familia) + '</div>' +
+        '<div class="prod-price-row"><span class="prod-price-new">' + fmt(p.precio_lista) + '</span></div>' +
+      '</div>' +
+      '<button type="button" class="btn-add" onclick="cotComAgregarProductoCatalogo(\'' + p.producto_id + '\')">' + (yaEnCarrito ? '✓ Agregar otra unidad' : '+ Agregar') + '</button>' +
+    '</div>';
+  }).join('');
+  var cargarMasHtml = '';
+  if (cotComState.catalogoCargandoProductos && cotComState.productosCatalogo.length > 0) {
+    cargarMasHtml = '<div class="empty-msg">Cargando más...</div>';
+  } else if (cotComState.catalogoHayMas) {
+    cargarMasHtml = '<button type="button" class="btn-outline" style="margin-top:8px;" onclick="cargarProductosCatalogo(false)">Cargar más</button>';
+  }
+  return tarjetas + cargarMasHtml;
+}
+
+function construirCardProductos() {
+  if (!cotComState.catalogoCargado) { cargarCatalogoMarcasFamilias(); }
   return '<div class="card">' +
     '<h2>🔍 Productos</h2>' +
+    construirPestanasMarcaCatalogo() +
     '<div class="search-row">' +
-      '<input type="text" id="cc-input-busqueda" placeholder="Buscar por código o descripción..." value="' + esc(cotComState.busqueda) + '">' +
-      '<button type="button" class="btn-add" style="width:auto;" onclick="cotComBuscarProductos()">Buscar</button>' +
+      construirSelectorFamiliaCatalogo() +
+      '<input type="text" id="cc-input-busqueda-catalogo" placeholder="Buscar dentro de esta marca..." value="' + esc(cotComState.busquedaCatalogo) + '">' +
+      '<button type="button" class="btn-add" style="width:auto;" onclick="cargarProductosCatalogo(true)">Buscar</button>' +
     '</div>' +
-    construirFiltrosMarcaFamilia() +
-    '<div id="product-list-comercial" style="max-height:50vh;overflow-y:auto;padding-right:4px;">' + resultadosHtml + '</div>' +
+    '<div id="product-list-comercial" style="max-height:50vh;overflow-y:auto;padding-right:4px;">' + construirResultadosCatalogo() + '</div>' +
   '</div>';
 }
 
@@ -693,15 +749,13 @@ function wireCotizadorComercialInputs() {
     var el = document.getElementById('cc-input-' + par[0]);
     if (el) el.addEventListener('input', function (e) { cotComState.cliente[par[1]] = e.target.value; });
   });
-  var busq = document.getElementById('cc-input-busqueda');
-  if (busq) {
-    busq.addEventListener('input', function (e) { cotComState.busqueda = e.target.value; });
-    busq.addEventListener('keydown', function (e) { if (e.key === 'Enter') { cotComRutFoco = false; cotComDoctorFoco = false; cotComBuscarProductos(); } });
+  var busqCat = document.getElementById('cc-input-busqueda-catalogo');
+  if (busqCat) {
+    busqCat.addEventListener('input', function (e) { cotComState.busquedaCatalogo = e.target.value; });
+    busqCat.addEventListener('keydown', function (e) { if (e.key === 'Enter') { cotComRutFoco = false; cotComDoctorFoco = false; cargarProductosCatalogo(true); } });
   }
-  var marcaSel = document.getElementById('cc-select-marca');
-  if (marcaSel) marcaSel.addEventListener('change', function (e) { cotComRutFoco = false; cotComDoctorFoco = false; cotComState.filtroMarca = e.target.value; cotComState.filtroFamilia = ''; renderApp(); });
-  var familiaSel = document.getElementById('cc-select-familia');
-  if (familiaSel) familiaSel.addEventListener('change', function (e) { cotComRutFoco = false; cotComDoctorFoco = false; cotComState.filtroFamilia = e.target.value; renderApp(); });
+  var familiaCatSel = document.getElementById('cc-select-familia-catalogo');
+  if (familiaCatSel) familiaCatSel.addEventListener('change', function (e) { seleccionarFamiliaCatalogo(e.target.value); });
 }
 
 // ============================================================
