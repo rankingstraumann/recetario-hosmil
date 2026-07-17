@@ -102,7 +102,7 @@
 // simular_cotizacion_comercial, crear_cotizacion_comercial,
 // listar_cotizaciones_comerciales. Ningun insert/update/delete directo
 // en todo el archivo -- se puede confirmar leyendolo completo.
-const APP_VERSION = '0.2.2-2026-07-16';
+const APP_VERSION = '0.2.3-2026-07-16';
 console.log('Cotizador Comercial version:', APP_VERSION);
 
 const SUPABASE_URL = 'https://gzimllusbxjorbsbtsse.supabase.co';
@@ -251,9 +251,17 @@ let cotComDoctorFoco = false;
 let cotComCreando = false;
 let cotComCrearError = '';
 
+// FASE C6D.3 -- COM0 es la modalidad predeterminada mientras este activa
+// en el backend. Nunca se asume "COM0" a ciegas: se verifica contra la
+// lista real ya cargada, igual que cualquier otra modalidad.
+function cotComModalidadPorDefecto() {
+  var com0 = cotComState.modalidades.find(function (m) { return m.codigo === 'COM0' && m.activa; });
+  return com0 ? 'COM0' : null;
+}
+
 function reiniciarCotizadorComercial() {
   cotComState = {
-    paso: 1, modalidadCodigo: null, modalidades: cotComState.modalidades, modalidadesCargadas: cotComState.modalidadesCargadas,
+    paso: 1, modalidadCodigo: cotComModalidadPorDefecto(), modalidades: cotComState.modalidades, modalidadesCargadas: cotComState.modalidadesCargadas,
     cliente: cotComClienteVacio(), opcionalesAbierto: false,
     busqueda: '', resultados: [], buscando: false, errorBusqueda: '',
     carrito: [], simulando: false, simulacion: null, simulacionError: '', creada: null
@@ -302,11 +310,15 @@ async function cargarModalidadesComerciales() {
     const { data, error } = await sb.rpc('listar_modalidades_comerciales');
     if (error) throw error;
     cotComState.modalidades = data || [];
+    if (!cotComState.modalidadCodigo) {
+      cotComState.modalidadCodigo = cotComModalidadPorDefecto();
+    }
   } catch (e) {
     cotComState.modalidades = [];
   }
   renderApp();
 }
+
 
 async function cotComBuscarProductos() {
   var termino = (cotComState.busqueda || '').trim();
@@ -445,30 +457,25 @@ function construirProgresoCotizador() {
 }
 
 function construirSelectorModalidad() {
-  // FASE C6D.2 -- COM0 se agrega condicionado a su existencia REAL en
-  // modalidades_comerciales (confirmado por lectura antes de este cambio:
-  // hoy NO existe). No se inventa aqui ni se hardcodea un calculo de 0% --
-  // si Daniel la crea mas adelante, esta opcion se habilita sola la
-  // proxima vez que cargue la lista real, sin tocar este archivo de nuevo.
-  var com0Existe = cotComState.modalidades.some(function (m) { return m.codigo === 'COM0'; });
-  var opciones = [
-    { codigo: 'COM0', pct: '0%', disponible: com0Existe },
-    { codigo: 'COM10', pct: '10%', disponible: true },
-    { codigo: 'COM25', pct: '25%', disponible: true },
-    { codigo: 'COM30', pct: '30%', disponible: true }
-  ];
-  var optionsHtml = '<option value="">Selecciona un descuento</option>' + opciones.map(function (o) {
-    var label = o.disponible ? o.pct : (o.pct + ' — pendiente de habilitación');
-    return '<option value="' + o.codigo + '"' +
-      (cotComState.modalidadCodigo === o.codigo ? ' selected' : '') +
-      (!o.disponible ? ' disabled' : '') +
+  // FASE C6D.3 -- ahora TODAS las modalidades se habilitan/deshabilitan
+  // segun su estado real `activa` (antes solo se verificaba existencia
+  // para COM0; COM10/25/30 quedaban siempre seleccionables). COM0 esta
+  // activa hoy -- las demas siguen inactivas hasta que Daniel las active.
+  var etiquetas = { COM0: '0%', COM10: '10%', COM25: '25%', COM30: '30%' };
+  var orden = ['COM0', 'COM10', 'COM25', 'COM30'];
+  var optionsHtml = '<option value="">Selecciona un descuento</option>' + orden.map(function (codigo) {
+    var real = cotComState.modalidades.find(function (m) { return m.codigo === codigo; });
+    var disponible = !!(real && real.activa);
+    var label = disponible ? etiquetas[codigo] : (etiquetas[codigo] + ' — no disponible aún');
+    return '<option value="' + codigo + '"' +
+      (cotComState.modalidadCodigo === codigo ? ' selected' : '') +
+      (!disponible ? ' disabled' : '') +
       '>' + label + '</option>';
   }).join('');
   return '<div class="cc-field">' +
     '<label>Descuento comercial *</label>' +
     '<select id="cc-select-modalidad">' + optionsHtml + '</select>' +
     (!cotComState.modalidadCodigo ? '<div class="cc-err">Selecciona el descuento comercial.</div>' : '') +
-    (!com0Existe ? '<div style="font-size:11px;color:var(--muted);margin-top:4px;">0% pendiente de habilitación en el sistema.</div>' : '') +
   '</div>';
 }
 
