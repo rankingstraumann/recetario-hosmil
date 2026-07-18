@@ -137,7 +137,7 @@
 // -- solo llama las 5 RPC autorizadas: buscar_productos_comercial,
 // listar_modalidades_comerciales, simular_cotizacion_comercial,
 // crear_cotizacion_comercial, listar_cotizaciones_comerciales.
-const APP_VERSION = '0.5.1-2026-07-17';
+const APP_VERSION = '0.5.2-2026-07-17';
 console.log('Cotizador Comercial version:', APP_VERSION);
 
 const SUPABASE_URL = 'https://gzimllusbxjorbsbtsse.supabase.co';
@@ -311,9 +311,35 @@ function reiniciarCotizadorComercial() {
   renderApp();
 }
 
+// FASE D1.3 -- validacion real de RUT chileno (modulo 11), espejo exacto
+// del backend (_normalizar_rut + _rut_valido). Acepta digitos y K/k en
+// cualquier posicion de entrada (con puntos, guion, mayuscula/minuscula,
+// pegado) -- la limpieza real ocurre en limpiarRutInput(). Esta funcion
+// SOLO da feedback visual temprano; el backend sigue siendo autoritativo.
+function limpiarRutInput(valor) {
+  var v = (valor || '').toUpperCase().replace(/[^0-9K]/g, '');
+  // K solo es valida como digito verificador (ultimo caracter). Cualquier
+  // K que no sea la ultima se descarta.
+  var terminaConK = v.charAt(v.length - 1) === 'K';
+  var soloNumeros = v.replace(/K/g, '');
+  if (terminaConK) { return soloNumeros.slice(0, 8) + 'K'; }
+  return soloNumeros.slice(0, 9);
+}
+
 function rutFormatoBasicoValido(rut) {
-  var limpio = (rut || '').replace(/\D/g, '');
-  return /^[0-9]{8,9}$/.test(limpio);
+  var limpio = limpiarRutInput(rut);
+  if (limpio.length < 2) return false;
+  var cuerpo = limpio.slice(0, -1);
+  var dv = limpio.slice(-1);
+  if (!/^[0-9]+$/.test(cuerpo) || cuerpo.length < 7 || cuerpo.length > 8) return false;
+  var suma = 0, mult = 2;
+  for (var i = cuerpo.length - 1; i >= 0; i--) {
+    suma += parseInt(cuerpo.charAt(i), 10) * mult;
+    mult = (mult === 7) ? 2 : mult + 1;
+  }
+  var resto = 11 - (suma % 11);
+  var dvCalc = (resto === 11) ? '0' : (resto === 10) ? 'K' : String(resto);
+  return dvCalc === dv;
 }
 function cotComClienteValido() {
   var c = cotComState.cliente;
@@ -540,19 +566,27 @@ function construirSelectorModalidad() {
 
 function construirCardDatosCotizacion() {
   var c = cotComState.cliente;
-  var rutOk = !c.rut || rutFormatoBasicoValido(c.rut);
+  var rutLimpio = limpiarRutInput(c.rut);
+  var rutMensaje = '';
+  if (c.rut) {
+    if (rutLimpio.length < 8) {
+      rutMensaje = 'Ingresa el RUT completo, incluyendo dígito verificador.';
+    } else if (!rutFormatoBasicoValido(c.rut)) {
+      rutMensaje = 'El RUT ingresado no es válido. Revisa el dígito verificador.';
+    }
+  }
   return '<div class="card">' +
     '<h2><span>📋 Datos de la cotización</span></h2>' +
     '<div class="form-grid">' +
       '<div><input type="text" id="cc-input-doctor" placeholder="Nombre del doctor *" value="' + esc(c.doctorNombre) + '"></div>' +
       '<div>' +
-        '<input type="text" id="cc-input-rut" inputmode="numeric" pattern="[0-9]*" autocomplete="off" maxlength="9" placeholder="RUT — solo números *" value="' + esc(c.rut) + '">' +
-        (c.rut && !rutOk ? '<div class="cc-inline-err">Revisa el formato del RUT.</div>' : '') +
+        '<input type="text" id="cc-input-rut" inputmode="text" autocapitalize="characters" autocomplete="off" placeholder="RUT (ej: 12.345.678-5) *" value="' + esc(c.rut) + '">' +
+        (rutMensaje ? '<div class="cc-inline-err">' + esc(rutMensaje) + '</div>' : '') +
       '</div>' +
       '<div>' + construirSelectorModalidad() + '</div>' +
       '<div><input type="text" id="cc-input-razon" placeholder="Razón social (opcional)" value="' + esc(c.razonSocial) + '"></div>' +
     '</div>' +
-    '<div class="cc-hint">Ingresa el RUT solo con números, sin puntos ni guion. Los RUT terminados en K se habilitarán en una próxima actualización.</div>' +
+    '<div class="cc-hint">Puedes escribir el RUT con o sin puntos y guion (ej: 12.345.678-5 o 123456785). Se acepta dígito verificador K.</div>' +
     '<details class="cc-collapsible"' + (cotComState.opcionalesAbierto ? ' open' : '') + '>' +
       '<summary onclick="cotComState.opcionalesAbierto=!cotComState.opcionalesAbierto;">Más datos (dirección, contacto, código SAP...)</summary>' +
       '<div class="form-grid" style="margin-top:10px;">' +
@@ -738,7 +772,7 @@ function wireCotizadorComercialInputs() {
     // despues en esta misma funcion (Doctor) le robaba el foco a RUT.
     rutEl.addEventListener('focus', function () { cotComRutFoco = true; cotComDoctorFoco = false; });
     rutEl.addEventListener('input', function (e) {
-      var limpio = e.target.value.replace(/\D/g, '').slice(0, 9);
+      var limpio = limpiarRutInput(e.target.value);
       e.target.value = limpio;
       cotComState.cliente.rut = limpio;
       cotComRutFoco = true;
