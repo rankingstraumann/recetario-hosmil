@@ -199,6 +199,8 @@ function render(q) {
       '<table><colgroup><col><col class="col-cant"><col class="col-precio"><col class="col-subtotal"></colgroup><thead><tr><th>Producto</th><th class="center">Cant.</th><th class="right">Precio unit.</th><th class="right">Subtotal</th></tr></thead>' +
       '<tbody>' + itemsHtml + '</tbody></table>' +
       '<div class="total-row"><div class="total-box">' +
+        '<div class="total-line"><span>Neto antes de descuento</span><span>' + fmt(q.neto_antes_descuento) + '</span></div>' +
+        '<div class="total-line"><span>Descuento total</span><span>' + (q.descuento_total > 0 ? '-' + fmt(q.descuento_total) : fmt(0)) + '</span></div>' +
         '<div class="total-line"><span>Neto</span><span>' + fmt(q.subtotal) + '</span></div>' +
         '<div class="total-line"><span>IVA (19%)</span><span>' + fmt(q.iva) + '</span></div>' +
         '<div class="total-line grand"><span class="label">Total</span><span class="value">' + fmt(q.total) + '</span></div>' +
