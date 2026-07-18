@@ -137,7 +137,7 @@
 // -- solo llama las 5 RPC autorizadas: buscar_productos_comercial,
 // listar_modalidades_comerciales, simular_cotizacion_comercial,
 // crear_cotizacion_comercial, listar_cotizaciones_comerciales.
-const APP_VERSION = '0.6.0-2026-07-18';
+const APP_VERSION = '0.7.0-2026-07-18';
 console.log('Cotizador Comercial version:', APP_VERSION);
 
 const SUPABASE_URL = 'https://gzimllusbxjorbsbtsse.supabase.co';
@@ -293,6 +293,12 @@ let cotComState = {
   catalogoOffset: 0,
   catalogoHayMas: true,
   carrito: [],
+  // FASE B6 -- descuento independiente de Biomateriales. 0 por defecto,
+  // solo tiene efecto real si el carrito contiene productos de esa
+  // familia (el backend ignora este valor si no aplica, pero el
+  // frontend siempre lo envia explicito para no depender de DEFAULT).
+  biomaterialesDescuentoPct: 0,
+  biomaterialesAvisoCambio: '', // mensaje breve cuando el 25% deja de ser valido y se ajusta solo
   simulando: false,
   simulacion: null,
   simulacionError: '',
@@ -310,7 +316,8 @@ function reiniciarCotizadorComercial() {
     marcaActiva: cotComState.marcaActiva, familiaActivaId: null,
     busquedaCatalogo: '', productosCatalogo: [], catalogoCargandoProductos: false, catalogoErrorProductos: '',
     catalogoOffset: 0, catalogoHayMas: true,
-    carrito: [], simulando: false, simulacion: null, simulacionError: '', firmaSimulada: null,
+    carrito: [], biomaterialesDescuentoPct: 0, biomaterialesAvisoCambio: '',
+    simulando: false, simulacion: null, simulacionError: '', firmaSimulada: null,
     creada: null
   };
   cotComCreando = false;
@@ -358,7 +365,7 @@ function cotComClienteValido() {
 function firmaCotizacion() {
   var c = cotComState.cliente;
   var items = cotComState.carrito.map(function (ci) { return ci.producto_id + ':' + ci.cantidad; }).sort().join('|');
-  return JSON.stringify([c.rutCuerpo, c.rutDv, c.tipoCliente, c.doctorNombre, c.razonSocial, c.direccion, c.correo, c.telefono, c.codigoSap, c.observaciones, cotComState.modalidadCodigo, items]);
+  return JSON.stringify([c.rutCuerpo, c.rutDv, c.tipoCliente, c.doctorNombre, c.razonSocial, c.direccion, c.correo, c.telefono, c.codigoSap, c.observaciones, cotComState.modalidadCodigo, cotComState.biomaterialesDescuentoPct, items]);
 }
 function simulacionEstaVigente() {
   return !!cotComState.simulacion && cotComState.firmaSimulada === firmaCotizacion();
@@ -461,9 +468,10 @@ function cotComAgregarProductoCatalogo(productoId) {
     cotComState.carrito.push({
       producto_id: p.producto_id, codigo: p.codigo, descripcion: p.descripcion,
       marca: p.marca, familia: p.familia, precio_lista: p.precio_lista, cantidad: 1,
-      es_codigo_duplicado: p.es_codigo_duplicado
+      es_codigo_duplicado: p.es_codigo_duplicado, es_biomateriales: !!p.es_biomateriales
     });
   }
+  cotComAjustarDescuentoBiomateriales();
   renderApp();
 }
 function cotComCambiarCantidad(productoId, delta) {
@@ -471,14 +479,49 @@ function cotComCambiarCantidad(productoId, delta) {
   if (!ci) return;
   ci.cantidad += delta;
   if (ci.cantidad <= 0) { cotComState.carrito = cotComState.carrito.filter(function (c) { return c.producto_id !== productoId; }); }
+  cotComAjustarDescuentoBiomateriales();
   renderApp();
 }
 function cotComQuitarProducto(productoId) {
   cotComState.carrito = cotComState.carrito.filter(function (c) { return c.producto_id !== productoId; });
+  cotComAjustarDescuentoBiomateriales();
   renderApp();
 }
 function vaciarCarritoComercial() {
   cotComState.carrito = [];
+  cotComAjustarDescuentoBiomateriales();
+  renderApp();
+}
+
+// FASE B6 -- descuento independiente de Biomateriales, calculado siempre
+// a partir del carrito real (nunca de un valor guardado aparte que
+// pudiera desincronizarse). Suma por CANTIDAD, no por numero de SKUs --
+// mismo criterio que el backend (_biomateriales_unidades_totales).
+function cotComTieneBiomateriales() {
+  return cotComState.carrito.some(function (ci) { return ci.es_biomateriales; });
+}
+function cotComUnidadesBiomateriales() {
+  return cotComState.carrito.reduce(function (s, ci) { return s + (ci.es_biomateriales ? ci.cantidad : 0); }, 0);
+}
+// Se llama despues de CUALQUIER cambio al carrito. Mantiene el selector
+// siempre en un estado valido: si ya no hay Biomateriales, resetea a 0%;
+// si el 25% ya no cumple el minimo de 5 unidades, baja a 15% y deja un
+// aviso breve para el usuario -- nunca deja el frontend en un estado
+// que el backend fuera a rechazar.
+function cotComAjustarDescuentoBiomateriales() {
+  cotComState.biomaterialesAvisoCambio = '';
+  if (!cotComTieneBiomateriales()) {
+    cotComState.biomaterialesDescuentoPct = 0;
+    return;
+  }
+  if (cotComState.biomaterialesDescuentoPct === 25 && cotComUnidadesBiomateriales() < 5) {
+    cotComState.biomaterialesDescuentoPct = 15;
+    cotComState.biomaterialesAvisoCambio = 'El 25% en Biomateriales dejó de estar disponible (menos de 5 unidades). Se ajustó a 15%.';
+  }
+}
+function cotComSeleccionarBiomaterialesDescuento(valor) {
+  cotComState.biomaterialesDescuentoPct = parseInt(valor, 10) || 0;
+  cotComState.biomaterialesAvisoCambio = '';
   renderApp();
 }
 
@@ -491,6 +534,7 @@ function cotComParamsRpc() {
     params: {
       p_rut: rutCompletoCliente(), p_tipo_cliente: c.tipoCliente, p_doctor_nombre: c.doctorNombre,
       p_modalidad_id: modalidadReal ? modalidadReal.id : null, p_items: items,
+      p_descuento_biomateriales_pct: cotComState.biomaterialesDescuentoPct || 0,
       p_razon_social: c.razonSocial || null, p_direccion: c.direccion || null,
       p_correo: c.correo || null, p_telefono: c.telefono || null,
       p_codigo_sap: c.codigoSap || null, p_observaciones: c.observaciones || null
@@ -572,6 +616,33 @@ function construirSelectorModalidad() {
   return '<select id="cc-select-modalidad">' + optionsHtml + '</select>';
 }
 
+// FASE B6 -- selector independiente de descuento para Biomateriales.
+// Solo se muestra si el carrito ya tiene al menos un producto de esa
+// familia (dato que ya viene del catalogo via es_biomateriales, Fase B5
+// -- nunca se infiere por nombre, marca ni codigo). El 25% se deshabilita
+// visualmente por debajo de 5 unidades, pero el backend sigue siendo
+// quien realmente lo exige (esto es solo UX).
+function construirSelectorBiomateriales() {
+  if (!cotComTieneBiomateriales()) return '';
+  var unidades = cotComUnidadesBiomateriales();
+  var puede25 = unidades >= 5;
+  var opciones = [0, 10, 15, 25].map(function (v) {
+    var deshabilitado = (v === 25 && !puede25);
+    return '<option value="' + v + '"' +
+      (cotComState.biomaterialesDescuentoPct === v ? ' selected' : '') +
+      (deshabilitado ? ' disabled' : '') +
+      '>' + v + '%' + (deshabilitado ? ' (requiere 5+ unidades)' : '') + '</option>';
+  }).join('');
+  return '<div style="margin-top:10px;padding:10px 12px;background:#f8fafc;border:1px solid var(--border);border-radius:10px;">' +
+    '<label style="font-size:11px;font-weight:700;color:var(--muted);display:block;margin-bottom:4px;">🧪 Descuento Biomateriales (independiente del descuento general)</label>' +
+    '<select id="cc-select-biomateriales">' + opciones + '</select>' +
+    '<div class="cc-hint" style="margin-top:4px;">' +
+      (puede25 ? 'Llevas ' + unidades + ' unidad(es) de Biomateriales.' : '25% disponible desde 5 unidades de Biomateriales. Actualmente llevas ' + unidades + '.') +
+    '</div>' +
+    (cotComState.biomaterialesAvisoCambio ? '<div class="cc-inline-err" style="margin-top:4px;">' + esc(cotComState.biomaterialesAvisoCambio) + '</div>' : '') +
+  '</div>';
+}
+
 function construirCardDatosCotizacion() {
   var c = cotComState.cliente;
   var rutMensaje = '';
@@ -597,6 +668,7 @@ function construirCardDatosCotizacion() {
       '<div>' + construirSelectorModalidad() + '</div>' +
       '<div><input type="text" id="cc-input-razon" placeholder="Razón social (opcional)" value="' + esc(c.razonSocial) + '"></div>' +
     '</div>' +
+    construirSelectorBiomateriales() +
     '<div class="cc-hint">Dígito verificador: número o K. También puedes pegar el RUT completo en el primer campo (ej: 12.345.678-5).</div>' +
     '<details class="cc-collapsible"' + (cotComState.opcionalesAbierto ? ' open' : '') + '>' +
       '<summary onclick="cotComState.opcionalesAbierto=!cotComState.opcionalesAbierto;">Más datos (dirección, contacto, código SAP...)</summary>' +
@@ -887,6 +959,9 @@ function wireCotizadorComercialInputs() {
   }
   var modalidadEl = document.getElementById('cc-select-modalidad');
   if (modalidadEl) { modalidadEl.addEventListener('change', function (e) { cotComSeleccionarModalidad(e.target.value); }); }
+  // FASE B6 -- selector independiente. Nunca toca cotComState.modalidadCodigo.
+  var biomaterialesEl = document.getElementById('cc-select-biomateriales');
+  if (biomaterialesEl) { biomaterialesEl.addEventListener('change', function (e) { cotComSeleccionarBiomaterialesDescuento(e.target.value); }); }
   [['razon', 'razonSocial'], ['direccion', 'direccion'], ['correo', 'correo'], ['telefono', 'telefono'], ['sap', 'codigoSap'], ['obs', 'observaciones']].forEach(function (par) {
     var el = document.getElementById('cc-input-' + par[0]);
     if (el) el.addEventListener('input', function (e) { cotComState.cliente[par[1]] = e.target.value; });
