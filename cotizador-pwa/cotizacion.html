@@ -1,0 +1,216 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>Tu cotización | Straumann Group Chile</title>
+<style>
+  /* FASE E2 -- estilos reutilizados del patron visual ya validado en el
+     Recetario Institucional (index.html de la raiz del repo): mismos
+     tokens de color, misma estructura de .card/.card-head/tabla/totales/
+     disclaimer/boton imprimir. Se omite deliberadamente todo el bloque
+     de confirmacion de pago (transferencia/Webpay/comprobante), que es
+     especifico del flujo paciente-institucion y no aplica aqui. */
+  :root {
+    --red: #991b1b;
+    --red-dark: #7f1d1d;
+    --ink: #18181b;
+    --muted: #71717a;
+    --border: #e4e4e7;
+    --bg: #f8fafc;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    background: var(--bg);
+    color: var(--ink);
+    overflow-x: hidden;
+  }
+  header {
+    background: #fff;
+    border-bottom: 1px solid var(--border);
+    padding: calc(12px + env(safe-area-inset-top)) 20px 12px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .brand-name { color: var(--red); font-weight: 800; font-size: 18px; letter-spacing: -0.02em; line-height: 1; }
+  .brand-sub { color: #a1a1aa; font-size: 10px; letter-spacing: 0.2em; font-weight: 600; margin-top: 2px; }
+  main { max-width: 720px; margin: 0 auto; padding: 24px 16px 60px; }
+  .card { background: #fff; border: 1px solid var(--border); border-radius: 14px; padding: 24px; box-shadow: 0 1px 2px rgba(0,0,0,0.04); margin-bottom: 20px; }
+  .card-head { display:flex; justify-content: space-between; align-items: flex-start; border-bottom: 1px solid var(--border); padding-bottom: 16px; margin-bottom: 20px; flex-wrap: wrap; gap: 12px; }
+  .qnum-label { font-size:11px; color:#a1a1aa; }
+  .qnum { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-weight:700; font-size:14px; }
+  .qdate { font-size:11px; color:#a1a1aa; margin-top:2px; }
+  .grid2 { display:grid; grid-template-columns: 1fr 1fr; gap:16px; font-size:14px; margin-bottom: 18px; }
+  @media (max-width: 640px) { .grid2 { grid-template-columns: 1fr; } }
+  .field-label { font-size:11px; text-transform:uppercase; letter-spacing:0.04em; color:#a1a1aa; }
+  .field-value { font-weight:600; margin-top:2px; }
+
+  .estado-badge { display:inline-block; font-size:11px; font-weight:700; padding:4px 10px; border-radius:999px; margin-bottom:18px; }
+  .estado-enviada { background:#eff6ff; color:#1d4ed8; }
+  .estado-aceptada { background:#ecfdf5; color:#047857; }
+  .estado-rechazada { background:#fef2f2; color:#b91c1c; }
+  .estado-vencida { background:#fffbeb; color:#92400e; }
+  .estado-anulada { background:#f4f4f5; color:#52525b; }
+  .estado-borrador { background:#f4f4f5; color:#52525b; }
+
+  table { width:100%; border-collapse: collapse; font-size:13px; margin-bottom: 16px; }
+  thead th { text-align:left; font-size:11px; text-transform:uppercase; color:#a1a1aa; border-bottom:1px solid var(--border); padding-bottom:8px; font-weight:500; }
+  tbody td { padding: 9px 0; border-bottom: 1px solid #f4f4f5; vertical-align: top; }
+  .code { font-family: ui-monospace, monospace; font-size:10px; color:#a1a1aa; }
+  .right { text-align:right; }
+  .center { text-align:center; }
+  .total-row { display:flex; justify-content:flex-end; }
+  .total-box { width: 240px; max-width: 100%; }
+  .total-line { display:flex; justify-content:space-between; font-size:13px; padding:4px 0; }
+  .total-line.grand { border-top:2px solid var(--ink); margin-top:6px; padding-top:10px; }
+  .total-line.grand .label { font-weight:700; font-size:14px; }
+  .total-line.grand .value { font-weight:800; font-size:16px; color: var(--red); }
+  .disclaimer { font-size:10px; color:#a1a1aa; line-height:1.5; border-top:1px solid #f4f4f5; padding-top:12px; margin-top:20px; }
+
+  .approve-card { background:#fff; border:2px dashed var(--border); border-radius:14px; padding:22px; text-align:center; color:#a1a1aa; font-size:12px; }
+  .approve-card .btn-disabled { width:100%; margin-top:12px; background:#e4e4e7; color:#a1a1aa; border:none; border-radius:10px; padding:13px; font-size:14px; font-weight:700; cursor:not-allowed; }
+
+  .state-msg { text-align:center; padding: 60px 20px; color:#71717a; font-size:14px; line-height:1.6; }
+  .print-btn { display:flex; align-items:center; gap:6px; font-size:12px; color:#71717a; background:none; border:none; cursor:pointer; }
+  @media print { .no-print { display:none !important; } }
+</style>
+</head>
+<body>
+  <header class="no-print">
+    <div>
+      <div class="brand-name">STRAUMANN</div>
+      <div class="brand-sub">COTIZADOR COMERCIAL</div>
+    </div>
+    <button class="print-btn" onclick="window.print()" id="printBtn" style="display:none;">🖨️ Imprimir / Guardar PDF</button>
+  </header>
+  <main id="main">
+    <div class="state-msg" id="loading">Cargando tu cotización…</div>
+  </main>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script>
+// FASE E2 -- pagina publica de solo lectura para el cliente. Sin login.
+// Unica fuente de datos: la RPC publica ya creada y probada en la Fase 1
+// (obtener_cotizacion_comercial_publica). No hay ninguna otra consulta a
+// tablas, ni SELECT *, ni busqueda por folio/UUID/otro identificador --
+// el unico parametro aceptado es el token tomado de la URL.
+const SUPABASE_URL = 'https://gzimllusbxjorbsbtsse.supabase.co';
+const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imd6aW1sbHVzYnhqb3Jic2J0c3NlIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE5NDQ4NDcsImV4cCI6MjA5NzUyMDg0N30.DFq-_PY10hyr2QmMUXk-v8VW2LKYz3bAW37VCutwmzY';
+const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+function fmt(n) { return '$' + Math.round(n || 0).toLocaleString('es-CL'); }
+function fechaCorta(iso) {
+  try {
+    var d = new Date(iso);
+    return d.toLocaleDateString('es-CL', { day: '2-digit', month: '2-digit', year: 'numeric' });
+  } catch (e) { return '-'; }
+}
+function esc(s) {
+  if (s === undefined || s === null) return '';
+  return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+const ETIQUETAS_ESTADO = {
+  borrador: 'Borrador',
+  enviada: 'Pendiente de aprobación',
+  aceptada: 'Aprobada',
+  rechazada: 'Rechazada',
+  vencida: 'Vencida',
+  anulada: 'Anulada'
+};
+
+// Mensaje generico unico para TODO caso de fallo (token vacio, invalido,
+// malformado o inexistente) -- deliberadamente identico en los 4 casos
+// para no revelar cual de ellos ocurrio.
+function mostrarError() {
+  document.getElementById('main').innerHTML =
+    '<div class="state-msg">No pudimos encontrar esta cotización.<br>Revisa que el enlace esté completo, o pídele al ejecutivo que te lo reenvíe.</div>';
+}
+
+function construirFilaProducto(it) {
+  return '<tr>' +
+    '<td><div class="code">' + esc(it.codigo) + '</div>' + esc(it.descripcion) + '</td>' +
+    '<td class="center">' + esc(it.cantidad) + '</td>' +
+    '<td class="right">' + fmt(it.precio_neto_unitario) + '</td>' +
+    '<td class="right" style="font-weight:600;">' + fmt(it.subtotal_item) + '</td>' +
+    '</tr>';
+}
+
+function construirBloqueAprobacion(q) {
+  // Contenedor visual preparado para la Fase 5 -- el boton existe mas no
+  // esta conectado a ninguna RPC todavia (aprobar_cotizacion_comercial_publica
+  // no se llama desde este archivo en esta fase).
+  if (q.estado !== 'enviada') return '';
+  return '<div class="approve-card">' +
+    '¿Ya revisaste tu cotización?' +
+    '<button type="button" class="btn-disabled" disabled>✅ Aprobar cotización (próximamente)</button>' +
+    '</div>';
+}
+
+function render(q) {
+  document.getElementById('printBtn').style.display = 'flex';
+
+  var itemsHtml = (q.items || []).map(construirFilaProducto).join('');
+  var etiquetaEstado = ETIQUETAS_ESTADO[q.estado] || q.estado;
+  var claseEstado = 'estado-' + (q.estado || 'borrador');
+
+  document.getElementById('main').innerHTML =
+    '<div class="card">' +
+      '<div class="card-head">' +
+        '<div><div class="brand-name" style="font-size:20px;">STRAUMANN</div>' +
+        '<div class="brand-sub">GROUP CHILE · NEODENT · STRAUMANN</div></div>' +
+        '<div style="text-align:right;">' +
+          '<div class="qnum-label">Folio</div>' +
+          '<div class="qnum">' + esc(q.folio) + '</div>' +
+          '<div class="qdate">Emitida: ' + fechaCorta(q.creado_en) + '</div>' +
+          (q.vigencia_hasta ? '<div class="qdate">Vigente hasta: ' + fechaCorta(q.vigencia_hasta) + '</div>' : '') +
+        '</div>' +
+      '</div>' +
+      '<span class="estado-badge ' + claseEstado + '">' + esc(etiquetaEstado) + '</span>' +
+      '<div class="grid2">' +
+        '<div><div class="field-label">Doctor</div><div class="field-value">' + esc(q.doctor_nombre) + '</div></div>' +
+        '<div><div class="field-label">RUT</div><div class="field-value">' + esc(q.rut_enmascarado) + '</div></div>' +
+        (q.razon_social ? '<div style="grid-column:1/-1;"><div class="field-label">Razón social</div><div class="field-value">' + esc(q.razon_social) + '</div></div>' : '') +
+        '<div style="grid-column:1/-1;"><div class="field-label">Ejecutivo Straumann</div><div class="field-value">' + esc(q.ejecutivo_nombre) + '</div></div>' +
+      '</div>' +
+      '<table><thead><tr><th>Producto</th><th class="center">Cant.</th><th class="right">Precio unit.</th><th class="right">Subtotal</th></tr></thead>' +
+      '<tbody>' + itemsHtml + '</tbody></table>' +
+      '<div class="total-row"><div class="total-box">' +
+        '<div class="total-line"><span>Neto</span><span>' + fmt(q.subtotal) + '</span></div>' +
+        '<div class="total-line"><span>IVA (19%)</span><span>' + fmt(q.iva) + '</span></div>' +
+        '<div class="total-line grand"><span class="label">Total</span><span class="value">' + fmt(q.total) + '</span></div>' +
+      '</div></div>' +
+      '<p class="disclaimer">Cotización comercial referencial de Straumann Group Chile / Manohay Chile SpA. Precios y condiciones sujetos a validación comercial. La disponibilidad de productos está sujeta a stock al momento de confirmar el pedido.</p>' +
+    '</div>' +
+    construirBloqueAprobacion(q);
+}
+
+async function init() {
+  var params = new URLSearchParams(window.location.search);
+  var token = (params.get('t') || '').trim();
+
+  if (!token) {
+    mostrarError();
+    return;
+  }
+
+  try {
+    const { data, error } = await sb.rpc('obtener_cotizacion_comercial_publica', { p_token: token });
+    if (error || !data || data.length === 0) {
+      mostrarError();
+      return;
+    }
+    render(data[0]);
+  } catch (e) {
+    mostrarError();
+  }
+}
+init();
+</script>
+</body>
+</html>
