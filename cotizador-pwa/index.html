@@ -137,7 +137,7 @@
 // -- solo llama las 5 RPC autorizadas: buscar_productos_comercial,
 // listar_modalidades_comerciales, simular_cotizacion_comercial,
 // crear_cotizacion_comercial, listar_cotizaciones_comerciales.
-const APP_VERSION = '0.5.2-2026-07-17';
+const APP_VERSION = '0.5.3-2026-07-18';
 console.log('Cotizador Comercial version:', APP_VERSION);
 
 const SUPABASE_URL = 'https://gzimllusbxjorbsbtsse.supabase.co';
@@ -255,7 +255,15 @@ async function cargarMiPerfilYEntrar() {
 // COTIZADOR -- pantalla unica (FASE C6D.4, sin pasos)
 // ============================================================
 function cotComClienteVacio() {
-  return { rut: '', tipoCliente: 'prospecto', doctorNombre: '', razonSocial: '', direccion: '', correo: '', telefono: '', codigoSap: '', observaciones: '' };
+  return { rutCuerpo: '', rutDv: '', tipoCliente: 'prospecto', doctorNombre: '', razonSocial: '', direccion: '', correo: '', telefono: '', codigoSap: '', observaciones: '' };
+}
+// FASE D1.4 -- devuelve el RUT canonico (cuerpo-DV) solo cuando ambas
+// partes existen. Este es el UNICO valor que se envia al backend -- las
+// 2 partes nunca se mandan por separado.
+function rutCompletoCliente() {
+  var c = cotComState.cliente;
+  if (!c.rutCuerpo || !c.rutDv) return '';
+  return c.rutCuerpo + '-' + c.rutDv;
 }
 function cotComModalidadPorDefecto() {
   var com0 = cotComState.modalidades.find(function (m) { return m.codigo === 'COM0' && m.activa; });
@@ -267,6 +275,7 @@ let cotComState = {
   modalidadesCargadas: false,
   cliente: cotComClienteVacio(),
   opcionalesAbierto: false,
+  rutTocado: false, // FASE D1.4 -- solo se muestra el error de RUT despues de salir del campo o intentar calcular/generar
   // FASE D1.3 -- navegacion del catalogo por marca/familia (autorizada
   // explicitamente), reemplaza el mecanismo anterior de "buscar primero,
   // filtrar despues".
@@ -287,15 +296,13 @@ let cotComState = {
   firmaSimulada: null,
   creada: null
 };
-let cotComRutFoco = false;
-let cotComDoctorFoco = false;
 let cotComCreando = false;
 let cotComCrearError = '';
 
 function reiniciarCotizadorComercial() {
   cotComState = {
     modalidadCodigo: cotComModalidadPorDefecto(), modalidades: cotComState.modalidades, modalidadesCargadas: cotComState.modalidadesCargadas,
-    cliente: cotComClienteVacio(), opcionalesAbierto: false,
+    cliente: cotComClienteVacio(), opcionalesAbierto: false, rutTocado: false,
     catalogoMarcas: cotComState.catalogoMarcas, catalogoCargado: cotComState.catalogoCargado,
     marcaActiva: cotComState.marcaActiva, familiaActivaId: null,
     busquedaCatalogo: '', productosCatalogo: [], catalogoCargandoProductos: false, catalogoErrorProductos: '',
@@ -303,8 +310,6 @@ function reiniciarCotizadorComercial() {
     carrito: [], simulando: false, simulacion: null, simulacionError: '', firmaSimulada: null,
     creada: null
   };
-  cotComRutFoco = false;
-  cotComDoctorFoco = false;
   cotComCreando = false;
   cotComCrearError = '';
   cargarProductosCatalogo(true);
@@ -343,13 +348,14 @@ function rutFormatoBasicoValido(rut) {
 }
 function cotComClienteValido() {
   var c = cotComState.cliente;
-  return !!(c.rut && rutFormatoBasicoValido(c.rut) && c.doctorNombre && c.doctorNombre.trim() !== '');
+  var completo = rutCompletoCliente();
+  return !!(completo && rutFormatoBasicoValido(completo) && c.doctorNombre && c.doctorNombre.trim() !== '');
 }
 
 function firmaCotizacion() {
   var c = cotComState.cliente;
   var items = cotComState.carrito.map(function (ci) { return ci.producto_id + ':' + ci.cantidad; }).sort().join('|');
-  return JSON.stringify([c.rut, c.tipoCliente, c.doctorNombre, c.razonSocial, c.direccion, c.correo, c.telefono, c.codigoSap, c.observaciones, cotComState.modalidadCodigo, items]);
+  return JSON.stringify([c.rutCuerpo, c.rutDv, c.tipoCliente, c.doctorNombre, c.razonSocial, c.direccion, c.correo, c.telefono, c.codigoSap, c.observaciones, cotComState.modalidadCodigo, items]);
 }
 function simulacionEstaVigente() {
   return !!cotComState.simulacion && cotComState.firmaSimulada === firmaCotizacion();
@@ -407,13 +413,11 @@ async function cargarCatalogoMarcasFamilias() {
 }
 
 function seleccionarMarcaCatalogo(marca) {
-  cotComRutFoco = false; cotComDoctorFoco = false;
   cotComState.marcaActiva = marca;
   cotComState.familiaActivaId = null;
   cargarProductosCatalogo(true);
 }
 function seleccionarFamiliaCatalogo(familiaId) {
-  cotComRutFoco = false; cotComDoctorFoco = false;
   cotComState.familiaActivaId = familiaId || null;
   cargarProductosCatalogo(true);
 }
@@ -482,7 +486,7 @@ function cotComParamsRpc() {
   return {
     modalidadReal: modalidadReal,
     params: {
-      p_rut: c.rut, p_tipo_cliente: c.tipoCliente, p_doctor_nombre: c.doctorNombre,
+      p_rut: rutCompletoCliente(), p_tipo_cliente: c.tipoCliente, p_doctor_nombre: c.doctorNombre,
       p_modalidad_id: modalidadReal ? modalidadReal.id : null, p_items: items,
       p_razon_social: c.razonSocial || null, p_direccion: c.direccion || null,
       p_correo: c.correo || null, p_telefono: c.telefono || null,
@@ -493,7 +497,7 @@ function cotComParamsRpc() {
 
 async function intentarSimularCotizacion() {
   if (!cotComState.modalidadCodigo) { cotComState.simulacionError = 'Selecciona el descuento comercial.'; renderApp(); return; }
-  if (!cotComClienteValido()) { cotComState.simulacionError = 'Completa el nombre del doctor y un RUT válido.'; renderApp(); return; }
+  if (!cotComClienteValido()) { cotComState.rutTocado = true; cotComState.simulacionError = 'Completa el nombre del doctor y un RUT válido.'; renderApp(); return; }
   if (cotComState.carrito.length === 0) { cotComState.simulacionError = 'Agrega al menos un producto antes de calcular.'; renderApp(); return; }
 
   cotComState.simulando = true;
@@ -524,6 +528,7 @@ async function intentarSimularCotizacion() {
 
 async function crearCotizacionReal() {
   if (cotComCreando) return;
+  if (!cotComClienteValido()) { cotComState.rutTocado = true; cotComCrearError = 'Completa el nombre del doctor y un RUT válido.'; renderApp(); return; }
   if (!simulacionEstaVigente()) {
     cotComCrearError = 'Los datos cambiaron desde el último cálculo. Vuelve a calcular antes de generar.';
     renderApp();
@@ -566,12 +571,11 @@ function construirSelectorModalidad() {
 
 function construirCardDatosCotizacion() {
   var c = cotComState.cliente;
-  var rutLimpio = limpiarRutInput(c.rut);
   var rutMensaje = '';
-  if (c.rut) {
-    if (rutLimpio.length < 8) {
-      rutMensaje = 'Ingresa el RUT completo, incluyendo dígito verificador.';
-    } else if (!rutFormatoBasicoValido(c.rut)) {
+  if (cotComState.rutTocado) {
+    if (!c.rutCuerpo || !c.rutDv) {
+      rutMensaje = 'Ingresa el RUT completo.';
+    } else if (!rutFormatoBasicoValido(rutCompletoCliente())) {
       rutMensaje = 'El RUT ingresado no es válido. Revisa el dígito verificador.';
     }
   }
@@ -580,13 +584,17 @@ function construirCardDatosCotizacion() {
     '<div class="form-grid">' +
       '<div><input type="text" id="cc-input-doctor" placeholder="Nombre del doctor *" value="' + esc(c.doctorNombre) + '"></div>' +
       '<div>' +
-        '<input type="text" id="cc-input-rut" inputmode="text" autocapitalize="characters" autocomplete="off" placeholder="RUT (ej: 12.345.678-5) *" value="' + esc(c.rut) + '">' +
+        '<div style="display:flex;align-items:center;gap:6px;">' +
+          '<input type="text" id="cc-input-rut-cuerpo" inputmode="numeric" pattern="[0-9]*" autocomplete="off" placeholder="RUT, ej. 12345678 *" style="flex:1;min-width:0;" value="' + esc(c.rutCuerpo) + '">' +
+          '<span style="font-weight:700;color:#a1a1aa;flex-shrink:0;">-</span>' +
+          '<input type="text" id="cc-input-rut-dv" maxlength="1" autocapitalize="characters" autocomplete="off" placeholder="DV" style="width:56px;flex-shrink:0;text-align:center;" value="' + esc(c.rutDv) + '">' +
+        '</div>' +
         (rutMensaje ? '<div class="cc-inline-err">' + esc(rutMensaje) + '</div>' : '') +
       '</div>' +
       '<div>' + construirSelectorModalidad() + '</div>' +
       '<div><input type="text" id="cc-input-razon" placeholder="Razón social (opcional)" value="' + esc(c.razonSocial) + '"></div>' +
     '</div>' +
-    '<div class="cc-hint">Puedes escribir el RUT con o sin puntos y guion (ej: 12.345.678-5 o 123456785). Se acepta dígito verificador K.</div>' +
+    '<div class="cc-hint">Dígito verificador: número o K. También puedes pegar el RUT completo en el primer campo (ej: 12.345.678-5).</div>' +
     '<details class="cc-collapsible"' + (cotComState.opcionalesAbierto ? ' open' : '') + '>' +
       '<summary onclick="cotComState.opcionalesAbierto=!cotComState.opcionalesAbierto;">Más datos (dirección, contacto, código SAP...)</summary>' +
       '<div class="form-grid" style="margin-top:10px;">' +
@@ -764,36 +772,47 @@ function renderNuevaCotizacion() {
 }
 
 function wireCotizadorComercialInputs() {
-  var rutEl = document.getElementById('cc-input-rut');
-  if (rutEl) {
-    // FASE D1.2 -- banderas de foco mutuamente excluyentes: entrar a un
-    // campo apaga la bandera del otro. Antes ambas podian quedar en true
-    // al mismo tiempo (nunca se reseteaban), y el bloque que se ejecuta
-    // despues en esta misma funcion (Doctor) le robaba el foco a RUT.
-    rutEl.addEventListener('focus', function () { cotComRutFoco = true; cotComDoctorFoco = false; });
-    rutEl.addEventListener('input', function (e) {
-      var limpio = limpiarRutInput(e.target.value);
+  // FASE D1.4 -- RUT en dos campos (cuerpo + DV). Ninguno de los 3
+  // listeners de esta seccion (cuerpo, DV, doctor) llama renderApp() en
+  // cada tecla -- solo actualizan el estado interno directamente, sin
+  // reconstruir el DOM. Esto elimina de raiz cualquier salto de foco o
+  // cursor durante la escritura (ya no hace falta ningun mecanismo de
+  // "recordar y restaurar el foco" para estos campos, como si hacia
+  // falta antes cuando cada tecla disparaba un render completo).
+  var rutCuerpoEl = document.getElementById('cc-input-rut-cuerpo');
+  if (rutCuerpoEl) {
+    rutCuerpoEl.addEventListener('input', function (e) {
+      var limpio = e.target.value.replace(/\D/g, '').slice(0, 8);
       e.target.value = limpio;
-      cotComState.cliente.rut = limpio;
-      cotComRutFoco = true;
-      cotComDoctorFoco = false;
-      renderApp();
+      cotComState.cliente.rutCuerpo = limpio;
     });
-    if (cotComRutFoco) { rutEl.focus(); var p1 = rutEl.value.length; try { rutEl.setSelectionRange(p1, p1); } catch (er) {} }
+    rutCuerpoEl.addEventListener('blur', function () { cotComState.rutTocado = true; renderApp(); });
+    rutCuerpoEl.addEventListener('paste', function (e) {
+      var texto = (e.clipboardData || window.clipboardData).getData('text');
+      var limpio = limpiarRutInput(texto);
+      if (limpio.length >= 2) {
+        e.preventDefault();
+        cotComState.cliente.rutCuerpo = limpio.slice(0, -1).slice(0, 8);
+        cotComState.cliente.rutDv = limpio.slice(-1);
+        renderApp();
+      }
+    });
+  }
+  var rutDvEl = document.getElementById('cc-input-rut-dv');
+  if (rutDvEl) {
+    rutDvEl.addEventListener('input', function (e) {
+      var v = e.target.value.toUpperCase().replace(/[^0-9K]/g, '').slice(0, 1);
+      e.target.value = v;
+      cotComState.cliente.rutDv = v;
+    });
+    rutDvEl.addEventListener('blur', function () { cotComState.rutTocado = true; renderApp(); });
   }
   var doctorEl = document.getElementById('cc-input-doctor');
   if (doctorEl) {
-    doctorEl.addEventListener('focus', function () { cotComDoctorFoco = true; cotComRutFoco = false; });
-    doctorEl.addEventListener('input', function (e) {
-      cotComState.cliente.doctorNombre = e.target.value;
-      cotComDoctorFoco = true;
-      cotComRutFoco = false;
-      renderApp();
-    });
-    if (cotComDoctorFoco) { doctorEl.focus(); var p2 = doctorEl.value.length; try { doctorEl.setSelectionRange(p2, p2); } catch (er) {} }
+    doctorEl.addEventListener('input', function (e) { cotComState.cliente.doctorNombre = e.target.value; });
   }
   var modalidadEl = document.getElementById('cc-select-modalidad');
-  if (modalidadEl) { modalidadEl.addEventListener('change', function (e) { cotComRutFoco = false; cotComDoctorFoco = false; cotComSeleccionarModalidad(e.target.value); }); }
+  if (modalidadEl) { modalidadEl.addEventListener('change', function (e) { cotComSeleccionarModalidad(e.target.value); }); }
   [['razon', 'razonSocial'], ['direccion', 'direccion'], ['correo', 'correo'], ['telefono', 'telefono'], ['sap', 'codigoSap'], ['obs', 'observaciones']].forEach(function (par) {
     var el = document.getElementById('cc-input-' + par[0]);
     if (el) el.addEventListener('input', function (e) { cotComState.cliente[par[1]] = e.target.value; });
@@ -801,7 +820,7 @@ function wireCotizadorComercialInputs() {
   var busqCat = document.getElementById('cc-input-busqueda-catalogo');
   if (busqCat) {
     busqCat.addEventListener('input', function (e) { cotComState.busquedaCatalogo = e.target.value; });
-    busqCat.addEventListener('keydown', function (e) { if (e.key === 'Enter') { cotComRutFoco = false; cotComDoctorFoco = false; cargarProductosCatalogo(true); } });
+    busqCat.addEventListener('keydown', function (e) { if (e.key === 'Enter') { cargarProductosCatalogo(true); } });
   }
   var familiaCatSel = document.getElementById('cc-select-familia-catalogo');
   if (familiaCatSel) familiaCatSel.addEventListener('change', function (e) { seleccionarFamiliaCatalogo(e.target.value); });
