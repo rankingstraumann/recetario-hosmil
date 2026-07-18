@@ -137,7 +137,7 @@
 // -- solo llama las 5 RPC autorizadas: buscar_productos_comercial,
 // listar_modalidades_comerciales, simular_cotizacion_comercial,
 // crear_cotizacion_comercial, listar_cotizaciones_comerciales.
-const APP_VERSION = '0.5.3-2026-07-18';
+const APP_VERSION = '0.5.4-2026-07-18';
 console.log('Cotizador Comercial version:', APP_VERSION);
 
 const SUPABASE_URL = 'https://gzimllusbxjorbsbtsse.supabase.co';
@@ -162,6 +162,7 @@ function interpretarError(e) {
   if (low.indexOf('jwt') !== -1 || low.indexOf('refresh_token') !== -1 || low.indexOf('session') !== -1) return 'Tu sesión expiró. Vuelve a iniciar sesión.';
   if (low.indexOf('42501') !== -1 || low.indexOf('no autorizado') !== -1) return 'No tienes permiso para realizar esta acción.';
   if (low.indexOf('modalidad') !== -1) return 'Esta modalidad comercial todavía no está activa. El cálculo real se habilitará cuando se active.';
+  if (low.indexOf('pertenece a otro ejecutivo') !== -1) return 'Este RUT ya se encuentra registrado y asociado a otro ejecutivo. Si necesitas gestionar este cliente, contacta al administrador.';
   if (low.indexOf('rut') !== -1) return 'El RUT ingresado no es válido. Revísalo e intenta de nuevo.';
   if (low.indexOf('producto') !== -1 || low.indexOf('precio de lista') !== -1) return 'Uno de los productos seleccionados ya no está disponible. Actualiza la búsqueda.';
   if (low.indexOf('failed to fetch') !== -1 || low.indexOf('networkerror') !== -1 || low.indexOf('load failed') !== -1 || low.indexOf('timeout') !== -1 || low.indexOf('network') !== -1) return 'No se pudo conectar con el servidor. Revisa tu conexión e intenta de nuevo.';
