@@ -122,7 +122,17 @@
   .cc-mis-filtros { display:flex; gap:8px; margin-bottom:14px; flex-wrap:wrap; }
   .cc-mis-filtros input { flex:1; min-width:200px; }
   .cc-mis-filtros select { flex:1; min-width:140px; }
-  .cc-estado-tag { font-size:10px; font-weight:700; background:#eff6ff; color:#1d4ed8; border-radius:6px; padding:2px 8px; white-space:nowrap; }
+  /* FASE 4 -- badges de estado, mismos colores y criterio visual que
+     cotizacion.html (pagina publica), para consistencia entre ambas
+     vistas. El VALOR real de estado en la base de datos nunca cambia --
+     esto es unicamente la etiqueta/color mostrados al ejecutivo. */
+  .cc-estado-tag { font-size:10px; font-weight:700; border-radius:999px; padding:3px 9px; white-space:nowrap; }
+  .cc-estado-tag.estado-borrador { background:#f4f4f5; color:#52525b; }
+  .cc-estado-tag.estado-enviada { background:#eff6ff; color:#1d4ed8; }
+  .cc-estado-tag.estado-aceptada { background:#ecfdf5; color:#047857; }
+  .cc-estado-tag.estado-rechazada { background:#fef2f2; color:#b91c1c; }
+  .cc-estado-tag.estado-vencida { background:#fffbeb; color:#92400e; }
+  .cc-estado-tag.estado-anulada { background:#f4f4f5; color:#52525b; }
 </style>
 </head>
 <body>
@@ -137,7 +147,7 @@
 // -- solo llama las 5 RPC autorizadas: buscar_productos_comercial,
 // listar_modalidades_comerciales, simular_cotizacion_comercial,
 // crear_cotizacion_comercial, listar_cotizaciones_comerciales.
-const APP_VERSION = '0.7.0-2026-07-18';
+const APP_VERSION = '0.7.1-2026-07-18';
 console.log('Cotizador Comercial version:', APP_VERSION);
 
 const SUPABASE_URL = 'https://gzimllusbxjorbsbtsse.supabase.co';
@@ -1011,6 +1021,23 @@ async function cargarMisCotizaciones(reiniciar) {
 const ESTADOS_COMERCIALES = ['borrador', 'enviada', 'aceptada', 'rechazada', 'vencida', 'anulada'];
 const ESTADOS_FACTURACION = ['pendiente', 'enviada_customer_service', 'facturada', 'parcialmente_facturada', 'cerrada'];
 
+// FASE 4 -- mismas etiquetas amigables ya usadas en cotizacion.html
+// (pagina publica), para que ambas vistas se sientan consistentes. El
+// valor real de "estado" en la base de datos (incluido "aceptada") NUNCA
+// cambia -- esto solo afecta el texto mostrado al ejecutivo.
+const ETIQUETAS_ESTADO_COMERCIAL = {
+  borrador: 'Borrador',
+  enviada: 'Pendiente de aprobación',
+  aceptada: 'Aprobada',
+  rechazada: 'Rechazada',
+  vencida: 'Vencida',
+  anulada: 'Anulada'
+};
+function construirBadgeEstadoComercial(estado) {
+  var etiqueta = ETIQUETAS_ESTADO_COMERCIAL[estado] || estado;
+  return '<span class="cc-estado-tag estado-' + esc(estado) + '">' + esc(etiqueta) + '</span>';
+}
+
 function construirMisCotizaciones() {
   var opcionesEstado = '<option value="">Todos los estados</option>' + ESTADOS_COMERCIALES.map(function (e) {
     return '<option value="' + e + '"' + (misCotState.filtroEstado === e ? ' selected' : '') + '>' + e + '</option>';
@@ -1042,7 +1069,7 @@ function construirMisCotizaciones() {
         '<div style="flex:1;">' +
           '<div style="display:flex;justify-content:space-between;align-items:start;gap:8px;margin-bottom:4px;">' +
             '<span class="prod-code" style="font-size:13px;font-weight:700;color:var(--ink);">' + esc(f.folio) + '</span>' +
-            '<span class="cc-estado-tag">' + esc(f.estado) + '</span>' +
+            construirBadgeEstadoComercial(f.estado) +
           '</div>' +
           '<div class="prod-desc">' + esc(f.doctor_nombre) + '</div>' +
           '<div style="font-size:11px;color:#a1a1aa;margin-top:2px;">' + esc(f.rut) + ' · ' + esc(f.modalidad_codigo) + ' · Facturación: ' + esc(f.estado_facturacion) + '</div>' +
