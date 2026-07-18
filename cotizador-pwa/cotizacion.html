@@ -58,12 +58,30 @@
   .estado-anulada { background:#f4f4f5; color:#52525b; }
   .estado-borrador { background:#f4f4f5; color:#52525b; }
 
-  table { width:100%; border-collapse: collapse; font-size:13px; margin-bottom: 16px; }
-  thead th { text-align:left; font-size:11px; text-transform:uppercase; color:#a1a1aa; border-bottom:1px solid var(--border); padding-bottom:8px; font-weight:500; }
-  tbody td { padding: 9px 0; border-bottom: 1px solid #f4f4f5; vertical-align: top; }
+  table { width:100%; table-layout: fixed; border-collapse: collapse; font-size:13px; margin-bottom: 16px; }
+  thead th { text-align:left; font-size:11px; text-transform:uppercase; color:#a1a1aa; border-bottom:1px solid var(--border); padding:0 6px 8px 0; font-weight:500; line-height:1.3; }
+  thead th:first-child { padding-left:0; }
+  thead th:last-child { padding-right:0; }
+  tbody td { padding: 9px 6px 9px 0; border-bottom: 1px solid #f4f4f5; vertical-align: top; word-break: break-word; }
+  tbody td:first-child { padding-left:0; }
+  tbody td:last-child { padding-right:0; }
   .code { font-family: ui-monospace, monospace; font-size:10px; color:#a1a1aa; }
   .right { text-align:right; }
   .center { text-align:center; }
+  /* FASE E2.1 -- ancho fijo para las 3 columnas numericas via colgroup;
+     "Producto" toma automaticamente el resto. Esto evita que la tabla
+     comprima erraticamente Precio unit./Subtotal hasta pegarlas, que era
+     la causa real reportada en iPhone. */
+  col.col-cant { width: 13%; }
+  col.col-precio { width: 25%; }
+  col.col-subtotal { width: 25%; }
+  @media (max-width: 400px) {
+    table { font-size: 11.5px; }
+    thead th { font-size: 9.5px; }
+    col.col-cant { width: 12%; }
+    col.col-precio { width: 27%; }
+    col.col-subtotal { width: 27%; }
+  }
   .total-row { display:flex; justify-content:flex-end; }
   .total-box { width: 240px; max-width: 100%; }
   .total-line { display:flex; justify-content:space-between; font-size:13px; padding:4px 0; }
@@ -178,7 +196,7 @@ function render(q) {
         (q.razon_social ? '<div style="grid-column:1/-1;"><div class="field-label">Razón social</div><div class="field-value">' + esc(q.razon_social) + '</div></div>' : '') +
         '<div style="grid-column:1/-1;"><div class="field-label">Ejecutivo Straumann</div><div class="field-value">' + esc(q.ejecutivo_nombre) + '</div></div>' +
       '</div>' +
-      '<table><thead><tr><th>Producto</th><th class="center">Cant.</th><th class="right">Precio unit.</th><th class="right">Subtotal</th></tr></thead>' +
+      '<table><colgroup><col><col class="col-cant"><col class="col-precio"><col class="col-subtotal"></colgroup><thead><tr><th>Producto</th><th class="center">Cant.</th><th class="right">Precio unit.</th><th class="right">Subtotal</th></tr></thead>' +
       '<tbody>' + itemsHtml + '</tbody></table>' +
       '<div class="total-row"><div class="total-box">' +
         '<div class="total-line"><span>Neto</span><span>' + fmt(q.subtotal) + '</span></div>' +
