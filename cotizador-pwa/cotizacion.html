@@ -92,6 +92,17 @@
 
   .approve-card { background:#fff; border:2px dashed var(--border); border-radius:14px; padding:22px; text-align:center; color:#a1a1aa; font-size:12px; }
   .approve-card .btn-disabled { width:100%; margin-top:12px; background:#e4e4e7; color:#a1a1aa; border:none; border-radius:10px; padding:13px; font-size:14px; font-weight:700; cursor:not-allowed; }
+  /* FASE 5 -- flujo de confirmacion inline, mismos tokens de color ya
+     usados en el resto del archivo (--red, --border), sin clases
+     tomadas de otro archivo que aqui no existen. */
+  .approve-card .btn-primary { width:100%; margin-top:12px; background:var(--red); color:#fff; border:none; border-radius:10px; padding:13px; font-size:14px; font-weight:700; cursor:pointer; }
+  .approve-card .btn-primary:disabled { background:#e4e4e7; color:#a1a1aa; cursor:not-allowed; }
+  .approve-card .btn-secondary { width:100%; margin-top:8px; background:#fff; color:var(--ink); border:1px solid var(--border); border-radius:10px; padding:11px; font-size:13px; font-weight:600; cursor:pointer; }
+  .approve-card .checkbox-row { display:flex; align-items:flex-start; gap:8px; font-size:13px; text-align:left; margin-bottom:4px; color:var(--ink); }
+  .approve-success { background:#ecfdf5; border:2px solid #a7f3d0; border-radius:14px; padding:22px; text-align:center; }
+  .approve-success .title { font-weight:700; color:#047857; font-size:15px; }
+  .approve-success .sub { font-size:12px; color:#047857; margin-top:4px; }
+  .approve-error { font-size:12px; color:#b91c1c; margin:8px 0; }
 
   .state-msg { text-align:center; padding: 60px 20px; color:#71717a; font-size:14px; line-height:1.6; }
   .print-btn { display:flex; align-items:center; gap:6px; font-size:12px; color:#71717a; background:none; border:none; cursor:pointer; }
@@ -159,18 +170,93 @@ function construirFilaProducto(it) {
     '</tr>';
 }
 
+// FASE 5 -- estado del flujo de aprobacion. currentToken se guarda una
+// sola vez en init() y se reutiliza aqui -- nunca se guarda en
+// localStorage ni se loggea. El backend (aprobar_cotizacion_comercial_publica,
+// ya probada en la Fase 1) sigue siendo la unica autoridad real; todo
+// esto es exclusivamente capa de experiencia de usuario.
+let currentToken = null;
+let currentQuote = null;
+let mostrandoConfirmacionAprobacion = false;
+let checkboxAprobacionMarcado = false;
+let aprobando = false;
+let aprobacionError = '';
+let aprobacionExitosa = false;
+
+function mostrarPanelAprobacion() {
+  mostrandoConfirmacionAprobacion = true;
+  checkboxAprobacionMarcado = false;
+  aprobacionError = '';
+  render(currentQuote);
+}
+function cancelarAprobacion() {
+  mostrandoConfirmacionAprobacion = false;
+  checkboxAprobacionMarcado = false;
+  aprobacionError = '';
+  render(currentQuote);
+}
+function toggleCheckboxAprobacion(checked) {
+  checkboxAprobacionMarcado = !!checked;
+  render(currentQuote);
+}
+async function confirmarAprobacion() {
+  if (aprobando || !checkboxAprobacionMarcado || !currentToken) return;
+  aprobando = true;
+  aprobacionError = '';
+  render(currentQuote);
+  try {
+    var textoConfirmacion = 'Cliente confirmó la aprobación desde el link público el ' + new Date().toLocaleString('es-CL');
+    const { data, error } = await sb.rpc('aprobar_cotizacion_comercial_publica', {
+      p_token: currentToken, p_confirmacion: textoConfirmacion
+    });
+    if (error || !data || data.length === 0) throw (error || new Error('sin datos'));
+    var resultado = data[0];
+    // El estado que se muestra viene DIRECTO de la respuesta autoritativa
+    // del backend, nunca se asume localmente.
+    currentQuote = Object.assign({}, currentQuote, { estado: resultado.estado });
+    mostrandoConfirmacionAprobacion = false;
+    aprobacionExitosa = true;
+  } catch (e) {
+    // Mensaje generico -- nunca se expone el error SQL real (podria ser
+    // "posible resolucion concurrente", "no encontrada", etc; el cliente
+    // no necesita saber cual).
+    aprobacionError = 'No pudimos registrar tu aprobación. Intenta nuevamente o contacta a tu ejecutivo.';
+  }
+  aprobando = false;
+  render(currentQuote);
+}
+
 function construirBloqueAprobacion(q) {
-  // Contenedor visual preparado para la Fase 5 -- el boton existe mas no
-  // esta conectado a ninguna RPC todavia (aprobar_cotizacion_comercial_publica
-  // no se llama desde este archivo en esta fase).
-  if (q.estado !== 'enviada') return '';
-  return '<div class="approve-card">' +
-    '¿Ya revisaste tu cotización?' +
-    '<button type="button" class="btn-disabled" disabled>✅ Aprobar cotización (próximamente)</button>' +
+  if (aprobacionExitosa && q.estado === 'aceptada') {
+    return '<div class="approve-success">' +
+      '<div class="title">✅ ¡Cotización aprobada!</div>' +
+      '<div class="sub">Gracias por confirmar. Tu ejecutivo Straumann fue notificado.</div>' +
     '</div>';
+  }
+  if (q.estado !== 'enviada') return '';
+
+  if (!mostrandoConfirmacionAprobacion) {
+    return '<div class="approve-card">' +
+      '¿Ya revisaste tu cotización?' +
+      '<button type="button" class="btn-primary" onclick="mostrarPanelAprobacion()">✅ Aprobar cotización</button>' +
+    '</div>';
+  }
+
+  return '<div class="approve-card">' +
+    '<label class="checkbox-row">' +
+      '<input type="checkbox" id="chk-aprobar"' + (checkboxAprobacionMarcado ? ' checked' : '') + ' onchange="toggleCheckboxAprobacion(this.checked)">' +
+      '<span>Confirmo que revisé y apruebo esta cotización</span>' +
+    '</label>' +
+    (aprobacionError ? '<div class="approve-error">' + esc(aprobacionError) + '</div>' : '') +
+    '<button type="button" class="btn-primary"' + ((!checkboxAprobacionMarcado || aprobando) ? ' disabled' : '') + ' onclick="confirmarAprobacion()">' +
+      (aprobando ? 'Enviando…' : 'Confirmar aprobación') +
+    '</button>' +
+    '<button type="button" class="btn-secondary"' + (aprobando ? ' disabled' : '') + ' onclick="cancelarAprobacion()">Cancelar</button>' +
+  '</div>';
 }
 
 function render(q) {
+  currentQuote = q;
   document.getElementById('printBtn').style.display = 'flex';
 
   var itemsHtml = (q.items || []).map(construirFilaProducto).join('');
@@ -225,6 +311,7 @@ async function init() {
       mostrarError();
       return;
     }
+    currentToken = token;
     render(data[0]);
   } catch (e) {
     mostrarError();
