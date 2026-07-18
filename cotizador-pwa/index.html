@@ -137,7 +137,7 @@
 // -- solo llama las 5 RPC autorizadas: buscar_productos_comercial,
 // listar_modalidades_comerciales, simular_cotizacion_comercial,
 // crear_cotizacion_comercial, listar_cotizaciones_comerciales.
-const APP_VERSION = '0.5.4-2026-07-18';
+const APP_VERSION = '0.6.0-2026-07-18';
 console.log('Cotizador Comercial version:', APP_VERSION);
 
 const SUPABASE_URL = 'https://gzimllusbxjorbsbtsse.supabase.co';
@@ -145,6 +145,7 @@ const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBh
 const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
 let miPerfil = null;
+let miUserId = null;
 let vistaComercial = 'nueva'; // 'nueva' | 'mis'
 let errorConexion = false;
 let errorConexionMsg = '';
@@ -230,8 +231,9 @@ async function cargarMiPerfilYEntrar() {
   try {
     const { data: userData } = await sb.auth.getUser();
     if (!userData || !userData.user) { miPerfil = null; renderLogin(); return; }
+    miUserId = userData.user.id;
     const { data, error } = await sb.from('admin_perfiles')
-      .select('es_super_admin, es_observador, es_vendedor, es_coordinador, es_customer_service, coordinador_id')
+      .select('es_super_admin, es_observador, es_vendedor, es_coordinador, es_customer_service, coordinador_id, nombre')
       .eq('user_id', userData.user.id)
       .maybeSingle();
     miPerfil = (!error && data) ? data : null;
@@ -543,7 +545,7 @@ async function crearCotizacionReal() {
   try {
     const { data, error } = await sb.rpc('crear_cotizacion_comercial', pr.params);
     if (error) throw error;
-    cotComState.creada = { folio: data.folio, id: data.id };
+    cotComState.creada = { folio: data.folio, id: data.id, estadoActual: 'borrador' };
     misCotState.cargado = false;
   } catch (e) {
     cotComCrearError = interpretarError(e);
@@ -747,18 +749,89 @@ function construirBotonFlotanteCarrito() {
   '</button>';
 }
 
+// FASE E3 -- compartir por WhatsApp. Unica fuente de verdad: la RPC
+// compartir_cotizacion_comercial (ya creada y probada en la Fase E1). El
+// frontend nunca genera ni calcula el token -- solo lo recibe de la RPC
+// y lo usa para armar el link y el mensaje. La RPC nunca bloquea por
+// estado (solo transiciona borrador->enviada la primera vez; en
+// cualquier otro estado devuelve los datos actuales sin modificarlos),
+// asi que la decision de CUANDO mostrar el boton es enteramente del
+// frontend.
+const COTIZACION_PUBLICA_BASE_URL = 'https://cotizador-comercial-straumann.vercel.app/cotizacion.html';
+
+function permiteCompartir(estado) {
+  return estado === 'borrador' || estado === 'enviada' || estado === 'aceptada';
+}
+function textoBotonCompartir(estado) {
+  if (estado === 'enviada') return '📤 Reenviar por WhatsApp';
+  if (estado === 'aceptada') return '🔗 Compartir link';
+  return '📤 Compartir por WhatsApp';
+}
+function puedeCompartirFila(f) {
+  if (!permiteCompartir(f.estado)) return false;
+  return !!(miPerfil && (miPerfil.es_super_admin || f.vendedor_id === miUserId));
+}
+
+let compartirEnCurso = null; // id de la cotizacion cuyo compartir esta en curso, o null
+let compartirError = '';
+
+async function compartirPorWhatsApp(cotizacionId) {
+  if (compartirEnCurso) return;
+  compartirEnCurso = cotizacionId;
+  compartirError = '';
+  renderApp();
+  try {
+    const { data, error } = await sb.rpc('compartir_cotizacion_comercial', { p_cotizacion_id: cotizacionId });
+    if (error) throw error;
+    var fila = Array.isArray(data) ? data[0] : data;
+    if (!fila || !fila.token_publico) throw new Error('Respuesta incompleta');
+
+    var link = COTIZACION_PUBLICA_BASE_URL + '?t=' + fila.token_publico;
+    var vigenciaTxt = '';
+    if (fila.vigencia_hasta) {
+      try { vigenciaTxt = new Date(fila.vigencia_hasta + 'T00:00:00').toLocaleDateString('es-CL'); } catch (e) {}
+    }
+    var nombreEjecutivo = (miPerfil && miPerfil.nombre) ? miPerfil.nombre : 'Ejecutivo Straumann';
+    var mensaje = 'Hola ' + (fila.doctor_nombre || '') + ',\n\n' +
+      'Te comparto la cotización comercial de Straumann correspondiente al folio ' + fila.folio + '.\n\n' +
+      'Puedes revisar el detalle aquí:\n' + link +
+      (vigenciaTxt ? '\n\nVigencia de la cotización: ' + vigenciaTxt : '') +
+      '\n\nSaludos,\n' + nombreEjecutivo;
+
+    // Actualizar el estado local si corresponde, para que el boton refleje
+    // el nuevo estado sin necesidad de recargar la lista.
+    if (cotComState.creada && cotComState.creada.id === cotizacionId) {
+      cotComState.creada.estadoActual = fila.estado;
+    }
+    var filaLocal = misCotState.filas.find(function (x) { return x.id === cotizacionId; });
+    if (filaLocal) { filaLocal.estado = fila.estado; }
+
+    window.open('https://wa.me/?text=' + encodeURIComponent(mensaje), '_blank');
+  } catch (e) {
+    compartirError = 'No se pudo compartir la cotización. Intenta de nuevo.';
+  }
+  compartirEnCurso = null;
+  renderApp();
+}
+
 function construirConfirmacionCreacion() {
   var cr = cotComState.creada;
+  var estado = (cr && cr.estadoActual) || 'borrador';
+  var enCurso = compartirEnCurso === (cr ? cr.id : null);
   return '<div class="compartir-wrap">' +
     '<div class="center-card">' +
       '<div class="ok-circle">✅</div>' +
       '<h2 style="margin:0 0 6px;">Cotización generada correctamente</h2>' +
       '<p style="color:#71717a;font-size:13px;margin:0 0 4px;">Folio</p>' +
       '<p style="font-size:20px;font-weight:800;color:var(--red);margin:0 0 4px;">' + esc(cr ? cr.folio : '') + '</p>' +
-      '<p class="hint">Envío por WhatsApp disponible en la próxima fase.</p>' +
-      '<div class="send-buttons">' +
+      (compartirError ? '<p class="msg-error" style="margin:8px 0 0;">⚠️ ' + esc(compartirError) + '</p>' : '') +
+      '<button type="button" class="btn-solid-red" style="width:100%;margin-top:14px;" ' +
+        'onclick="compartirPorWhatsApp(\'' + (cr ? cr.id : '') + '\')" ' + (enCurso ? 'disabled' : '') + '>' +
+        (enCurso ? 'Abriendo WhatsApp…' : esc(textoBotonCompartir(estado))) +
+      '</button>' +
+      '<div class="send-buttons" style="margin-top:10px;">' +
         '<button class="btn-outline" onclick="vistaComercial=\'mis\';cargarMisCotizaciones(true);">Ver Mis cotizaciones</button>' +
-        '<button class="btn-solid-red" onclick="reiniciarCotizadorComercial()">Nueva cotización</button>' +
+        '<button class="btn-outline" onclick="reiniciarCotizadorComercial()">Nueva cotización</button>' +
       '</div>' +
     '</div>' +
   '</div>';
@@ -888,6 +961,8 @@ function construirMisCotizaciones() {
     listaHtml = '<div class="empty-msg">Todavía no hay cotizaciones para mostrar.</div>';
   } else {
     listaHtml = misCotState.filas.map(function (f) {
+      var mostrarBoton = puedeCompartirFila(f);
+      var enCurso = compartirEnCurso === f.id;
       return '<div class="prod-row" style="align-items:flex-start;">' +
         '<div style="flex:1;">' +
           '<div style="display:flex;justify-content:space-between;align-items:start;gap:8px;margin-bottom:4px;">' +
@@ -897,6 +972,9 @@ function construirMisCotizaciones() {
           '<div class="prod-desc">' + esc(f.doctor_nombre) + '</div>' +
           '<div style="font-size:11px;color:#a1a1aa;margin-top:2px;">' + esc(f.rut) + ' · ' + esc(f.modalidad_codigo) + ' · Facturación: ' + esc(f.estado_facturacion) + '</div>' +
           (f.vigencia_hasta ? '<div style="font-size:11px;color:#a1a1aa;">Vigente hasta: ' + esc(f.vigencia_hasta) + '</div>' : '') +
+          (mostrarBoton ? '<button type="button" class="btn-outline" style="margin-top:8px;padding:6px 10px;font-size:11px;width:auto;" ' +
+            'onclick="compartirPorWhatsApp(\'' + f.id + '\')" ' + (enCurso ? 'disabled' : '') + '>' +
+            (enCurso ? 'Abriendo…' : esc(textoBotonCompartir(f.estado))) + '</button>' : '') +
         '</div>' +
         '<div style="text-align:right;">' +
           '<div class="prod-price-new" style="font-size:16px;">' + fmt(f.total) + '</div>' +
@@ -921,6 +999,7 @@ function construirMisCotizaciones() {
     '<div class="card">' +
       '<h2>🧾 Mis cotizaciones</h2>' +
       '<p style="font-size:12px;color:var(--muted);margin:0 0 14px;">' + esc(alcanceTexto) + '</p>' +
+      (compartirError ? '<div class="msg-error" style="margin-bottom:10px;">⚠️ ' + esc(compartirError) + '</div>' : '') +
       filtrosHtml + listaHtml + cargarMasHtml +
     '</div>' +
   '</div>';
