@@ -1121,6 +1121,37 @@ function puedeCompartirFila(f) {
 
 let compartirEnCurso = null; // id de la cotizacion cuyo compartir esta en curso, o null
 let compartirError = '';
+// FASE D3 -- control simple de ingreso de pedidos. Disponible para
+// cualquier cotizacion EXCEPTO las rechazadas por el cliente; la
+// validacion real vive en la RPC marcar_cotizacion_ingresada, este
+// estado es exclusivamente para UX (evitar doble clic, revertir
+// visualmente si falla).
+let ingresadoEnCurso = null; // id de la cotizacion cuyo toggle esta en curso, o null
+let ingresadoError = '';
+
+// FASE D3 -- marcar/desmarcar "Ingresado". El estado local solo se
+// actualiza DESPUES de que la RPC confirme exito -- si falla, el
+// checkbox nunca se toco visualmente (porque nunca se cambio de forma
+// optimista), asi que "vuelve" a su valor anterior automaticamente.
+async function toggleIngresado(cotizacionId, valorActual) {
+  if (ingresadoEnCurso) return; // evita doble clic mientras hay una operacion en curso
+  ingresadoEnCurso = cotizacionId;
+  ingresadoError = '';
+  renderApp();
+  try {
+    const { data, error } = await sb.rpc('marcar_cotizacion_ingresada', {
+      p_cotizacion_id: cotizacionId, p_ingresado: !valorActual
+    });
+    if (error || !data || data.length === 0) throw (error || new Error('sin datos'));
+    var resultado = data[0];
+    var fila = misCotState.filas.find(function (x) { return x.id === cotizacionId; });
+    if (fila) { fila.ingresado = resultado.ingresado; fila.ingresado_en = resultado.ingresado_en; }
+  } catch (e) {
+    ingresadoError = 'No se pudo actualizar. Intenta nuevamente.';
+  }
+  ingresadoEnCurso = null;
+  renderApp();
+}
 
 async function compartirPorWhatsApp(cotizacionId) {
   if (compartirEnCurso) return;
@@ -1342,6 +1373,12 @@ function construirMisCotizaciones() {
           (mostrarBoton ? '<button type="button" class="btn-outline" style="margin-top:8px;padding:6px 10px;font-size:11px;width:auto;" ' +
             'onclick="compartirPorWhatsApp(\'' + f.id + '\')" ' + (enCurso ? 'disabled' : '') + '>' +
             (enCurso ? 'Abriendo…' : esc(textoBotonCompartir(f.estado))) + '</button>' : '') +
+          (f.estado !== 'rechazada' ?
+            '<label style="display:flex;align-items:center;gap:6px;margin-top:8px;font-size:12px;color:var(--ink);' + (ingresadoEnCurso === f.id ? 'opacity:0.6;' : 'cursor:pointer;') + '">' +
+              '<input type="checkbox" style="width:auto;margin:0;"' + (f.ingresado ? ' checked' : '') + (ingresadoEnCurso === f.id ? ' disabled' : '') +
+              ' onchange="toggleIngresado(\'' + f.id + '\', ' + (f.ingresado ? 'true' : 'false') + ')">' +
+              (ingresadoEnCurso === f.id ? 'Actualizando…' : 'Ingresado') +
+            '</label>' : '') +
         '</div>' +
         '<div style="text-align:right;">' +
           '<div class="prod-price-new" style="font-size:16px;">' + fmt(f.total) + '</div>' +
@@ -1369,6 +1406,7 @@ function construirMisCotizaciones() {
       '<h2>🧾 Mis cotizaciones</h2>' +
       '<p style="font-size:12px;color:var(--muted);margin:0 0 14px;">' + esc(alcanceTexto) + '</p>' +
       (compartirError ? '<div class="msg-error" style="margin-bottom:10px;">⚠️ ' + esc(compartirError) + '</div>' : '') +
+      (ingresadoError ? '<div class="msg-error" style="margin-bottom:10px;">⚠️ ' + esc(ingresadoError) + '</div>' : '') +
       filtrosHtml + listaHtml + cargarMasHtml +
     '</div>' +
   '</div>';
