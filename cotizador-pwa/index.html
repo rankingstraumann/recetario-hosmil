@@ -51,6 +51,8 @@
   input:focus, select:focus { outline:none; border-color:var(--red); box-shadow:0 0 0 3px rgba(153,27,27,0.12); }
   .cc-inline-err { color:#b91c1c; font-size:11px; margin-top:4px; }
   .cc-hint { font-size:11px; color:#a1a1aa; margin-top:6px; }
+  /* FASE D2 -- etiqueta de campo en el detalle interno */
+  .field-label-cc { font-size:11px; text-transform:uppercase; letter-spacing:0.04em; color:#a1a1aa; margin-bottom:2px; }
   .cc-collapsible summary { cursor:pointer; font-size:12px; font-weight:600; color:var(--muted); padding:8px 0; list-style:none; }
   .cc-collapsible summary::-webkit-details-marker { display:none; }
   .cc-collapsible summary::before { content:'▸ '; }
@@ -147,7 +149,7 @@
 // -- solo llama las 5 RPC autorizadas: buscar_productos_comercial,
 // listar_modalidades_comerciales, simular_cotizacion_comercial,
 // crear_cotizacion_comercial, listar_cotizaciones_comerciales.
-const APP_VERSION = '0.7.1-2026-07-18';
+const APP_VERSION = '0.8.0-2026-07-19';
 console.log('Cotizador Comercial version:', APP_VERSION);
 
 const SUPABASE_URL = 'https://gzimllusbxjorbsbtsse.supabase.co';
@@ -156,7 +158,130 @@ const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
 let miPerfil = null;
 let miUserId = null;
-let vistaComercial = 'nueva'; // 'nueva' | 'mis'
+let vistaComercial = 'nueva'; // 'nueva' | 'mis' | 'detalle'
+// FASE D2 -- detalle interno de cotizacion, exclusivamente para el
+// vendedor/Super Admin dentro de la SPA (nunca publico, nunca otra
+// pestana). Unica fuente de datos: obtener_detalle_cotizacion_comercial
+// (RPC D1, ya validada). El frontend nunca recalcula nada, solo muestra
+// exactamente lo que la RPC devuelve, en el orden que la RPC devuelve.
+let detalleCotizacionId = null;
+let detalleCotizacionData = null;
+let detalleCotizacionCargando = false;
+let detalleCotizacionError = '';
+
+const ETIQUETAS_FACTURACION_COMERCIAL = {
+  pendiente: 'Pendiente',
+  enviada_customer_service: 'Enviada a Customer Service',
+  facturada: 'Facturada',
+  parcialmente_facturada: 'Parcialmente facturada',
+  cerrada: 'Cerrada'
+};
+
+async function abrirDetalleCotizacion(cotizacionId) {
+  vistaComercial = 'detalle';
+  detalleCotizacionId = cotizacionId;
+  detalleCotizacionData = null;
+  detalleCotizacionError = '';
+  detalleCotizacionCargando = true;
+  renderApp();
+  try {
+    const { data, error } = await sb.rpc('obtener_detalle_cotizacion_comercial', { p_cotizacion_id: cotizacionId });
+    if (error || !data || data.length === 0) throw (error || new Error('sin datos'));
+    detalleCotizacionData = data[0];
+  } catch (e) {
+    // Mensaje generico -- nunca se expone el error SQL real de la RPC
+    // (podria ser "No autorizado", "Cotizacion no encontrada", etc; el
+    // usuario solo necesita saber que no pudo abrirse).
+    detalleCotizacionError = 'No se pudo abrir el detalle de esta cotización. Verifica que tengas acceso o inténtalo nuevamente.';
+  }
+  detalleCotizacionCargando = false;
+  renderApp();
+}
+
+function volverAMisCotizaciones() {
+  vistaComercial = 'mis';
+  detalleCotizacionId = null;
+  detalleCotizacionData = null;
+  detalleCotizacionError = '';
+  // misCotState (filas, filtros, offset) se deja intacto a proposito --
+  // asi la lista y sus filtros siguen exactamente donde estaban.
+  renderApp();
+}
+
+function construirFilaProductoDetalle(it) {
+  var esCierre = it.tipo_linea === 'cierre';
+  var pct = Math.round((it.porcentaje_aplicado_snapshot || 0) * 100);
+  return '<div class="prod-row" style="align-items:flex-start;">' +
+    '<div style="flex:1;">' +
+      '<div class="prod-code">' + esc(it.codigo) + (esCierre ? ' <span class="cc-estado-tag" style="background:#f4f4f5;color:#52525b;">cierre/tapa</span>' : '') + '</div>' +
+      '<div class="prod-desc">' + esc(it.descripcion) + '</div>' +
+      '<div class="cc-hint">Cant: ' + esc(it.cantidad) + ' · Lista: ' + fmt(it.precio_lista_snapshot) + ' · Descuento: ' + pct + '%</div>' +
+    '</div>' +
+    '<div style="text-align:right;">' +
+      '<div class="prod-price-new">' + fmt(it.precio_neto_unitario) + '</div>' +
+      '<div class="cc-hint">Subtotal: ' + fmt(it.subtotal_item) + '</div>' +
+    '</div>' +
+  '</div>';
+}
+
+function campoDetalle(label, valor) {
+  return '<div><div class="field-label-cc">' + esc(label) + '</div><div style="font-size:14px;color:#27272a;">' + esc(valor || '—') + '</div></div>';
+}
+
+function construirDetalleCotizacion() {
+  if (detalleCotizacionCargando) {
+    return '<div class="cc-mis-wrap"><div class="card"><div class="empty-msg">Cargando detalle…</div></div></div>';
+  }
+  if (detalleCotizacionError) {
+    return '<div class="cc-mis-wrap"><div class="card">' +
+      '<div class="msg-error">⚠️ ' + esc(detalleCotizacionError) + '</div>' +
+      '<button type="button" class="btn-outline" style="margin-top:10px;" onclick="volverAMisCotizaciones()">← Volver a Mis cotizaciones</button>' +
+    '</div></div>';
+  }
+  if (!detalleCotizacionData) return '';
+  var q = detalleCotizacionData;
+  var items = q.items || [];
+  var etiquetaEstado = ETIQUETAS_ESTADO_COMERCIAL[q.estado] || q.estado;
+  var claseEstado = 'estado-' + (q.estado || 'borrador');
+  var etiquetaFacturacion = ETIQUETAS_FACTURACION_COMERCIAL[q.estado_facturacion] || q.estado_facturacion;
+
+  return '<div class="cc-mis-wrap">' +
+    '<button type="button" class="btn-outline" style="margin-bottom:14px;" onclick="volverAMisCotizaciones()">← Volver a Mis cotizaciones</button>' +
+    '<div class="card">' +
+      '<div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:10px;margin-bottom:10px;">' +
+        '<div><h2 style="margin:0;">' + esc(q.folio) + '</h2></div>' +
+        '<div style="text-align:right;">' +
+          '<span class="cc-estado-tag ' + claseEstado + '">' + esc(etiquetaEstado) + '</span> ' +
+          '<span class="cc-estado-tag" style="background:#f4f4f5;color:#52525b;">' + esc(etiquetaFacturacion) + '</span>' +
+        '</div>' +
+      '</div>' +
+      '<div class="form-grid">' +
+        campoDetalle('Doctor / Cliente', q.doctor_nombre) +
+        campoDetalle('RUT', q.rut) +
+        campoDetalle('Razón social', q.razon_social) +
+        campoDetalle('Modalidad comercial', q.modalidad_codigo) +
+        campoDetalle('Vigencia', q.vigencia_hasta ? new Date(q.vigencia_hasta + 'T00:00:00').toLocaleDateString('es-CL') : null) +
+        campoDetalle('Ejecutivo', q.ejecutivo_nombre) +
+        campoDetalle('Creada', q.creado_en ? new Date(q.creado_en).toLocaleString('es-CL') : null) +
+        campoDetalle('Enviada', q.enviado_en ? new Date(q.enviado_en).toLocaleString('es-CL') : null) +
+        campoDetalle('Aprobada', q.aceptado_en ? new Date(q.aceptado_en).toLocaleString('es-CL') : null) +
+      '</div>' +
+    '</div>' +
+    '<div class="card">' +
+      '<h2 style="margin-top:0;">Productos</h2>' +
+      items.map(construirFilaProductoDetalle).join('') +
+    '</div>' +
+    '<div class="card">' +
+      '<div class="form-grid">' +
+        '<div style="display:flex;justify-content:space-between;"><span>Neto antes de descuento</span><span>' + fmt(q.neto_antes_descuento) + '</span></div>' +
+        '<div style="display:flex;justify-content:space-between;"><span>Descuento total</span><span>' + (q.descuento_total > 0 ? '-' + fmt(q.descuento_total) : fmt(0)) + '</span></div>' +
+        '<div style="display:flex;justify-content:space-between;"><span>Neto</span><span>' + fmt(q.subtotal) + '</span></div>' +
+        '<div style="display:flex;justify-content:space-between;"><span>IVA</span><span>' + fmt(q.iva) + '</span></div>' +
+        '<div class="span2" style="display:flex;justify-content:space-between;font-weight:800;font-size:16px;color:var(--red);border-top:2px solid var(--ink);padding-top:10px;margin-top:4px;"><span>Total</span><span>' + fmt(q.total) + '</span></div>' +
+      '</div>' +
+    '</div>' +
+  '</div>';
+}
 let errorConexion = false;
 let errorConexionMsg = '';
 
@@ -1081,6 +1206,8 @@ function construirMisCotizaciones() {
         '<div style="text-align:right;">' +
           '<div class="prod-price-new" style="font-size:16px;">' + fmt(f.total) + '</div>' +
           (f.creado_en ? '<div style="font-size:11px;color:#a1a1aa;">' + esc(new Date(f.creado_en).toLocaleDateString('es-CL')) + '</div>' : '') +
+          '<button type="button" onclick="abrirDetalleCotizacion(\'' + f.id + '\')" ' +
+            'style="margin-top:6px;background:none;border:none;color:var(--red);font-size:11px;font-weight:600;cursor:pointer;padding:2px 0;">Ver detalle →</button>' +
         '</div>' +
       '</div>';
     }).join('');
@@ -1145,6 +1272,8 @@ function renderApp() {
     contenidoHtml = '<div class="cc-mis-wrap"><div class="card"><div class="empty-msg">Este Cotizador es para Ejecutivos Comerciales.<br><span style="font-size:11px;">Tu rol de Customer Service gestiona facturación desde el Admin general.</span></div></div></div>';
   } else if (vistaComercial === 'mis') {
     contenidoHtml = construirMisCotizaciones();
+  } else if (vistaComercial === 'detalle') {
+    contenidoHtml = construirDetalleCotizacion();
   } else if (!puedeCrearCotizaciones()) {
     contenidoHtml = '<div class="cc-mis-wrap"><div class="card"><div class="empty-msg">Tu perfil no tiene el rol de Ejecutivo Comercial habilitado para crear cotizaciones.</div></div></div>';
   } else {
