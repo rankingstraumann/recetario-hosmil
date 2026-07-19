@@ -695,9 +695,15 @@ async function cargarProductosCatalogo(reiniciar) {
   cotComState.catalogoErrorProductos = '';
   renderApp();
   try {
+    // FASE D2.7.1 -- mientras haya texto real de busqueda, se ignora
+    // marcaActiva/familiaActivaId en los PARAMETROS enviados a la RPC
+    // (nunca se resetean esas variables de estado, solo se dejan de usar
+    // temporalmente) para que la busqueda sea global sobre todo el
+    // catalogo. Al borrar el texto, ambas vuelven a aplicarse solas.
+    var hayBusquedaGlobal = !!(cotComState.busquedaCatalogo && cotComState.busquedaCatalogo.trim());
     const { data, error } = await sb.rpc('listar_productos_comercial_catalogo', {
-      p_marca: cotComState.marcaActiva || null,
-      p_familia_id: cotComState.familiaActivaId || null,
+      p_marca: hayBusquedaGlobal ? null : (cotComState.marcaActiva || null),
+      p_familia_id: hayBusquedaGlobal ? null : (cotComState.familiaActivaId || null),
       p_busqueda: cotComState.busquedaCatalogo || null,
       p_limite: 30,
       p_offset: cotComState.catalogoOffset
