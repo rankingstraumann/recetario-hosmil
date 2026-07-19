@@ -183,6 +183,43 @@ let aprobando = false;
 let aprobacionError = '';
 let aprobacionExitosa = false;
 
+// FASE D2.5 -- confirmacion de pedido via WhatsApp al ejecutivo. La
+// aprobacion en base de datos SIEMPRE tiene prioridad; WhatsApp es
+// exclusivamente una capa adicional que nunca bloquea ni condiciona la
+// aprobacion real.
+let whatsappAvisoSinTelefono = '';
+let whatsappUrlPendiente = null;
+let whatsappAbierto = false;
+
+// Normaliza al formato que wa.me exige: solo digitos, con codigo de
+// pais, sin '+'. Nunca inventa un numero -- si el formato no se puede
+// interpretar con confianza, devuelve null (sin telefono usable).
+function normalizarTelefonoWhatsApp(telefono) {
+  if (!telefono) return null;
+  var limpio = String(telefono).replace(/[^\d+]/g, '');
+  var traiaPlus = limpio.charAt(0) === '+';
+  if (traiaPlus) limpio = limpio.slice(1);
+
+  if (limpio.indexOf('56') === 0 && limpio.length === 11) {
+    // ya viene con codigo de pais chileno completo -- no se toca
+  } else if (limpio.length === 9 && limpio.charAt(0) === '9') {
+    limpio = '56' + limpio; // movil chileno sin codigo de pais
+  } else if (limpio.length === 10 && limpio.charAt(0) === '0') {
+    limpio = '56' + limpio.slice(1); // formato antiguo con 0 inicial
+  } else if (!traiaPlus && !(limpio.length >= 11 && limpio.length <= 13)) {
+    return null; // formato no reconocido, no se adivina
+  }
+
+  if (!/^\d{8,15}$/.test(limpio)) return null;
+  return limpio;
+}
+
+function construirMensajeWhatsApp(q) {
+  return 'Hola ' + (q.ejecutivo_nombre || 'Ejecutivo Straumann') + ',\n\n' +
+    'Confirmo la aprobación de la cotización ' + q.folio + ' por un total de ' + fmt(q.total) + '.\n\n' +
+    'Autorizo continuar con la facturación del pedido.\n\nGracias.';
+}
+
 function mostrarPanelAprobacion() {
   mostrandoConfirmacionAprobacion = true;
   checkboxAprobacionMarcado = false;
@@ -203,7 +240,19 @@ async function confirmarAprobacion() {
   if (aprobando || !checkboxAprobacionMarcado || !currentToken) return;
   aprobando = true;
   aprobacionError = '';
+  whatsappAvisoSinTelefono = '';
+  whatsappUrlPendiente = null;
+  whatsappAbierto = false;
   render(currentQuote);
+
+  // CRITICO para Safari/iOS: la ventana se abre de forma SINCRONA, aqui
+  // mismo, dentro del gesto de clic original -- antes de cualquier
+  // await. Si se abriera despues de la llamada a la RPC, Safari la
+  // bloquearia como popup no solicitado por el usuario. Se navega a la
+  // URL real recien cuando la aprobacion resulte exitosa.
+  var numeroWhatsApp = normalizarTelefonoWhatsApp(currentQuote.ejecutivo_telefono);
+  var ventanaWhatsApp = numeroWhatsApp ? window.open('', '_blank') : null;
+
   try {
     var textoConfirmacion = 'Cliente confirmó la aprobación desde el link público el ' + new Date().toLocaleString('es-CL');
     const { data, error } = await sb.rpc('aprobar_cotizacion_comercial_publica', {
@@ -216,7 +265,20 @@ async function confirmarAprobacion() {
     currentQuote = Object.assign({}, currentQuote, { estado: resultado.estado });
     mostrandoConfirmacionAprobacion = false;
     aprobacionExitosa = true;
+
+    if (numeroWhatsApp) {
+      whatsappUrlPendiente = 'https://wa.me/' + numeroWhatsApp + '?text=' + encodeURIComponent(construirMensajeWhatsApp(currentQuote));
+      if (ventanaWhatsApp && !ventanaWhatsApp.closed) {
+        try { ventanaWhatsApp.location.href = whatsappUrlPendiente; whatsappAbierto = true; }
+        catch (e) { whatsappAbierto = false; }
+      } // si ventanaWhatsApp es null o quedo cerrada, el navegador la bloqueo -- whatsappAbierto queda false
+    } else {
+      whatsappAvisoSinTelefono = 'Tu ejecutivo no tiene un número configurado. Contáctalo directamente para continuar.';
+    }
   } catch (e) {
+    // La aprobacion fallo: si se habia pre-abierto una ventana, se
+    // cierra -- nunca debe quedar una pestana en blanco sin proposito.
+    if (ventanaWhatsApp && !ventanaWhatsApp.closed) { try { ventanaWhatsApp.close(); } catch (e2) {} }
     // Mensaje generico -- nunca se expone el error SQL real (podria ser
     // "posible resolucion concurrente", "no encontrada", etc; el cliente
     // no necesita saber cual).
@@ -228,9 +290,26 @@ async function confirmarAprobacion() {
 
 function construirBloqueAprobacion(q) {
   if (aprobacionExitosa && q.estado === 'aceptada') {
+    var extraWhatsApp = '';
+    if (whatsappUrlPendiente) {
+      // El boton de reenvio SIEMPRE queda disponible, incluso si ya se
+      // abrio automaticamente -- cubre el caso de que el cliente haya
+      // cerrado WhatsApp sin enviar o vuelto al navegador por error.
+      // Se reutiliza la MISMA url ya construida, sin recalcular nada ni
+      // volver a llamar la aprobacion.
+      var textoEstado = whatsappAbierto
+        ? 'Se abrió WhatsApp con tu mensaje de confirmación listo para enviar.'
+        : 'Envía la confirmación por WhatsApp a tu ejecutivo para continuar con la facturación.';
+      var textoBoton = whatsappAbierto ? 'Abrir WhatsApp nuevamente' : 'Enviar confirmación por WhatsApp';
+      extraWhatsApp = '<div class="sub" style="margin-top:6px;">' + textoEstado + '</div>' +
+        '<a href="' + esc(whatsappUrlPendiente) + '" target="_blank" class="btn-primary" style="display:inline-block;text-decoration:none;margin-top:10px;box-sizing:border-box;">' + esc(textoBoton) + '</a>';
+    } else if (whatsappAvisoSinTelefono) {
+      extraWhatsApp = '<div class="sub" style="margin-top:6px;">' + esc(whatsappAvisoSinTelefono) + '</div>';
+    }
     return '<div class="approve-success">' +
       '<div class="title">✅ ¡Cotización aprobada!</div>' +
-      '<div class="sub">Gracias por confirmar. Tu ejecutivo Straumann fue notificado.</div>' +
+      '<div class="sub">Tu pedido fue confirmado correctamente.</div>' +
+      extraWhatsApp +
     '</div>';
   }
   if (q.estado !== 'enviada') return '';
