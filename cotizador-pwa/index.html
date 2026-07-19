@@ -53,6 +53,11 @@
   .cc-hint { font-size:11px; color:#a1a1aa; margin-top:6px; }
   /* FASE D2 -- etiqueta de campo en el detalle interno */
   .field-label-cc { font-size:11px; text-transform:uppercase; letter-spacing:0.04em; color:#a1a1aa; margin-bottom:2px; }
+  /* FASE D2.3 -- correccion: el resumen de precios NUNCA debe usar
+     .form-grid (esa clase pasa a 2 columnas desde 640px, pensada para el
+     formulario de cabecera, no para una lista vertical de conceptos).
+     Esta clase es siempre de 1 columna, en cualquier ancho. */
+  .resumen-precios { display:flex; flex-direction:column; gap:10px; }
   /* FASE D2.1 -- rediseno compacto del detalle interno. Reutiliza los
      mismos tokens de color y el mismo patron de tabla compacta
      (colgroup + table-layout:fixed) ya validado en cotizacion.html. */
@@ -72,22 +77,23 @@
     .detalle-tabla-wrap { display:block; }
     .detalle-mobile-lista { display:none; }
   }
-  .detalle-mobile-item { padding:10px 0; border-bottom:1px solid #f4f4f5; }
-  .detalle-mobile-item:last-child { border-bottom:none; }
-  .detalle-mobile-cab { display:flex; align-items:center; gap:6px; flex-wrap:nowrap; }
-  .detalle-mobile-codigo { font-family:ui-monospace,monospace; font-size:13px; font-weight:700; color:var(--ink); white-space:nowrap; }
-  .detalle-mobile-cierre { flex-shrink:0; font-size:9px; font-weight:700; background:#f4f4f5; color:#52525b; border-radius:6px; padding:2px 6px; white-space:nowrap; }
-  .detalle-mobile-desc { font-size:13px; color:#27272a; margin-top:3px; line-height:1.4; }
-  .detalle-mobile-meta { font-size:11.5px; color:#71717a; margin-top:5px; }
-  .detalle-mobile-totales { font-size:13px; color:var(--ink); margin-top:3px; }
-  .detalle-mobile-totales .neto-lbl { font-weight:600; }
-  .detalle-mobile-totales .subtotal-lbl { font-weight:700; color:var(--red); }
-  .detalle-tabla { width:100%; border-collapse:collapse; table-layout:fixed; font-size:12px; }
-  .detalle-tabla th { text-align:left; font-size:10px; text-transform:uppercase; color:#a1a1aa; font-weight:600; padding:0 4px 6px 0; border-bottom:1px solid var(--border); }
-  .detalle-tabla td { padding:7px 4px 7px 0; border-bottom:1px solid #f4f4f5; vertical-align:top; word-break:break-word; }
+  /* Tabla real compacta para movil (<640px): fila principal (codigo,
+     producto, cant, desc) + fila secundaria de colspan (lista/neto/
+     subtotal), manteniendo sensacion tabular real, no bloques de texto. */
+  .detalle-tabla-mobile { width:100%; border-collapse:collapse; table-layout:fixed; font-size:11.5px; }
+  .detalle-tabla-mobile th { text-align:left; font-size:9.5px; text-transform:uppercase; color:#a1a1aa; font-weight:600; padding:0 4px 6px 0; border-bottom:1px solid var(--border); }
+  .detalle-tabla-mobile .num { text-align:right; }
+  .detalle-tabla-mobile tr.fila-principal td { padding:7px 4px 1px 0; border-bottom:none; vertical-align:top; word-break:break-word; font-size:11.5px; color:#27272a; }
+  .detalle-tabla-mobile tr.fila-principal td:first-child { font-family:ui-monospace,monospace; font-weight:700; color:var(--ink); white-space:nowrap; }
+  .detalle-tabla-mobile tr.fila-secundaria td { padding:0 4px 8px 0; border-bottom:1px solid #f4f4f5; font-size:10.5px; color:#71717a; }
+  .detalle-tabla-mobile .cierre-tag-mobile { font-size:9px; font-weight:700; background:#f4f4f5; color:#52525b; border-radius:6px; padding:1px 5px; margin-right:4px; white-space:nowrap; }
+  .detalle-tabla-mobile .subtotal-mobile { font-weight:700; color:var(--red); }
+
+  .detalle-tabla { width:100%; border-collapse:collapse; table-layout:fixed; font-size:12.5px; }
+  .detalle-tabla th { text-align:left; font-size:10.5px; text-transform:uppercase; color:#a1a1aa; font-weight:600; padding:0 8px 8px 0; border-bottom:1px solid var(--border); }
+  .detalle-tabla td { padding:9px 8px 9px 0; border-bottom:1px solid #f4f4f5; vertical-align:top; word-break:break-word; }
   .detalle-tabla .num { text-align:right; }
   .detalle-tabla .cierre-tag { display:inline-block; font-size:9px; font-weight:700; background:#f4f4f5; color:#52525b; border-radius:6px; padding:1px 5px; margin-left:4px; white-space:nowrap; }
-  @media (max-width:480px) { .detalle-tabla { font-size:10.5px; } .detalle-tabla th { font-size:9px; } }
   .btn-copiar-codigos { background:none; border:1px solid var(--border); color:var(--ink); font-size:11px; font-weight:600; padding:5px 10px; border-radius:8px; cursor:pointer; white-space:nowrap; }
   .btn-copiar-codigos.copiado { background:#ecfdf5; border-color:#a7f3d0; color:#047857; }
   .cc-collapsible summary { cursor:pointer; font-size:12px; font-weight:600; color:var(--muted); padding:8px 0; list-style:none; }
@@ -186,7 +192,7 @@
 // -- solo llama las 5 RPC autorizadas: buscar_productos_comercial,
 // listar_modalidades_comerciales, simular_cotizacion_comercial,
 // crear_cotizacion_comercial, listar_cotizaciones_comerciales.
-const APP_VERSION = '0.8.2-2026-07-19';
+const APP_VERSION = '0.8.3-2026-07-19';
 console.log('Cotizador Comercial version:', APP_VERSION);
 
 const SUPABASE_URL = 'https://gzimllusbxjorbsbtsse.supabase.co';
@@ -261,21 +267,26 @@ function construirFilaProductoDetalle(it) {
   '</tr>';
 }
 
-// FASE D2.2 -- lista compacta exclusiva para movil (<640px). Lee
-// exactamente los mismos campos del mismo objeto "it" que la version de
-// escritorio -- ningun calculo nuevo, ningun reordenamiento propio.
-function construirFilaProductoDetalleMobile(it) {
+// FASE D2.3 -- tabla real compacta para movil (<640px): fila principal
+// (codigo | producto | cant | desc) + fila secundaria con colspan
+// (lista/neto/subtotal), manteniendo estructura tabular real, no
+// bloques de texto sueltos. Lee exactamente los mismos campos del mismo
+// objeto "it" que la version de escritorio -- ningun calculo nuevo.
+function construirFilasProductoDetalleMobile(it) {
   var esCierre = it.tipo_linea === 'cierre';
   var pct = Math.round((it.porcentaje_aplicado_snapshot || 0) * 100);
-  return '<div class="detalle-mobile-item">' +
-    '<div class="detalle-mobile-cab">' +
-      '<span class="detalle-mobile-codigo">' + esc(it.codigo) + '</span>' +
-      (esCierre ? '<span class="detalle-mobile-cierre">cierre/tapa</span>' : '') +
-    '</div>' +
-    '<div class="detalle-mobile-desc">' + esc(it.descripcion) + '</div>' +
-    '<div class="detalle-mobile-meta">Cant. ' + esc(it.cantidad) + ' · Lista ' + fmt(it.precio_lista_snapshot) + ' · Desc. ' + pct + '%</div>' +
-    '<div class="detalle-mobile-totales"><span class="neto-lbl">Neto ' + fmt(it.precio_neto_unitario) + '</span> · <span class="subtotal-lbl">Subtotal ' + fmt(it.subtotal_item) + '</span></div>' +
-  '</div>';
+  return '<tr class="fila-principal">' +
+    '<td>' + esc(it.codigo) + '</td>' +
+    '<td>' + esc(it.descripcion) + '</td>' +
+    '<td class="num">' + esc(it.cantidad) + '</td>' +
+    '<td class="num">' + pct + '%</td>' +
+  '</tr>' +
+  '<tr class="fila-secundaria">' +
+    '<td colspan="4">' +
+      (esCierre ? '<span class="cierre-tag-mobile">cierre/tapa</span>' : '') +
+      'Lista ' + fmt(it.precio_lista_snapshot) + ' · Neto ' + fmt(it.precio_neto_unitario) + ' · <span class="subtotal-mobile">Subtotal ' + fmt(it.subtotal_item) + '</span>' +
+    '</td>' +
+  '</tr>';
 }
 
 function campoGrid(label, valor) {
@@ -356,20 +367,26 @@ function construirDetalleCotizacion() {
       '</div>' +
       '<div class="detalle-tabla-wrap">' +
         '<table class="detalle-tabla">' +
-          '<colgroup><col style="width:14%;"><col style="width:27%;"><col style="width:7%;"><col style="width:13%;"><col style="width:9%;"><col style="width:14%;"><col style="width:16%;"></colgroup>' +
+          '<colgroup><col style="width:12%;"><col style="width:32%;"><col style="width:6%;"><col style="width:13%;"><col style="width:8%;"><col style="width:14%;"><col style="width:15%;"></colgroup>' +
           '<thead><tr><th>Código</th><th>Descripción</th><th class="num">Cant.</th><th class="num">Lista</th><th class="num">Desc.</th><th class="num">Neto unit.</th><th class="num">Subtotal</th></tr></thead>' +
           '<tbody>' + items.map(construirFilaProductoDetalle).join('') + '</tbody>' +
         '</table>' +
       '</div>' +
-      '<div class="detalle-mobile-lista">' + items.map(construirFilaProductoDetalleMobile).join('') + '</div>' +
+      '<div class="detalle-mobile-lista">' +
+        '<table class="detalle-tabla-mobile">' +
+          '<colgroup><col style="width:24%;"><col><col style="width:12%;"><col style="width:16%;"></colgroup>' +
+          '<thead><tr><th>Código</th><th>Producto</th><th class="num">Cant.</th><th class="num">Desc.</th></tr></thead>' +
+          '<tbody>' + items.map(construirFilasProductoDetalleMobile).join('') + '</tbody>' +
+        '</table>' +
+      '</div>' +
     '</div>' +
     '<div class="card">' +
-      '<div class="form-grid">' +
+      '<div class="resumen-precios">' +
         '<div style="display:flex;justify-content:space-between;"><span>Neto antes de descuento</span><span>' + fmt(q.neto_antes_descuento) + '</span></div>' +
         '<div style="display:flex;justify-content:space-between;"><span>Descuento total</span><span>' + (q.descuento_total > 0 ? '-' + fmt(q.descuento_total) : fmt(0)) + '</span></div>' +
         '<div style="display:flex;justify-content:space-between;"><span>Neto</span><span>' + fmt(q.subtotal) + '</span></div>' +
         '<div style="display:flex;justify-content:space-between;"><span>IVA</span><span>' + fmt(q.iva) + '</span></div>' +
-        '<div class="span2" style="display:flex;justify-content:space-between;font-weight:800;font-size:16px;color:var(--red);border-top:2px solid var(--ink);padding-top:10px;margin-top:4px;"><span>Total</span><span>' + fmt(q.total) + '</span></div>' +
+        '<div style="display:flex;justify-content:space-between;font-weight:800;font-size:16px;color:var(--red);border-top:2px solid var(--ink);padding-top:10px;margin-top:4px;"><span>Total</span><span>' + fmt(q.total) + '</span></div>' +
       '</div>' +
     '</div>' +
   '</div>';
