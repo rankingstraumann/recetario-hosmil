@@ -298,7 +298,7 @@ function campoGrid(label, valor) {
 // consulta el catalogo, solo se usa el campo "codigo" ya presente.
 function copiarCodigosDetalle() {
   if (!detalleCotizacionData || !detalleCotizacionData.items) return;
-  var texto = detalleCotizacionData.items.map(function (it) { return it.codigo; }).join('\n');
+  var texto = detalleCotizacionData.items.map(function (it) { return it.codigo + ' ' + it.cantidad; }).join('\n');
   var btn = document.getElementById('btn-copiar-codigos');
   function marcarCopiado() {
     if (!btn) return;
