@@ -202,6 +202,13 @@ const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 let miPerfil = null;
 let miUserId = null;
 let vistaComercial = 'nueva'; // 'nueva' | 'mis' | 'detalle'
+// FASE D2.7 -- busqueda dinamica del catalogo con debounce + proteccion
+// contra respuestas antiguas (stale response guard). catalogoBusquedaToken
+// se incrementa en CADA disparo real de busqueda (boton, Enter, o
+// debounce); si al volver de la red el token capturado ya no coincide
+// con el mas reciente, la respuesta se descarta sin tocar el estado.
+let catalogoBusquedaTimer = null;
+let catalogoBusquedaToken = 0;
 // FASE D2 -- detalle interno de cotizacion, exclusivamente para el
 // vendedor/Super Admin dentro de la SPA (nunca publico, nunca otra
 // pestana). Unica fuente de datos: obtener_detalle_cotizacion_comercial
@@ -677,7 +684,13 @@ function seleccionarFamiliaCatalogo(familiaId) {
 }
 
 async function cargarProductosCatalogo(reiniciar) {
+  // Cancela cualquier debounce pendiente -- si el usuario dispara una
+  // busqueda manual (boton/Enter) mientras el debounce del input aun no
+  // se ejecuto, esto evita que se dispare una segunda vez despues,
+  // reiniciando visualmente la lista sin necesidad (parpadeo).
+  if (catalogoBusquedaTimer) { clearTimeout(catalogoBusquedaTimer); catalogoBusquedaTimer = null; }
   if (reiniciar) { cotComState.catalogoOffset = 0; cotComState.productosCatalogo = []; cotComState.catalogoHayMas = true; }
+  var miToken = ++catalogoBusquedaToken;
   cotComState.catalogoCargandoProductos = true;
   cotComState.catalogoErrorProductos = '';
   renderApp();
@@ -689,17 +702,29 @@ async function cargarProductosCatalogo(reiniciar) {
       p_limite: 30,
       p_offset: cotComState.catalogoOffset
     });
+    if (miToken !== catalogoBusquedaToken) return; // una busqueda mas reciente ya se disparo -- descartar esta respuesta tardia
     if (error) throw error;
     var filas = data || [];
     cotComState.productosCatalogo = cotComState.productosCatalogo.concat(filas);
     cotComState.catalogoHayMas = filas.length === 30;
     cotComState.catalogoOffset += filas.length;
   } catch (e) {
+    if (miToken !== catalogoBusquedaToken) return;
     cotComState.productosCatalogo = [];
     cotComState.catalogoErrorProductos = interpretarError(e);
   }
+  if (miToken !== catalogoBusquedaToken) return;
   cotComState.catalogoCargandoProductos = false;
   renderApp();
+}
+
+// Debounce del input de busqueda -- dispara cargarProductosCatalogo(true)
+// 300ms despues de la ultima tecla. El boton "Buscar" y Enter siguen
+// funcionando exactamente igual, disparando de inmediato sin esperar.
+function cotComOnInputBusquedaCatalogo(valor) {
+  cotComState.busquedaCatalogo = valor;
+  if (catalogoBusquedaTimer) clearTimeout(catalogoBusquedaTimer);
+  catalogoBusquedaTimer = setTimeout(function () { cargarProductosCatalogo(true); }, 300);
 }
 
 function cotComAgregarProductoCatalogo(productoId) {
@@ -1212,7 +1237,7 @@ function wireCotizadorComercialInputs() {
   });
   var busqCat = document.getElementById('cc-input-busqueda-catalogo');
   if (busqCat) {
-    busqCat.addEventListener('input', function (e) { cotComState.busquedaCatalogo = e.target.value; });
+    busqCat.addEventListener('input', function (e) { cotComOnInputBusquedaCatalogo(e.target.value); });
     busqCat.addEventListener('keydown', function (e) { if (e.key === 'Enter') { cargarProductosCatalogo(true); } });
   }
   var familiaCatSel = document.getElementById('cc-select-familia-catalogo');
