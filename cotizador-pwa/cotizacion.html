@@ -183,6 +183,38 @@ let aprobando = false;
 let aprobacionError = '';
 let aprobacionExitosa = false;
 
+// FASE D2.6 -- rechazo de cotizacion desde el link publico, mismo patron
+// de seguridad y de compatibilidad Safari/iOS ya usado en D2.5. El
+// motivo es opcional para el cliente; si no escribe nada, el backend
+// guarda un texto generico SOLO para auditoria -- el mensaje de
+// WhatsApp nunca usa ese texto generico, solo lo que el cliente
+// realmente escribio (o nada, si dejo el campo vacio).
+let mostrandoConfirmacionRechazo = false;
+let rechazando = false;
+let rechazoError = '';
+let rechazoExitoso = false;
+let rechazoMotivoTexto = '';
+
+function mostrarPanelRechazo() {
+  mostrandoConfirmacionRechazo = true;
+  rechazoError = '';
+  rechazoMotivoTexto = '';
+  render(currentQuote);
+}
+function cancelarRechazo() {
+  mostrandoConfirmacionRechazo = false;
+  rechazoError = '';
+  rechazoMotivoTexto = '';
+  render(currentQuote);
+}
+function construirMensajeWhatsAppRechazo(q, motivo) {
+  var lineaMotivo = motivo ? ('Motivo: ' + motivo + '\n\n') : '';
+  return 'Hola ' + (q.ejecutivo_nombre || 'Ejecutivo Straumann') + ',\n\n' +
+    'He rechazado la cotización ' + q.folio + ' por un total de ' + fmt(q.total) + '.\n\n' +
+    lineaMotivo +
+    'Por favor, contáctame para revisar alternativas.\n\nGracias.';
+}
+
 // FASE D2.5 -- confirmacion de pedido via WhatsApp al ejecutivo. La
 // aprobacion en base de datos SIEMPRE tiene prioridad; WhatsApp es
 // exclusivamente una capa adicional que nunca bloquea ni condiciona la
@@ -288,36 +320,114 @@ async function confirmarAprobacion() {
   render(currentQuote);
 }
 
+async function confirmarRechazo() {
+  if (rechazando || !currentToken) return;
+  rechazando = true;
+  rechazoError = '';
+  whatsappAvisoSinTelefono = '';
+  whatsappUrlPendiente = null;
+  whatsappAbierto = false;
+  render(currentQuote);
+
+  var motivoIngresado = (rechazoMotivoTexto || '').trim();
+  // Mismo patron critico de D2.5: la ventana se abre SINCRONAMENTE,
+  // dentro del gesto de clic, antes de cualquier await -- para no ser
+  // bloqueada por Safari/iOS.
+  var numeroWhatsApp = normalizarTelefonoWhatsApp(currentQuote.ejecutivo_telefono);
+  var ventanaWhatsApp = numeroWhatsApp ? window.open('', '_blank') : null;
+
+  try {
+    const { data, error } = await sb.rpc('rechazar_cotizacion_comercial_publica', {
+      p_token: currentToken, p_motivo: motivoIngresado || null
+    });
+    if (error || !data || data.length === 0) throw (error || new Error('sin datos'));
+    var resultado = data[0];
+    currentQuote = Object.assign({}, currentQuote, { estado: resultado.estado });
+    mostrandoConfirmacionRechazo = false;
+    rechazoExitoso = true;
+
+    if (numeroWhatsApp) {
+      // El mensaje usa EXACTAMENTE lo que el cliente escribio
+      // (motivoIngresado) -- nunca el texto generico de auditoria que
+      // el backend guarda cuando el campo llega vacio.
+      whatsappUrlPendiente = 'https://wa.me/' + numeroWhatsApp + '?text=' + encodeURIComponent(construirMensajeWhatsAppRechazo(currentQuote, motivoIngresado));
+      if (ventanaWhatsApp && !ventanaWhatsApp.closed) {
+        try { ventanaWhatsApp.location.href = whatsappUrlPendiente; whatsappAbierto = true; }
+        catch (e) { whatsappAbierto = false; }
+      }
+    } else {
+      whatsappAvisoSinTelefono = 'Comunícate con tu ejecutivo para revisar alternativas.';
+    }
+  } catch (e) {
+    if (ventanaWhatsApp && !ventanaWhatsApp.closed) { try { ventanaWhatsApp.close(); } catch (e2) {} }
+    rechazoError = 'No pudimos registrar tu decisión. Intenta nuevamente o contacta a tu ejecutivo.';
+  }
+  rechazando = false;
+  render(currentQuote);
+}
+
+// Bloque compartido de estado/fallback de WhatsApp -- misma logica para
+// aprobacion y rechazo, ya que una cotizacion solo puede resolver por
+// UNA de las dos vias (la barrera del backend lo garantiza).
+function construirExtraWhatsApp(textoSiAbierto, textoSiNoAbierto, botonSiNoAbierto) {
+  if (whatsappUrlPendiente) {
+    var textoEstado = whatsappAbierto ? textoSiAbierto : textoSiNoAbierto;
+    var textoBoton = whatsappAbierto ? 'Abrir WhatsApp nuevamente' : botonSiNoAbierto;
+    return '<div class="sub" style="margin-top:6px;">' + textoEstado + '</div>' +
+      '<a href="' + esc(whatsappUrlPendiente) + '" target="_blank" class="btn-primary" style="display:inline-block;text-decoration:none;margin-top:10px;box-sizing:border-box;">' + esc(textoBoton) + '</a>';
+  } else if (whatsappAvisoSinTelefono) {
+    return '<div class="sub" style="margin-top:6px;">' + esc(whatsappAvisoSinTelefono) + '</div>';
+  }
+  return '';
+}
+
 function construirBloqueAprobacion(q) {
   if (aprobacionExitosa && q.estado === 'aceptada') {
-    var extraWhatsApp = '';
-    if (whatsappUrlPendiente) {
-      // El boton de reenvio SIEMPRE queda disponible, incluso si ya se
-      // abrio automaticamente -- cubre el caso de que el cliente haya
-      // cerrado WhatsApp sin enviar o vuelto al navegador por error.
-      // Se reutiliza la MISMA url ya construida, sin recalcular nada ni
-      // volver a llamar la aprobacion.
-      var textoEstado = whatsappAbierto
-        ? 'Se abrió WhatsApp con tu mensaje de confirmación listo para enviar.'
-        : 'Envía la confirmación por WhatsApp a tu ejecutivo para continuar con la facturación.';
-      var textoBoton = whatsappAbierto ? 'Abrir WhatsApp nuevamente' : 'Enviar confirmación por WhatsApp';
-      extraWhatsApp = '<div class="sub" style="margin-top:6px;">' + textoEstado + '</div>' +
-        '<a href="' + esc(whatsappUrlPendiente) + '" target="_blank" class="btn-primary" style="display:inline-block;text-decoration:none;margin-top:10px;box-sizing:border-box;">' + esc(textoBoton) + '</a>';
-    } else if (whatsappAvisoSinTelefono) {
-      extraWhatsApp = '<div class="sub" style="margin-top:6px;">' + esc(whatsappAvisoSinTelefono) + '</div>';
-    }
+    var extraAprobacion = construirExtraWhatsApp(
+      'Se abrió WhatsApp con tu mensaje de confirmación listo para enviar.',
+      'Envía la confirmación por WhatsApp a tu ejecutivo para continuar con la facturación.',
+      'Enviar confirmación por WhatsApp'
+    );
     return '<div class="approve-success">' +
       '<div class="title">✅ ¡Cotización aprobada!</div>' +
       '<div class="sub">Tu pedido fue confirmado correctamente.</div>' +
-      extraWhatsApp +
+      extraAprobacion +
+    '</div>';
+  }
+  if (rechazoExitoso && q.estado === 'rechazada') {
+    var extraRechazo = construirExtraWhatsApp(
+      'Se abrió WhatsApp con tu mensaje listo para enviar.',
+      'Comunícate con tu ejecutivo para revisar alternativas.',
+      'Enviar mensaje por WhatsApp'
+    );
+    return '<div class="approve-success">' +
+      '<div class="title">❌ Cotización rechazada</div>' +
+      '<div class="sub">Hemos registrado tu decisión correctamente.</div>' +
+      extraRechazo +
     '</div>';
   }
   if (q.estado !== 'enviada') return '';
+
+  if (mostrandoConfirmacionRechazo) {
+    return '<div class="approve-card">' +
+      '<div style="font-weight:600;color:var(--ink);margin-bottom:10px;">¿Confirmas que deseas rechazar esta cotización?</div>' +
+      '<div style="text-align:left;margin-bottom:12px;">' +
+        '<div style="font-size:11px;color:#71717a;margin-bottom:4px;">Motivo del rechazo (opcional)</div>' +
+        '<textarea id="txt-motivo-rechazo" maxlength="500" rows="3" placeholder="Cuéntanos brevemente el motivo para que tu ejecutivo pueda ayudarte." style="width:100%;box-sizing:border-box;border:1px solid var(--border);border-radius:10px;padding:8px;font-size:13px;font-family:inherit;resize:vertical;" oninput="rechazoMotivoTexto = this.value;">' + esc(rechazoMotivoTexto) + '</textarea>' +
+      '</div>' +
+      (rechazoError ? '<div class="approve-error">' + esc(rechazoError) + '</div>' : '') +
+      '<button type="button" class="btn-primary"' + (rechazando ? ' disabled' : '') + ' onclick="confirmarRechazo()">' +
+        (rechazando ? 'Enviando…' : 'Confirmar rechazo') +
+      '</button>' +
+      '<button type="button" class="btn-secondary"' + (rechazando ? ' disabled' : '') + ' onclick="cancelarRechazo()">Volver</button>' +
+    '</div>';
+  }
 
   if (!mostrandoConfirmacionAprobacion) {
     return '<div class="approve-card">' +
       '¿Ya revisaste tu cotización?' +
       '<button type="button" class="btn-primary" onclick="mostrarPanelAprobacion()">✅ Aprobar cotización</button>' +
+      '<button type="button" class="btn-secondary" onclick="mostrarPanelRechazo()">Rechazar cotización</button>' +
     '</div>';
   }
 
