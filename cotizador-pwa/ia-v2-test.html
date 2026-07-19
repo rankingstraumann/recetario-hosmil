@@ -1,0 +1,199 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Cotizador Comercial IA v2 — Laboratorio</title>
+<!-- FASE 2.2 -- Pagina experimental AISLADA. No forma parte del flujo
+     normal del Cotizador Comercial. Sin links entrantes desde index.html
+     ni cotizacion.html, accesible unicamente por URL directa. Esta pagina
+     es EXCLUSIVAMENTE DE LECTURA: no crea cotizaciones, no agrega nada al
+     carrito real, no simula precios, no envia nada. Solo muestra lo que
+     la Edge Function cotizador-ia-v2 interpreta y encuentra en el catalogo
+     real. -->
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<style>
+  :root { --red:#C8102E; --ink:#1a1a1a; --muted:#6b6b6b; --border:#e5e5e5; --bg-soft:#f7f7f7; }
+  * { box-sizing: border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Arial, sans-serif; margin: 0; background: #fff; color: var(--ink); }
+  .wrap { max-width: 720px; margin: 0 auto; padding: 24px 18px 60px; }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  .sub { font-size: 13px; color: var(--muted); margin: 0 0 4px; }
+  .banner { background: #fff3cd; border: 1px solid #fde68a; border-radius: 10px; padding: 10px 14px; font-size: 12.5px; margin: 14px 0 22px; line-height: 1.5; }
+  textarea { width: 100%; min-height: 90px; border: 1px solid var(--border); border-radius: 10px; padding: 12px; font-size: 15px; font-family: inherit; resize: vertical; }
+  button.btn-ia { margin-top: 10px; background: var(--red); color: #fff; border: none; border-radius: 10px; padding: 12px 20px; font-size: 15px; font-weight: 600; cursor: pointer; }
+  button.btn-ia:disabled { opacity: .5; cursor: default; }
+  .estado { margin: 14px 0; font-size: 13px; color: var(--muted); min-height: 18px; }
+  .item-card { border: 1px solid var(--border); border-radius: 10px; padding: 14px; margin-bottom: 12px; }
+  .item-req { font-size: 14px; font-weight: 600; margin-bottom: 6px; }
+  .item-meta { font-size: 12.5px; color: var(--muted); margin-bottom: 8px; }
+  .badge { display: inline-block; font-size: 11.5px; font-weight: 700; padding: 3px 9px; border-radius: 999px; margin-bottom: 8px; }
+  .badge-exact { background: #dcfce7; color: #15803d; }
+  .badge-proposed { background: #fef3c7; color: #92400e; }
+  .badge-ambiguous { background: #ffedd5; color: #c2410c; }
+  .badge-notfound { background: #fee2e2; color: #b91c1c; }
+  .cand { border-top: 1px solid var(--border); padding: 8px 0; font-size: 13px; }
+  .cand:first-of-type { border-top: none; padding-top: 0; }
+  .cand .cod { font-weight: 700; }
+  .cand .desc { color: var(--ink); }
+  .cand .marcafam { color: var(--muted); font-size: 12px; }
+  .clarif { background: var(--bg-soft); border-radius: 8px; padding: 10px 12px; font-size: 13px; margin-top: 10px; }
+  details { margin-top: 22px; }
+  summary { cursor: pointer; font-size: 13px; color: var(--muted); }
+  pre { background: #111; color: #d1d5db; padding: 14px; border-radius: 10px; font-size: 12px; overflow-x: auto; white-space: pre-wrap; word-break: break-word; }
+  .error-box { background: #fee2e2; border: 1px solid #fecaca; color: #991b1b; border-radius: 10px; padding: 12px 14px; font-size: 13.5px; margin-top: 14px; }
+  .login-needed { background: var(--bg-soft); border-radius: 10px; padding: 20px; text-align: center; font-size: 14px; margin-top: 30px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>Cotizador Comercial IA v2 — Laboratorio</h1>
+  <p class="sub">Entorno experimental. No crea ni modifica cotizaciones.</p>
+  <div class="banner">
+    ⚠️ Página interna de pruebas, sin acceso desde el Cotizador Comercial. Solo interpreta y busca en el catálogo — no agrega nada a ningún carrito, no genera cotizaciones, no calcula precios.
+  </div>
+
+  <div id="area-login" style="display:none;" class="login-needed">
+    Debes iniciar sesión en el Cotizador Comercial para probar la IA.
+  </div>
+
+  <div id="area-app" style="display:none;">
+    <textarea id="txt-input" placeholder="Describe lo que necesitas cotizar…" maxlength="800"></textarea>
+    <br>
+    <button class="btn-ia" id="btn-probar">Probar IA</button>
+    <div class="estado" id="estado"></div>
+
+    <div id="area-resultado"></div>
+
+    <details id="area-json" style="display:none;">
+      <summary>Ver respuesta técnica</summary>
+      <pre id="json-out"></pre>
+    </details>
+  </div>
+</div>
+
+<script>
+// Mismas constantes publicas ya usadas en cotizador-pwa/index.html (la
+// anon key de Supabase es publica por diseño, protegida por RLS/roles a
+// nivel de RPC, no por ocultamiento).
+const SUPABASE_URL = 'https://gzimllusbxjorbsbtsse.supabase.co';
+const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imd6aW1sbHVzYnhqb3Jic2J0c3NlIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE5NDQ4NDcsImV4cCI6MjA5NzUyMDg0N30.DFq-_PY10hyr2QmMUXk-v8VW2LKYz3bAW37VCutwmzY';
+const IA_FUNCTION_URL = SUPABASE_URL + '/functions/v1/cotizador-ia-v2';
+
+const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+const ETIQUETAS = {
+  exact_match: { label: 'Coincidencia exacta', cls: 'badge-exact' },
+  proposed_match: { label: 'Coincidencia propuesta', cls: 'badge-proposed' },
+  ambiguous: { label: 'Requiere elegir', cls: 'badge-ambiguous' },
+  not_found: { label: 'No encontrado', cls: 'badge-notfound' },
+};
+
+function esc(s) {
+  if (s === undefined || s === null) return '';
+  return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+}
+
+async function init() {
+  // Reutiliza la sesion ya autenticada del Cotizador Comercial -- NUNCA
+  // pide copiar/pegar el JWT, nunca lo muestra en pantalla.
+  const { data: { session } } = await sb.auth.getSession();
+  if (!session) {
+    document.getElementById('area-login').style.display = 'block';
+    return;
+  }
+  document.getElementById('area-app').style.display = 'block';
+
+  document.getElementById('btn-probar').addEventListener('click', async () => {
+    const texto = document.getElementById('txt-input').value.trim();
+    if (!texto) return;
+    await probarIA(texto, session.access_token);
+  });
+}
+
+async function probarIA(texto, accessToken) {
+  const btn = document.getElementById('btn-probar');
+  const estadoEl = document.getElementById('estado');
+  const resultadoEl = document.getElementById('area-resultado');
+  const jsonArea = document.getElementById('area-json');
+
+  btn.disabled = true;
+  resultadoEl.innerHTML = '';
+  jsonArea.style.display = 'none';
+  estadoEl.textContent = 'Analizando…';
+
+  try {
+    // El access_token se usa SOLO en este header, nunca se imprime, nunca
+    // se guarda, nunca se muestra en el DOM.
+    const resp = await fetch(IA_FUNCTION_URL, {
+      method: 'POST',
+      headers: {
+        'Authorization': 'Bearer ' + accessToken,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ texto }),
+    });
+
+    estadoEl.textContent = 'Buscando productos…';
+    const data = await resp.json();
+
+    if (!resp.ok || !data.ok) {
+      estadoEl.textContent = 'Error controlado';
+      resultadoEl.innerHTML =
+        '<div class="error-box">⚠️ ' + esc(data.error || ('HTTP ' + resp.status)) + '</div>';
+      mostrarJson(data);
+      return;
+    }
+
+    estadoEl.textContent = 'Resultado listo';
+    renderResultado(data);
+    mostrarJson(data);
+  } catch (e) {
+    estadoEl.textContent = 'Error controlado';
+    resultadoEl.innerHTML = '<div class="error-box">⚠️ No se pudo conectar con el servicio.</div>';
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+function renderResultado(data) {
+  const resultadoEl = document.getElementById('area-resultado');
+  let html = '';
+
+  (data.items || []).forEach((it) => {
+    const etiqueta = ETIQUETAS[it.status] || { label: it.status, cls: '' };
+    html += '<div class="item-card">' +
+      '<div class="item-req">' + esc(it.request_text) + '</div>' +
+      '<div class="item-meta">Cantidad: ' + (it.quantity === null ? '<em>no especificada</em>' : esc(it.quantity)) +
+        (it.explicit_code ? ' · Código detectado: <strong>' + esc(it.explicit_code) + '</strong>' : '') +
+      '</div>' +
+      '<span class="badge ' + etiqueta.cls + '">' + etiqueta.label + '</span>';
+
+    (it.candidates || []).forEach((c) => {
+      html += '<div class="cand">' +
+        '<div><span class="cod">' + esc(c.codigo) + '</span> — <span class="desc">' + esc(c.descripcion) + '</span></div>' +
+        '<div class="marcafam">' + esc(c.marca) + (c.familia ? ' · ' + esc(c.familia) : '') + '</div>' +
+      '</div>';
+    });
+
+    html += '</div>';
+  });
+
+  if ((data.clarifications || []).length > 0) {
+    html += '<div class="clarif">' +
+      data.clarifications.map(esc).join('<br>') +
+    '</div>';
+  }
+
+  resultadoEl.innerHTML = html || '<div class="item-meta">Sin ítems interpretados.</div>';
+}
+
+function mostrarJson(data) {
+  document.getElementById('json-out').textContent = JSON.stringify(data, null, 2);
+  document.getElementById('area-json').style.display = 'block';
+}
+
+init();
+</script>
+</body>
+</html>
