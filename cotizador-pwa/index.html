@@ -1338,15 +1338,11 @@ function construirMisCotizaciones() {
   var opcionesEstado = '<option value="">Todos los estados</option>' + ESTADOS_COMERCIALES.map(function (e) {
     return '<option value="' + e + '"' + (misCotState.filtroEstado === e ? ' selected' : '') + '>' + e + '</option>';
   }).join('');
-  var opcionesFact = '<option value="">Toda facturación</option>' + ESTADOS_FACTURACION.map(function (e) {
-    return '<option value="' + e + '"' + (misCotState.filtroFacturacion === e ? ' selected' : '') + '>' + e + '</option>';
-  }).join('');
 
   var filtrosHtml =
     '<div class="cc-mis-filtros">' +
       '<input id="mc-input-busqueda" type="text" placeholder="Folio, RUT o doctor..." value="' + esc(misCotState.filtroBusqueda) + '">' +
       '<select id="mc-select-estado">' + opcionesEstado + '</select>' +
-      '<select id="mc-select-facturacion">' + opcionesFact + '</select>' +
       '<button type="button" class="btn-add" style="width:auto;" onclick="cargarMisCotizaciones(true)">Buscar</button>' +
     '</div>';
 
