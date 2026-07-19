@@ -53,6 +53,24 @@
   .cc-hint { font-size:11px; color:#a1a1aa; margin-top:6px; }
   /* FASE D2 -- etiqueta de campo en el detalle interno */
   .field-label-cc { font-size:11px; text-transform:uppercase; letter-spacing:0.04em; color:#a1a1aa; margin-bottom:2px; }
+  /* FASE D2.1 -- rediseno compacto del detalle interno. Reutiliza los
+     mismos tokens de color y el mismo patron de tabla compacta
+     (colgroup + table-layout:fixed) ya validado en cotizacion.html. */
+  .detalle-cab { display:flex; justify-content:space-between; align-items:flex-start; flex-wrap:wrap; gap:8px; margin-bottom:12px; padding-bottom:12px; border-bottom:1px solid var(--border); }
+  .detalle-grid { display:grid; grid-template-columns: 1fr; gap:10px 16px; }
+  @media (min-width:640px) { .detalle-grid { grid-template-columns: repeat(3, 1fr); } }
+  .detalle-grid .campo-label { font-size:10px; text-transform:uppercase; letter-spacing:0.04em; color:#a1a1aa; margin-bottom:1px; }
+  .detalle-grid .campo-valor { font-size:13px; color:#27272a; font-weight:500; }
+  .detalle-tabla-head { display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; }
+  .detalle-tabla-wrap { overflow-x:auto; -webkit-overflow-scrolling:touch; }
+  .detalle-tabla { width:100%; border-collapse:collapse; table-layout:fixed; font-size:12px; }
+  .detalle-tabla th { text-align:left; font-size:10px; text-transform:uppercase; color:#a1a1aa; font-weight:600; padding:0 4px 6px 0; border-bottom:1px solid var(--border); }
+  .detalle-tabla td { padding:7px 4px 7px 0; border-bottom:1px solid #f4f4f5; vertical-align:top; word-break:break-word; }
+  .detalle-tabla .num { text-align:right; }
+  .detalle-tabla .cierre-tag { display:inline-block; font-size:9px; font-weight:700; background:#f4f4f5; color:#52525b; border-radius:6px; padding:1px 5px; margin-left:4px; white-space:nowrap; }
+  @media (max-width:480px) { .detalle-tabla { font-size:10.5px; } .detalle-tabla th { font-size:9px; } }
+  .btn-copiar-codigos { background:none; border:1px solid var(--border); color:var(--ink); font-size:11px; font-weight:600; padding:5px 10px; border-radius:8px; cursor:pointer; white-space:nowrap; }
+  .btn-copiar-codigos.copiado { background:#ecfdf5; border-color:#a7f3d0; color:#047857; }
   .cc-collapsible summary { cursor:pointer; font-size:12px; font-weight:600; color:var(--muted); padding:8px 0; list-style:none; }
   .cc-collapsible summary::-webkit-details-marker { display:none; }
   .cc-collapsible summary::before { content:'▸ '; }
@@ -149,7 +167,7 @@
 // -- solo llama las 5 RPC autorizadas: buscar_productos_comercial,
 // listar_modalidades_comerciales, simular_cotizacion_comercial,
 // crear_cotizacion_comercial, listar_cotizaciones_comerciales.
-const APP_VERSION = '0.8.0-2026-07-19';
+const APP_VERSION = '0.8.1-2026-07-19';
 console.log('Cotizador Comercial version:', APP_VERSION);
 
 const SUPABASE_URL = 'https://gzimllusbxjorbsbtsse.supabase.co';
@@ -208,24 +226,52 @@ function volverAMisCotizaciones() {
   renderApp();
 }
 
+// FASE D2.1 -- diseno compacto. Misma logica de datos que D2 (nada
+// recalculado, nada reordenado) -- unicamente cambia como se presenta.
 function construirFilaProductoDetalle(it) {
   var esCierre = it.tipo_linea === 'cierre';
   var pct = Math.round((it.porcentaje_aplicado_snapshot || 0) * 100);
-  return '<div class="prod-row" style="align-items:flex-start;">' +
-    '<div style="flex:1;">' +
-      '<div class="prod-code">' + esc(it.codigo) + (esCierre ? ' <span class="cc-estado-tag" style="background:#f4f4f5;color:#52525b;">cierre/tapa</span>' : '') + '</div>' +
-      '<div class="prod-desc">' + esc(it.descripcion) + '</div>' +
-      '<div class="cc-hint">Cant: ' + esc(it.cantidad) + ' · Lista: ' + fmt(it.precio_lista_snapshot) + ' · Descuento: ' + pct + '%</div>' +
-    '</div>' +
-    '<div style="text-align:right;">' +
-      '<div class="prod-price-new">' + fmt(it.precio_neto_unitario) + '</div>' +
-      '<div class="cc-hint">Subtotal: ' + fmt(it.subtotal_item) + '</div>' +
-    '</div>' +
-  '</div>';
+  return '<tr>' +
+    '<td>' + esc(it.codigo) + (esCierre ? '<span class="cierre-tag">cierre/tapa</span>' : '') + '</td>' +
+    '<td>' + esc(it.descripcion) + '</td>' +
+    '<td class="num">' + esc(it.cantidad) + '</td>' +
+    '<td class="num">' + fmt(it.precio_lista_snapshot) + '</td>' +
+    '<td class="num">' + pct + '%</td>' +
+    '<td class="num">' + fmt(it.precio_neto_unitario) + '</td>' +
+    '<td class="num" style="font-weight:600;">' + fmt(it.subtotal_item) + '</td>' +
+  '</tr>';
 }
 
-function campoDetalle(label, valor) {
-  return '<div><div class="field-label-cc">' + esc(label) + '</div><div style="font-size:14px;color:#27272a;">' + esc(valor || '—') + '</div></div>';
+function campoGrid(label, valor) {
+  return '<div><div class="campo-label">' + esc(label) + '</div><div class="campo-valor">' + esc(valor || '—') + '</div></div>';
+}
+
+// Copia SOLO los codigos, uno por linea, en el mismo orden ya entregado
+// por la RPC (detalleCotizacionData.items) -- nunca se reordena ni se
+// consulta el catalogo, solo se usa el campo "codigo" ya presente.
+function copiarCodigosDetalle() {
+  if (!detalleCotizacionData || !detalleCotizacionData.items) return;
+  var texto = detalleCotizacionData.items.map(function (it) { return it.codigo; }).join('\n');
+  var btn = document.getElementById('btn-copiar-codigos');
+  function marcarCopiado() {
+    if (!btn) return;
+    var original = 'Copiar códigos';
+    btn.textContent = '✓ Códigos copiados';
+    btn.classList.add('copiado');
+    setTimeout(function () {
+      btn.textContent = original;
+      btn.classList.remove('copiado');
+    }, 1800);
+  }
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(texto).then(marcarCopiado).catch(function () {});
+  } else {
+    var ta = document.createElement('textarea');
+    ta.value = texto; ta.style.position = 'fixed'; ta.style.opacity = '0';
+    document.body.appendChild(ta); ta.select();
+    try { document.execCommand('copy'); marcarCopiado(); } catch (e) {}
+    document.body.removeChild(ta);
+  }
 }
 
 function construirDetalleCotizacion() {
@@ -248,28 +294,37 @@ function construirDetalleCotizacion() {
   return '<div class="cc-mis-wrap">' +
     '<button type="button" class="btn-outline" style="margin-bottom:14px;" onclick="volverAMisCotizaciones()">← Volver a Mis cotizaciones</button>' +
     '<div class="card">' +
-      '<div style="display:flex;justify-content:space-between;align-items:flex-start;flex-wrap:wrap;gap:10px;margin-bottom:10px;">' +
-        '<div><h2 style="margin:0;">' + esc(q.folio) + '</h2></div>' +
+      '<div class="detalle-cab">' +
+        '<h2 style="margin:0;">' + esc(q.folio) + '</h2>' +
         '<div style="text-align:right;">' +
           '<span class="cc-estado-tag ' + claseEstado + '">' + esc(etiquetaEstado) + '</span> ' +
           '<span class="cc-estado-tag" style="background:#f4f4f5;color:#52525b;">' + esc(etiquetaFacturacion) + '</span>' +
         '</div>' +
       '</div>' +
-      '<div class="form-grid">' +
-        campoDetalle('Doctor / Cliente', q.doctor_nombre) +
-        campoDetalle('RUT', q.rut) +
-        campoDetalle('Razón social', q.razon_social) +
-        campoDetalle('Modalidad comercial', q.modalidad_codigo) +
-        campoDetalle('Vigencia', q.vigencia_hasta ? new Date(q.vigencia_hasta + 'T00:00:00').toLocaleDateString('es-CL') : null) +
-        campoDetalle('Ejecutivo', q.ejecutivo_nombre) +
-        campoDetalle('Creada', q.creado_en ? new Date(q.creado_en).toLocaleString('es-CL') : null) +
-        campoDetalle('Enviada', q.enviado_en ? new Date(q.enviado_en).toLocaleString('es-CL') : null) +
-        campoDetalle('Aprobada', q.aceptado_en ? new Date(q.aceptado_en).toLocaleString('es-CL') : null) +
+      '<div class="detalle-grid">' +
+        campoGrid('Doctor / Cliente', q.doctor_nombre) +
+        campoGrid('RUT', q.rut) +
+        campoGrid('Razón social', q.razon_social) +
+        campoGrid('Modalidad comercial', q.modalidad_codigo) +
+        campoGrid('Vigencia', q.vigencia_hasta ? new Date(q.vigencia_hasta + 'T00:00:00').toLocaleDateString('es-CL') : null) +
+        campoGrid('Ejecutivo', q.ejecutivo_nombre) +
+        campoGrid('Creada', q.creado_en ? new Date(q.creado_en).toLocaleString('es-CL') : null) +
+        campoGrid('Enviada', q.enviado_en ? new Date(q.enviado_en).toLocaleString('es-CL') : null) +
+        campoGrid('Aprobada', q.aceptado_en ? new Date(q.aceptado_en).toLocaleString('es-CL') : null) +
       '</div>' +
     '</div>' +
     '<div class="card">' +
-      '<h2 style="margin-top:0;">Productos</h2>' +
-      items.map(construirFilaProductoDetalle).join('') +
+      '<div class="detalle-tabla-head">' +
+        '<h2 style="margin:0;">Productos</h2>' +
+        '<button type="button" id="btn-copiar-codigos" class="btn-copiar-codigos" onclick="copiarCodigosDetalle()">Copiar códigos</button>' +
+      '</div>' +
+      '<div class="detalle-tabla-wrap">' +
+        '<table class="detalle-tabla">' +
+          '<colgroup><col style="width:14%;"><col style="width:27%;"><col style="width:7%;"><col style="width:13%;"><col style="width:9%;"><col style="width:14%;"><col style="width:16%;"></colgroup>' +
+          '<thead><tr><th>Código</th><th>Descripción</th><th class="num">Cant.</th><th class="num">Lista</th><th class="num">Desc.</th><th class="num">Neto unit.</th><th class="num">Subtotal</th></tr></thead>' +
+          '<tbody>' + items.map(construirFilaProductoDetalle).join('') + '</tbody>' +
+        '</table>' +
+      '</div>' +
     '</div>' +
     '<div class="card">' +
       '<div class="form-grid">' +
