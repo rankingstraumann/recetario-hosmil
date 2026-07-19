@@ -61,8 +61,27 @@
   @media (min-width:640px) { .detalle-grid { grid-template-columns: repeat(3, 1fr); } }
   .detalle-grid .campo-label { font-size:10px; text-transform:uppercase; letter-spacing:0.04em; color:#a1a1aa; margin-bottom:1px; }
   .detalle-grid .campo-valor { font-size:13px; color:#27272a; font-weight:500; }
-  .detalle-tabla-head { display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; }
-  .detalle-tabla-wrap { overflow-x:auto; -webkit-overflow-scrolling:touch; }
+  .detalle-tabla-head { display:flex; justify-content:space-between; align-items:center; margin-bottom:10px; gap:8px; }
+  /* FASE D2.2 -- toggle responsive puro por CSS: la tabla de 7 columnas
+     solo se muestra desde 640px; por debajo se muestra la lista compacta
+     movil. Ambas se generan a partir del MISMO array items, sin volver a
+     calcular ningun valor -- solo cambia el marcado/presentacion. */
+  .detalle-tabla-wrap { display:none; overflow-x:auto; -webkit-overflow-scrolling:touch; }
+  .detalle-mobile-lista { display:block; }
+  @media (min-width:640px) {
+    .detalle-tabla-wrap { display:block; }
+    .detalle-mobile-lista { display:none; }
+  }
+  .detalle-mobile-item { padding:10px 0; border-bottom:1px solid #f4f4f5; }
+  .detalle-mobile-item:last-child { border-bottom:none; }
+  .detalle-mobile-cab { display:flex; align-items:center; gap:6px; flex-wrap:nowrap; }
+  .detalle-mobile-codigo { font-family:ui-monospace,monospace; font-size:13px; font-weight:700; color:var(--ink); white-space:nowrap; }
+  .detalle-mobile-cierre { flex-shrink:0; font-size:9px; font-weight:700; background:#f4f4f5; color:#52525b; border-radius:6px; padding:2px 6px; white-space:nowrap; }
+  .detalle-mobile-desc { font-size:13px; color:#27272a; margin-top:3px; line-height:1.4; }
+  .detalle-mobile-meta { font-size:11.5px; color:#71717a; margin-top:5px; }
+  .detalle-mobile-totales { font-size:13px; color:var(--ink); margin-top:3px; }
+  .detalle-mobile-totales .neto-lbl { font-weight:600; }
+  .detalle-mobile-totales .subtotal-lbl { font-weight:700; color:var(--red); }
   .detalle-tabla { width:100%; border-collapse:collapse; table-layout:fixed; font-size:12px; }
   .detalle-tabla th { text-align:left; font-size:10px; text-transform:uppercase; color:#a1a1aa; font-weight:600; padding:0 4px 6px 0; border-bottom:1px solid var(--border); }
   .detalle-tabla td { padding:7px 4px 7px 0; border-bottom:1px solid #f4f4f5; vertical-align:top; word-break:break-word; }
@@ -167,7 +186,7 @@
 // -- solo llama las 5 RPC autorizadas: buscar_productos_comercial,
 // listar_modalidades_comerciales, simular_cotizacion_comercial,
 // crear_cotizacion_comercial, listar_cotizaciones_comerciales.
-const APP_VERSION = '0.8.1-2026-07-19';
+const APP_VERSION = '0.8.2-2026-07-19';
 console.log('Cotizador Comercial version:', APP_VERSION);
 
 const SUPABASE_URL = 'https://gzimllusbxjorbsbtsse.supabase.co';
@@ -240,6 +259,23 @@ function construirFilaProductoDetalle(it) {
     '<td class="num">' + fmt(it.precio_neto_unitario) + '</td>' +
     '<td class="num" style="font-weight:600;">' + fmt(it.subtotal_item) + '</td>' +
   '</tr>';
+}
+
+// FASE D2.2 -- lista compacta exclusiva para movil (<640px). Lee
+// exactamente los mismos campos del mismo objeto "it" que la version de
+// escritorio -- ningun calculo nuevo, ningun reordenamiento propio.
+function construirFilaProductoDetalleMobile(it) {
+  var esCierre = it.tipo_linea === 'cierre';
+  var pct = Math.round((it.porcentaje_aplicado_snapshot || 0) * 100);
+  return '<div class="detalle-mobile-item">' +
+    '<div class="detalle-mobile-cab">' +
+      '<span class="detalle-mobile-codigo">' + esc(it.codigo) + '</span>' +
+      (esCierre ? '<span class="detalle-mobile-cierre">cierre/tapa</span>' : '') +
+    '</div>' +
+    '<div class="detalle-mobile-desc">' + esc(it.descripcion) + '</div>' +
+    '<div class="detalle-mobile-meta">Cant. ' + esc(it.cantidad) + ' · Lista ' + fmt(it.precio_lista_snapshot) + ' · Desc. ' + pct + '%</div>' +
+    '<div class="detalle-mobile-totales"><span class="neto-lbl">Neto ' + fmt(it.precio_neto_unitario) + '</span> · <span class="subtotal-lbl">Subtotal ' + fmt(it.subtotal_item) + '</span></div>' +
+  '</div>';
 }
 
 function campoGrid(label, valor) {
@@ -325,6 +361,7 @@ function construirDetalleCotizacion() {
           '<tbody>' + items.map(construirFilaProductoDetalle).join('') + '</tbody>' +
         '</table>' +
       '</div>' +
+      '<div class="detalle-mobile-lista">' + items.map(construirFilaProductoDetalleMobile).join('') + '</div>' +
     '</div>' +
     '<div class="card">' +
       '<div class="form-grid">' +
