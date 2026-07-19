@@ -56,6 +56,7 @@
   <div id="area-login" style="display:none;" class="login-needed">
     Debes iniciar sesión en el Cotizador Comercial para probar la IA.
   </div>
+  <div id="area-diag" class="banner" style="display:none;font-family:monospace;font-size:12px;"></div>
 
   <div id="area-app" style="display:none;">
     <textarea id="txt-input" placeholder="Describe lo que necesitas cotizar…" maxlength="800"></textarea>
@@ -94,10 +95,71 @@ function esc(s) {
   return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
+async function mostrarDiagnostico(session) {
+  // FASE 2.3.3 -- diagnostico temporal y seguro. NUNCA muestra JWT,
+  // access_token, refresh_token ni contenido completo de localStorage.
+  const diagEl = document.getElementById('area-diag');
+  const projectRef = 'gzimllusbxjorbsbtsse';
+  const claveEsperada = 'sb-' + projectRef + '-auth-token';
+
+  const sdkCargado = typeof window.supabase !== 'undefined' && typeof window.supabase.createClient === 'function';
+
+  let claveExiste = false;
+  try {
+    claveExiste = window.localStorage.getItem(claveEsperada) !== null;
+  } catch (e) {
+    claveExiste = false; // localStorage inaccesible (raro, pero posible)
+  }
+  let totalClaves = 0;
+  let clavesSbEncontradas = [];
+  try {
+    totalClaves = window.localStorage.length;
+    for (let i = 0; i < totalClaves; i++) {
+      const k = window.localStorage.key(i);
+      if (k && k.indexOf('sb-') === 0) clavesSbEncontradas.push(k);
+    }
+  } catch (e) {}
+
+  const esStandalone = (window.navigator.standalone === true) ||
+    (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches);
+
+  // getUser() por separado -- valida contra el servidor, distinto de
+  // getSession() que solo lee el storage local. Si difieren, es una pista
+  // valiosa (ej: hay algo en storage pero el servidor no lo reconoce).
+  let userEncontrado = false;
+  let userInfo = '';
+  try {
+    const { data: userData, error: userErr } = await sb.auth.getUser();
+    userEncontrado = !userErr && !!userData?.user;
+    if (userEncontrado) userInfo = userData.user.email || userData.user.id.slice(0, 8) + '…';
+  } catch (e) {
+    userEncontrado = false;
+  }
+
+  const lineas = [
+    'DIAGNÓSTICO TEMPORAL (Fase 2.3.3) — sin datos sensibles',
+    'origin: ' + window.location.origin,
+    'pathname: ' + window.location.pathname,
+    'SDK Supabase cargado: ' + (sdkCargado ? 'SÍ' : 'NO'),
+    'modo standalone (PWA instalada): ' + (esStandalone ? 'SÍ' : 'NO'),
+    'total de claves en localStorage: ' + totalClaves,
+    'claves que empiezan con "sb-" encontradas: ' + (clavesSbEncontradas.length ? clavesSbEncontradas.join(', ') : 'ninguna'),
+    'nombre de clave esperada: ' + claveEsperada,
+    'clave esperada presente: ' + (claveExiste ? 'SÍ' : 'NO'),
+    'getSession() encontró sesión: ' + (session ? 'SÍ' : 'NO'),
+    'getUser() encontró usuario: ' + (userEncontrado ? 'SÍ' : 'NO'),
+    'usuario: ' + (userEncontrado ? userInfo : 'N/A'),
+  ];
+  diagEl.textContent = lineas.join('\n');
+  diagEl.style.display = 'block';
+  diagEl.style.whiteSpace = 'pre-wrap';
+}
+
 async function init() {
   // Reutiliza la sesion ya autenticada del Cotizador Comercial -- NUNCA
   // pide copiar/pegar el JWT, nunca lo muestra en pantalla.
   const { data: { session } } = await sb.auth.getSession();
+  await mostrarDiagnostico(session);
   if (!session) {
     document.getElementById('area-login').style.display = 'block';
     return;
