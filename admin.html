@@ -41,7 +41,7 @@
   tbody tr:hover { background:#fafafa; cursor:pointer; }
   .mono { font-family:ui-monospace,monospace; font-size:12px; color:#52525b; }
 
-  /* Dashboard Piloto */
+  /* Dashboard Recetario */
   .view-tabs { display:flex; gap:4px; margin-bottom:20px; border-bottom:2px solid var(--border); padding-bottom:0; }
   .view-tab { padding:9px 18px; font-size:13px; font-weight:600; cursor:pointer; border:none; background:none; color:var(--muted); border-bottom:3px solid transparent; margin-bottom:-2px; border-radius:0; transition:color 0.15s; }
   .view-tab:hover { color:var(--ink); }
@@ -218,8 +218,17 @@ function comparaPrioridadUrgencia(a, b) {
   }
   return 0; // el resto conserva el orden ya existente (created_at desc)
 }
-let vistaActiva = 'cotizaciones'; // 'cotizaciones' | 'dashboard' | 'matriz' | 'cotizadorComercial'
+let vistaActiva = 'cotizaciones'; // 'cotizaciones' | 'dashboard' | 'matriz' | 'cotizadorComercial' | 'dashboardCotizador'
 let dashFiltro = 'todo'; // 'hoy' | '7d' | '30d' | 'todo'
+// FASE ADMIN-D1 -- Dashboard Cotizador (productividad por ejecutivo del
+// Cotizador Comercial). Backend: dashboard_cotizador_comercial(p_periodo),
+// RPC nueva de solo lectura. Por defecto "mes_actual" para que la primera
+// lectura al entrar sea la productividad del mes en curso.
+let dashCotPeriodo = 'mes_actual'; // 'mes_actual' | '30d' | 'todo'
+let dashCotDatos = [];
+let dashCotCargando = false;
+let dashCotError = '';
+let dashCotCargado = false;
 function esObservador() { return !!(miPerfil && miPerfil.es_observador); }
 
 // FASE 6.1A -- roles comerciales (leidos de admin_perfiles, ya existentes
@@ -231,6 +240,15 @@ function puedeVerCotizadorComercial() {
   return esSuperAdmin() || esVendedorComercial() || esCoordinadorComercial() || esObservador();
 }
 
+// FASE ADMIN-D1 -- Super Admin, Observador y Coordinador (su equipo).
+// Explicitamente SIN Vendedor (es un dashboard comparativo entre
+// ejecutivos, no una herramienta individual) y SIN Customer Service (su
+// alcance de datos es parcial -- solo cotizaciones aceptadas -- y
+// mostrarle metricas de productividad completa seria enganoso).
+function puedeVerDashboardCotizador() {
+  return esSuperAdmin() || esObservador() || esCoordinadorComercial();
+}
+
 // FASE 6.1A -- helper compartido para la barra de pestanas principales.
 // Reemplaza el HTML duplicado que antes vivia repetido en 3 funciones
 // distintas (renderDashboard, renderDashboardPiloto,
@@ -240,9 +258,9 @@ function construirTabsPrincipales(activo) {
   var tabs = [
     { id: 'cotizaciones', icono: '📋', label: 'Cotizaciones', onclick: "vistaActiva='cotizaciones';renderDashboard()" }
   ];
-  if (esSuperAdmin()) tabs.push({ id: 'dashboard', icono: '📊', label: 'Dashboard Piloto', onclick: "vistaActiva='dashboard';renderDashboardPiloto()" });
+  if (esSuperAdmin()) tabs.push({ id: 'dashboard', icono: '📊', label: 'Dashboard Recetario', onclick: "vistaActiva='dashboard';renderDashboardPiloto()" });
   tabs.push({ id: 'matriz', icono: '🏛️', label: 'Matriz Institucional', onclick: "vistaActiva='matriz';cargarMatrizResumen()" });
-  if (puedeVerCotizadorComercial()) tabs.push({ id: 'cotizadorComercial', icono: '🧾', label: 'Cotizador Comercial', onclick: "vistaActiva='cotizadorComercial';renderCotizadorComercial()" });
+  if (puedeVerDashboardCotizador()) tabs.push({ id: 'dashboardCotizador', icono: '📈', label: 'Dashboard Cotizador', onclick: "vistaActiva='dashboardCotizador';renderDashboardCotizador()" });
 
   var html = '<div class="view-tabs">';
   tabs.forEach(function (t) {
@@ -508,7 +526,7 @@ async function doLogout() {
 
 // FASE 4.3 -- Antes: cargarCotizaciones() siempre llamaba renderDashboard(),
 // sin importar la vista activa. Si Realtime disparaba una actualizacion
-// mientras el usuario estaba en Dashboard Piloto o en la Matriz
+// mientras el usuario estaba en Dashboard Recetario o en la Matriz
 // Institucional, la UI lo devolvia a la vista de Cotizaciones sin que el
 // usuario lo pidiera. Esta funcion centraliza que renderizar segun
 // vistaActiva, respetando en que vista esta el usuario. No cambia ningun
@@ -1214,7 +1232,7 @@ function renderDashboardPiloto() {
     '<main>' +
     tabsHtml +
     '<div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:4px;">' +
-    '<h2 style="margin:0;font-size:18px;">Dashboard Piloto</h2>' +
+    '<h2 style="margin:0;font-size:18px;">Dashboard Recetario</h2>' +
     '<span style="font-size:11px;color:var(--muted);">Solo visible para super admin</span></div>' +
     '<p style="margin:0 0 18px;font-size:12px;color:var(--muted);">Métricas basadas en cotizaciones cargadas. Zona horaria: Chile (UTC-3 aprox.)</p>' +
     filtrosHtml +
@@ -3916,6 +3934,111 @@ function construirVistaEquipoComercial() {
     '<div class="cc-empty">👥<br><br>Aún no hay cotizaciones comerciales disponibles.<br>' +
     '<span style="font-size:11px;">Esta vista mostrará las cotizaciones del equipo de ejecutivos asignados cuando el listado esté disponible.</span></div>' +
   '</div>';
+}
+
+// ============================================================
+// FASE ADMIN-D1 -- DASHBOARD COTIZADOR (productividad por ejecutivo)
+// ============================================================
+async function cargarDashboardCotizador() {
+  dashCotCargando = true;
+  dashCotError = '';
+  renderDashboardCotizador();
+  try {
+    const { data, error } = await sb.rpc('dashboard_cotizador_comercial', { p_periodo: dashCotPeriodo === 'todo' ? null : dashCotPeriodo });
+    if (error) throw error;
+    dashCotDatos = data || [];
+    dashCotCargado = true;
+  } catch (e) {
+    dashCotDatos = [];
+    dashCotError = 'No se pudo cargar el Dashboard Cotizador. Intenta nuevamente.';
+  }
+  dashCotCargando = false;
+  renderDashboardCotizador();
+}
+
+function calcularConversion(aceptadas, enviadas) {
+  if (!enviadas || enviadas === 0) return '—';
+  var pct = (aceptadas / enviadas) * 100;
+  return (Number.isInteger(pct) ? pct : pct.toFixed(1)) + '%';
+}
+
+function renderDashboardCotizador() {
+  document.getElementById('login-view').style.display = 'none';
+  const v = document.getElementById('dashboard-view');
+  v.style.display = 'block';
+
+  if (!dashCotCargado && !dashCotCargando) { cargarDashboardCotizador(); return; }
+
+  var tabsHtml = construirTabsPrincipales('dashboardCotizador');
+
+  var filtrosHtml =
+    '<div class="dash-filters">' +
+    '<span style="font-size:12px;font-weight:600;color:var(--muted);margin-right:4px;">Período:</span>' +
+    [['mes_actual','Mes actual'],['30d','Últimos 30 días'],['todo','Todo']].map(function (p) {
+      return '<button class="dash-filter-btn' + (dashCotPeriodo === p[0] ? ' active' : '') +
+        '" onclick="dashCotPeriodo=\'' + p[0] + '\';dashCotCargado=false;cargarDashboardCotizador();">' + p[1] + '</button>';
+    }).join('') +
+    '</div>';
+
+  // KPI generales -- suma simple de las columnas ya devueltas por fila
+  var totKpi = { total: 0, aceptadas: 0, rechazadas: 0, ingresadas: 0 };
+  dashCotDatos.forEach(function (f) {
+    totKpi.total += Number(f.total_cotizaciones) || 0;
+    totKpi.aceptadas += Number(f.aceptadas) || 0;
+    totKpi.rechazadas += Number(f.rechazadas) || 0;
+    totKpi.ingresadas += Number(f.ingresadas) || 0;
+  });
+  var cardsHtml =
+    '<div class="dash-grid">' +
+    '<div class="dash-card"><div class="dc-label">Total cotizaciones</div><div class="dc-value">' + totKpi.total + '</div></div>' +
+    '<div class="dash-card"><div class="dc-label">Aceptadas</div><div class="dc-value">' + totKpi.aceptadas + '</div></div>' +
+    '<div class="dash-card"><div class="dc-label">Rechazadas</div><div class="dc-value">' + totKpi.rechazadas + '</div></div>' +
+    '<div class="dash-card"><div class="dc-label">Ingresadas</div><div class="dc-value">' + totKpi.ingresadas + '</div></div>' +
+    '</div>';
+
+  // Tabla por ejecutivo -- el ORDER BY total DESC ya viene resuelto desde
+  // la RPC, el frontend nunca reordena.
+  var filasHtml = dashCotDatos.map(function (f) {
+    var conv = calcularConversion(Number(f.aceptadas), Number(f.enviadas));
+    return '<tr>' +
+      '<td>' + esc(f.ejecutivo_nombre) + '</td>' +
+      '<td class="num">' + f.total_cotizaciones + '</td>' +
+      '<td class="num">' + f.enviadas + '</td>' +
+      '<td class="num">' + f.pendientes_respuesta + '</td>' +
+      '<td class="num">' + f.aceptadas + '</td>' +
+      '<td class="num">' + f.rechazadas + '</td>' +
+      '<td class="num">' + f.ingresadas + '</td>' +
+      '<td class="num" style="font-weight:700;">' + conv + '</td>' +
+    '</tr>';
+  }).join('');
+  var tablaHtml =
+    '<div class="dash-section"><h3>Por ejecutivo</h3>' +
+    '<table class="dash-table"><thead><tr>' +
+      '<th>Ejecutivo</th>' +
+      '<th class="num">Total</th>' +
+      '<th class="num">Enviadas</th>' +
+      '<th class="num">Pendientes de respuesta</th>' +
+      '<th class="num">Aceptadas</th>' +
+      '<th class="num">Rechazadas</th>' +
+      '<th class="num">Ingresadas</th>' +
+      '<th class="num">Conversión</th>' +
+    '</tr></thead>' +
+    '<tbody>' + (filasHtml || '<tr><td colspan="8" style="color:var(--muted);padding:16px 10px">Sin datos</td></tr>') + '</tbody></table></div>';
+
+  v.innerHTML =
+    '<header class="topbar"><div><div class="brand-name">STRAUMANN</div><div class="brand-sub">GROUP CHILE · NEODENT</div></div>' +
+    '<div style="display:flex;align-items:center;gap:12px;"><span style="font-size:10px;color:#a1a1aa;">Herramienta interna desarrollada por Daniel Jordán para Straumann Group Chile. · Admin v' + ADMIN_VERSION + '</span><button class="btn-logout" id="btn-logout">Cerrar sesión</button></div></header>' +
+    '<main>' +
+    tabsHtml +
+    '<h2 style="margin:0 0 4px;font-size:18px;">Dashboard Cotizador</h2>' +
+    '<p style="margin:0 0 18px;font-size:12px;color:var(--muted);">Productividad por ejecutivo del Cotizador Comercial.</p>' +
+    filtrosHtml +
+    (dashCotCargando ? '<div style="padding:24px;text-align:center;color:var(--muted);">Cargando…</div>' :
+      (dashCotError ? '<div style="background:#fff3cd;border:1px solid #fde68a;border-radius:10px;padding:14px 18px;margin:10px 0;text-align:center;font-size:13px;">⚠️ ' + esc(dashCotError) + '</div>' :
+        cardsHtml + tablaHtml)) +
+    '</main>';
+
+  document.getElementById('btn-logout').addEventListener('click', doLogout);
 }
 
 function renderCotizadorComercial() {
