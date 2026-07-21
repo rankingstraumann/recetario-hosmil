@@ -465,6 +465,51 @@ async function doLogin() {
   }
 }
 
+// FASE -- Password Recovery oficial Supabase. Se activa exclusivamente
+// cuando onAuthStateChange recibe event === 'PASSWORD_RECOVERY' (sesion
+// de recuperacion ya establecida por Supabase Auth tras el clic en el
+// enlace del correo). Reutiliza el mismo patron visual de renderLogin().
+function renderNuevaContrasena(errMsg) {
+  document.getElementById('app-view').style.display = 'none';
+  const v = document.getElementById('login-view');
+  v.style.display = 'block';
+  v.innerHTML =
+    '<header class="topbar"><div><div class="brand-name">STRAUMANN</div><div class="brand-sub">COTIZADOR COMERCIAL</div></div></header>' +
+    '<div class="login-wrap">' +
+      '<h1>Nueva contraseña</h1>' +
+      '<p>Ingresa tu nueva contraseña para continuar</p>' +
+      (errMsg ? '<div class="login-err">⚠️ ' + esc(errMsg) + '</div>' : '') +
+      '<input type="password" id="np-pass1" placeholder="Nueva contraseña" autocomplete="new-password">' +
+      '<input type="password" id="np-pass2" placeholder="Confirmar contraseña" autocomplete="new-password">' +
+      '<button class="btn-primary" id="np-btn">Guardar contraseña</button>' +
+    '</div>';
+  document.getElementById('np-btn').addEventListener('click', doGuardarNuevaContrasena);
+  document.getElementById('np-pass2').addEventListener('keydown', function (e) { if (e.key === 'Enter') doGuardarNuevaContrasena(); });
+}
+
+async function doGuardarNuevaContrasena() {
+  const p1 = document.getElementById('np-pass1').value;
+  const p2 = document.getElementById('np-pass2').value;
+  const btn = document.getElementById('np-btn');
+
+  if (!p1) { renderNuevaContrasena('Ingresa una contraseña.'); return; }
+  if (p1.length < 6) { renderNuevaContrasena('La contraseña debe tener al menos 6 caracteres.'); return; }
+  if (p1 !== p2) { renderNuevaContrasena('Las contraseñas no coinciden.'); return; }
+
+  btn.disabled = true; btn.textContent = 'Guardando…';
+  try {
+    const { error } = await sb.auth.updateUser({ password: p1 });
+    if (error) {
+      renderNuevaContrasena('No se pudo guardar la contraseña. Intenta nuevamente.');
+      return;
+    }
+  } catch (e) {
+    renderNuevaContrasena('No se pudo guardar la contraseña. Intenta nuevamente.');
+    return;
+  }
+  await cargarMiPerfilYEntrar();
+}
+
 // ============================================================
 // PERFIL Y ACCESO (fail-closed)
 // ============================================================
@@ -1481,6 +1526,10 @@ if ('serviceWorker' in navigator) {
 // ============================================================
 sb.auth.onAuthStateChange(function (event, session) {
   if (session) {
+    if (event === 'PASSWORD_RECOVERY') {
+      renderNuevaContrasena();
+      return;
+    }
     cargarMiPerfilYEntrar();
   } else {
     miPerfil = null;
