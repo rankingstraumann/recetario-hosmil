@@ -477,11 +477,11 @@ function render(q) {
         '<div class="total-line"><span>Neto antes de descuento</span><span>' + fmt(q.neto_antes_descuento) + '</span></div>' +
         '<div class="total-line"><span>Descuento total</span><span>' + (q.descuento_total > 0 ? '-' + fmt(q.descuento_total) : fmt(0)) + '</span></div>' +
         '<div class="total-line"><span>Neto</span><span>' + fmt(q.subtotal) + '</span></div>' +
+        (q.despacho_costo_neto > 0 ? '<div class="total-line"><span>Despacho' + (q.despacho_comuna ? ' — ' + esc(q.despacho_comuna) : '') + '</span><span>' + fmt(q.despacho_costo_neto) + '</span></div>' : '') +
         '<div class="total-line"><span>IVA (19%)</span><span>' + fmt(q.iva) + '</span></div>' +
         '<div class="total-line grand"><span class="label">Total</span><span class="value">' + fmt(q.total) + '</span></div>' +
       '</div></div>' +
       '<p class="disclaimer">Cotización comercial referencial de Straumann Group Chile / Manohay Chile SpA. Precios y condiciones sujetos a validación comercial. La disponibilidad de productos está sujeta a stock al momento de confirmar el pedido.</p>' +
-      '<p class="disclaimer" style="margin-top:8px;">Importante: Los valores indicados en esta cotización no incluyen costos de despacho. El costo de envío puede variar según la zona de entrega.</p>' +
     '</div>' +
     construirBloqueAprobacion(q);
 }

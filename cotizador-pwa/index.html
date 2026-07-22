@@ -392,6 +392,7 @@ function construirDetalleCotizacion() {
         '<div style="display:flex;justify-content:space-between;"><span>Neto antes de descuento</span><span>' + fmt(q.neto_antes_descuento) + '</span></div>' +
         '<div style="display:flex;justify-content:space-between;"><span>Descuento total</span><span>' + (q.descuento_total > 0 ? '-' + fmt(q.descuento_total) : fmt(0)) + '</span></div>' +
         '<div style="display:flex;justify-content:space-between;"><span>Neto</span><span>' + fmt(q.subtotal) + '</span></div>' +
+        (q.despacho_costo_neto > 0 ? '<div style="display:flex;justify-content:space-between;"><span>Despacho' + (q.despacho_comuna ? ' — ' + esc(q.despacho_comuna) : '') + '</span><span>' + fmt(q.despacho_costo_neto) + '</span></div>' : '') +
         '<div style="display:flex;justify-content:space-between;"><span>IVA</span><span>' + fmt(q.iva) + '</span></div>' +
         '<div style="display:flex;justify-content:space-between;font-weight:800;font-size:16px;color:var(--red);border-top:2px solid var(--ink);padding-top:10px;margin-top:4px;"><span>Total</span><span>' + fmt(q.total) + '</span></div>' +
       '</div>' +
@@ -556,6 +557,24 @@ async function cargarMiPerfilYEntrar() {
 function cotComClienteVacio() {
   return { rutCuerpo: '', rutDv: '', tipoCliente: 'prospecto', doctorNombre: '', razonSocial: '', direccion: '', correo: '', telefono: '', codigoSap: '', observaciones: '' };
 }
+// ETAPA 3 -- Despacho por comuna. "tipo" es 'sin_costo' o 'con_costo'.
+// comunaId es la UNICA fuente de verdad enviada al backend cuando hay
+// costo -- comunaTexto/comunaCostoNeto/comunaRequiereManual son solo para
+// mostrar (el backend nunca confia en el costo que el frontend muestra,
+// siempre lo vuelve a resolver el mismo desde despachos_comunas).
+function cotComDespachoVacio() {
+  return {
+    tipo: 'sin_costo',
+    comunaId: null,
+    comunaTexto: '',
+    comunaCostoNeto: 0,
+    comunaRequiereManual: false,
+    busqueda: '',
+    resultados: [],
+    buscando: false,
+    buscandoError: ''
+  };
+}
 // FASE D1.4 -- devuelve el RUT canonico (cuerpo-DV) solo cuando ambas
 // partes existen. Este es el UNICO valor que se envia al backend -- las
 // 2 partes nunca se mandan por separado.
@@ -595,6 +614,7 @@ let cotComState = {
   // frontend siempre lo envia explicito para no depender de DEFAULT).
   biomaterialesDescuentoPct: 0,
   biomaterialesAvisoCambio: '', // mensaje breve cuando el 25% deja de ser valido y se ajusta solo
+  despacho: cotComDespachoVacio(),
   simulando: false,
   simulacion: null,
   simulacionError: '',
@@ -613,6 +633,7 @@ function reiniciarCotizadorComercial() {
     busquedaCatalogo: '', productosCatalogo: [], catalogoCargandoProductos: false, catalogoErrorProductos: '',
     catalogoOffset: 0, catalogoHayMas: true,
     carrito: [], biomaterialesDescuentoPct: 0, biomaterialesAvisoCambio: '',
+    despacho: cotComDespachoVacio(),
     simulando: false, simulacion: null, simulacionError: '', firmaSimulada: null,
     creada: null
   };
@@ -660,8 +681,13 @@ function cotComClienteValido() {
 
 function firmaCotizacion() {
   var c = cotComState.cliente;
+  var d = cotComState.despacho;
   var items = cotComState.carrito.map(function (ci) { return ci.producto_id + ':' + ci.cantidad; }).sort().join('|');
-  return JSON.stringify([c.rutCuerpo, c.rutDv, c.tipoCliente, c.doctorNombre, c.razonSocial, c.direccion, c.correo, c.telefono, c.codigoSap, c.observaciones, cotComState.modalidadCodigo, cotComState.biomaterialesDescuentoPct, items]);
+  // Cambiar el despacho (tipo o comuna elegida) despues de simular DEBE
+  // invalidar la simulacion vigente y obligar a recalcular -- por eso
+  // ambos campos forman parte de la firma, igual que cualquier otro dato
+  // que afecte el total.
+  return JSON.stringify([c.rutCuerpo, c.rutDv, c.tipoCliente, c.doctorNombre, c.razonSocial, c.direccion, c.correo, c.telefono, c.codigoSap, c.observaciones, cotComState.modalidadCodigo, cotComState.biomaterialesDescuentoPct, items, d.tipo, d.comunaId]);
 }
 function simulacionEstaVigente() {
   return !!cotComState.simulacion && cotComState.firmaSimulada === firmaCotizacion();
@@ -845,9 +871,91 @@ function cotComSeleccionarBiomaterialesDescuento(valor) {
   renderApp();
 }
 
+// ============================================================
+// DESPACHO POR COMUNA (ETAPA 3)
+// ============================================================
+// El backend (buscar_despachos_comuna) es la unica fuente de verdad: el
+// autocomplete solo muestra lo que la RPC devuelve (incluida la etiqueta
+// ya formateada para Hanga Roa / cualquier comuna manual futura), y el
+// costo mostrado nunca es editable -- es exactamente el que la RPC trajo.
+var despachoBusquedaTimer = null;
+var despachoBusquedaToken = 0;
+
+function despachoBloqueaAcciones() {
+  return cotComState.despacho.tipo === 'con_costo' && cotComState.despacho.comunaId && cotComState.despacho.comunaRequiereManual === true;
+}
+
+function cotComSeleccionarTipoDespacho(tipo) {
+  cotComState.despacho.tipo = (tipo === 'con_costo') ? 'con_costo' : 'sin_costo';
+  if (cotComState.despacho.tipo === 'sin_costo') {
+    cotComState.despacho.comunaId = null;
+    cotComState.despacho.comunaTexto = '';
+    cotComState.despacho.comunaCostoNeto = 0;
+    cotComState.despacho.comunaRequiereManual = false;
+    cotComState.despacho.busqueda = '';
+    cotComState.despacho.resultados = [];
+    cotComState.despacho.buscandoError = '';
+  }
+  renderApp();
+}
+
+// Mismo patron que cotComOnInputBusquedaCatalogo: el listener del input
+// NO llama renderApp() en cada tecla (evita saltos de foco), solo
+// actualiza el estado y programa el debounce que si dispara la RPC + render.
+function cotComOnInputBusquedaDespacho(valor) {
+  cotComState.despacho.busqueda = valor;
+  // Escribir de nuevo despues de haber elegido una comuna invalida esa
+  // eleccion -- nunca se manda al backend un comunaId que ya no
+  // corresponde a lo que el campo esta mostrando.
+  cotComState.despacho.comunaId = null;
+  cotComState.despacho.comunaTexto = '';
+  cotComState.despacho.comunaCostoNeto = 0;
+  cotComState.despacho.comunaRequiereManual = false;
+  cotComState.despacho.resultados = [];
+  cotComState.despacho.buscandoError = '';
+  if (despachoBusquedaTimer) clearTimeout(despachoBusquedaTimer);
+  if (!valor || valor.trim().length < 3) { return; }
+  despachoBusquedaTimer = setTimeout(function () { buscarDespachoComuna(); }, 300);
+}
+
+async function buscarDespachoComuna() {
+  var miToken = ++despachoBusquedaToken;
+  cotComState.despacho.buscando = true;
+  cotComState.despacho.buscandoError = '';
+  renderApp();
+  try {
+    const { data, error } = await sb.rpc('buscar_despachos_comuna', {
+      p_busqueda: cotComState.despacho.busqueda, p_limite: 3
+    });
+    if (miToken !== despachoBusquedaToken) return; // respuesta tardia de una busqueda anterior -- se descarta
+    if (error) throw error;
+    cotComState.despacho.resultados = (data || []).slice(0, 3);
+  } catch (e) {
+    if (miToken !== despachoBusquedaToken) return;
+    cotComState.despacho.resultados = [];
+    cotComState.despacho.buscandoError = interpretarError(e);
+  }
+  if (miToken !== despachoBusquedaToken) return;
+  cotComState.despacho.buscando = false;
+  renderApp();
+}
+
+function cotComSeleccionarComunaDespacho(id) {
+  var r = cotComState.despacho.resultados.find(function (x) { return String(x.id) === String(id); });
+  if (!r) return;
+  cotComState.despacho.comunaId = r.id;
+  cotComState.despacho.comunaTexto = r.comuna;
+  cotComState.despacho.comunaCostoNeto = r.costo_neto || 0;
+  cotComState.despacho.comunaRequiereManual = !!r.requiere_cotizacion_manual;
+  cotComState.despacho.busqueda = r.comuna;
+  cotComState.despacho.resultados = [];
+  renderApp();
+}
+
 function cotComParamsRpc() {
   var modalidadReal = cotComState.modalidades.find(function (m) { return m.codigo === cotComState.modalidadCodigo; });
   var c = cotComState.cliente;
+  var d = cotComState.despacho;
   var items = cotComState.carrito.map(function (ci) { return { producto_id: ci.producto_id, cantidad: ci.cantidad }; });
   return {
     modalidadReal: modalidadReal,
@@ -857,7 +965,10 @@ function cotComParamsRpc() {
       p_descuento_biomateriales_pct: cotComState.biomaterialesDescuentoPct || 0,
       p_razon_social: c.razonSocial || null, p_direccion: c.direccion || null,
       p_correo: c.correo || null, p_telefono: c.telefono || null,
-      p_codigo_sap: c.codigoSap || null, p_observaciones: c.observaciones || null
+      p_codigo_sap: c.codigoSap || null, p_observaciones: c.observaciones || null,
+      // El costo NUNCA se manda -- solo tipo y (si aplica) el id de la
+      // comuna elegida. El backend es la unica fuente de verdad del costo.
+      p_despacho_tipo: d.tipo, p_despacho_comuna_id: d.tipo === 'con_costo' ? d.comunaId : null
     }
   };
 }
@@ -866,6 +977,16 @@ async function intentarSimularCotizacion() {
   if (!cotComState.modalidadCodigo) { cotComState.simulacionError = 'Selecciona el descuento comercial.'; renderApp(); return; }
   if (!cotComClienteValido()) { cotComState.rutTocado = true; cotComState.simulacionError = 'Completa el nombre del doctor y un RUT válido.'; renderApp(); return; }
   if (cotComState.carrito.length === 0) { cotComState.simulacionError = 'Agrega al menos un producto antes de calcular.'; renderApp(); return; }
+  if (despachoBloqueaAcciones()) {
+    cotComState.simulacionError = 'Este despacho requiere cotización manual. Confirma previamente el valor de envío o selecciona \'Sin costo de despacho\'.';
+    renderApp();
+    return;
+  }
+  if (cotComState.despacho.tipo === 'con_costo' && !cotComState.despacho.comunaId) {
+    cotComState.simulacionError = 'Selecciona una comuna de despacho.';
+    renderApp();
+    return;
+  }
 
   cotComState.simulando = true;
   cotComState.simulacion = null;
@@ -896,6 +1017,11 @@ async function intentarSimularCotizacion() {
 async function crearCotizacionReal() {
   if (cotComCreando) return;
   if (!cotComClienteValido()) { cotComState.rutTocado = true; cotComCrearError = 'Completa el nombre del doctor y un RUT válido.'; renderApp(); return; }
+  if (despachoBloqueaAcciones()) {
+    cotComCrearError = 'Este despacho requiere cotización manual. Confirma previamente el valor de envío o selecciona \'Sin costo de despacho\'.';
+    renderApp();
+    return;
+  }
   if (!simulacionEstaVigente()) {
     cotComCrearError = 'Los datos cambiaron desde el último cálculo. Vuelve a calcular antes de generar.';
     renderApp();
@@ -1003,6 +1129,65 @@ function construirCardDatosCotizacion() {
   '</div>';
 }
 
+// FASE Despacho por comuna -- el costo mostrado SIEMPRE viene de
+// buscar_despachos_comuna (nunca se calcula ni se edita en el frontend).
+// Hanga Roa (o cualquier comuna futura con requiere_cotizacion_manual)
+// se puede seleccionar, pero bloquea Simular/Generar hasta que el
+// ejecutivo cambie a "Sin costo" o elija otra comuna -- el bloqueo real
+// vive igual en el backend (simular_cotizacion_comercial / crear_cotizacion_comercial).
+function construirCardDespacho() {
+  var d = cotComState.despacho;
+  var esConCosto = d.tipo === 'con_costo';
+
+  var resultadosHtml = '';
+  if (d.buscando) {
+    resultadosHtml = '<div class="cc-hint" style="margin-top:6px;">Buscando comunas...</div>';
+  } else if (d.buscandoError) {
+    resultadosHtml = '<div class="msg-error" style="margin-top:6px;">⚠️ ' + esc(d.buscandoError) + '</div>';
+  } else if (d.resultados.length > 0) {
+    resultadosHtml = '<div style="border:1px solid var(--border);border-radius:8px;margin-top:6px;overflow:hidden;">' +
+      d.resultados.map(function (r) {
+        return '<button type="button" onclick="cotComSeleccionarComunaDespacho(\'' + r.id + '\')" ' +
+          'style="display:block;width:100%;text-align:left;padding:8px 10px;border:none;border-bottom:1px solid var(--border);background:#fff;cursor:pointer;font-size:12px;">' +
+          '<div style="font-weight:600;color:var(--ink);">' + esc(r.etiqueta) + '</div>' +
+          (!r.requiere_cotizacion_manual ? '<div style="color:#71717a;">' + fmt(r.costo_neto) + '</div>' : '') +
+        '</button>';
+      }).join('') +
+    '</div>';
+  } else if (d.busqueda && d.busqueda.trim().length >= 3 && !d.comunaId) {
+    resultadosHtml = '<div class="cc-hint" style="margin-top:6px;">Sin resultados para "' + esc(d.busqueda) + '".</div>';
+  }
+
+  var comunaSeleccionadaHtml = '';
+  if (d.comunaId) {
+    if (d.comunaRequiereManual) {
+      comunaSeleccionadaHtml =
+        '<div class="cc-hint" style="margin-top:6px;">Comuna seleccionada: <strong>' + esc(d.comunaTexto) + '</strong></div>' +
+        '<div class="cc-inline-err" style="margin-top:4px;">Este despacho requiere cotización manual. Confirma previamente el valor de envío o selecciona \'Sin costo de despacho\'.</div>';
+    } else {
+      comunaSeleccionadaHtml =
+        '<div class="cc-hint" style="margin-top:6px;">Comuna: <strong>' + esc(d.comunaTexto) + '</strong> — Costo de despacho: <strong>' + fmt(d.comunaCostoNeto) + '</strong> (fijado por el sistema, no editable)</div>';
+    }
+  }
+
+  return '<div class="card">' +
+    '<h2><span>🚚 Despacho</span></h2>' +
+    '<div class="form-grid">' +
+      '<select id="cc-select-despacho-tipo">' +
+        '<option value="sin_costo"' + (!esConCosto ? ' selected' : '') + '>Sin costo de despacho</option>' +
+        '<option value="con_costo"' + (esConCosto ? ' selected' : '') + '>Cobrar despacho</option>' +
+      '</select>' +
+    '</div>' +
+    (esConCosto ?
+      '<div style="margin-top:10px;">' +
+        '<input type="text" id="cc-input-despacho-comuna" autocomplete="off" placeholder="Buscar comuna (mínimo 3 letras)..." value="' + esc(d.busqueda) + '">' +
+        resultadosHtml +
+        comunaSeleccionadaHtml +
+      '</div>'
+    : '') +
+  '</div>';
+}
+
 function construirPestanasMarcaCatalogo() {
   if (cotComState.catalogoMarcas.length === 0) return '';
   return '<div class="cc-subtabs" style="margin:0 0 12px;max-width:none;padding:0;">' +
@@ -1103,8 +1288,12 @@ function construirAsideCarrito() {
     resumenHtml = '<div style="text-align:center;color:#71717a;font-size:12px;padding:8px 0;">Calculando...</div>';
   } else if (vigente) {
     var s = cotComState.simulacion;
+    var despachoTexto = (s.despacho && s.despacho.costo_neto > 0)
+      ? (esc(s.despacho.comuna) + ' — ' + fmt(s.despacho.costo_neto))
+      : 'Sin costo';
     resumenHtml =
       '<div class="cart-total-row"><span class="cart-total-label">Subtotal</span><span>' + fmt(s.subtotal) + '</span></div>' +
+      '<div class="cart-total-row"><span class="cart-total-label">Despacho</span><span>' + despachoTexto + '</span></div>' +
       '<div class="cart-total-row"><span class="cart-total-label">IVA (19%)</span><span>' + fmt(s.iva) + '</span></div>' +
       '<div class="cart-total-row"><span class="cart-total-label">Total</span><span class="cart-total-value">' + fmt(s.total) + '</span></div>' +
       '<div class="cc-hint" style="margin-bottom:8px;">Vigencia estimada: ' + esc(s.vigencia_estimada) + '</div>';
@@ -1115,10 +1304,20 @@ function construirAsideCarrito() {
   var errorHtml = cotComState.simulacionError ? '<div class="msg-error">⚠️ ' + esc(cotComState.simulacionError) + '</div>' : '';
   var crearErrorHtml = cotComCrearError ? '<div class="msg-error">⚠️ ' + esc(cotComCrearError) + '</div>' : '';
 
-  var botonesHtml = vigente
-    ? '<button class="btn-primary" ' + (cotComCreando ? 'disabled' : '') + ' onclick="crearCotizacionReal()">' + (cotComCreando ? 'Generando...' : 'Generar cotización') + '</button>' +
-      '<button class="btn-outline" style="margin-top:8px;" ' + (cotComCreando ? 'disabled' : '') + ' onclick="intentarSimularCotizacion()">Recalcular</button>'
-    : '<button class="btn-primary" ' + (cotComState.simulando ? 'disabled' : '') + ' onclick="intentarSimularCotizacion()">' + (cotComState.simulando ? 'Calculando...' : 'Calcular cotización') + '</button>';
+  // El despacho manual (Hanga Roa u otra comuna futura marcada asi)
+  // bloquea Simular/Generar directamente en la UI -- el backend rechaza
+  // igual si esto se saltara por cualquier motivo (doble clic, carrera).
+  var bloqueadoManual = despachoBloqueaAcciones();
+  var botonesHtml;
+  if (bloqueadoManual) {
+    botonesHtml = '<div class="cc-inline-err" style="margin-bottom:8px;">Este despacho requiere cotización manual. Confirma previamente el valor de envío o selecciona \'Sin costo de despacho\'.</div>' +
+      '<button class="btn-primary" disabled>Calcular cotización</button>';
+  } else if (vigente) {
+    botonesHtml = '<button class="btn-primary" ' + (cotComCreando ? 'disabled' : '') + ' onclick="crearCotizacionReal()">' + (cotComCreando ? 'Generando...' : 'Generar cotización') + '</button>' +
+      '<button class="btn-outline" style="margin-top:8px;" ' + (cotComCreando ? 'disabled' : '') + ' onclick="intentarSimularCotizacion()">Recalcular</button>';
+  } else {
+    botonesHtml = '<button class="btn-primary" ' + (cotComState.simulando ? 'disabled' : '') + ' onclick="intentarSimularCotizacion()">' + (cotComState.simulando ? 'Calculando...' : 'Calcular cotización') + '</button>';
+  }
 
   return '<aside class="cart-aside" id="cart-aside-comercial">' +
     '<div class="cart-card">' +
@@ -1263,7 +1462,7 @@ function construirConfirmacionCreacion() {
 function renderNuevaCotizacion() {
   if (cotComState.creada) { return construirConfirmacionCreacion(); }
   return '<main class="layout">' +
-    '<section>' + construirCardDatosCotizacion() + construirCardProductos() + '</section>' +
+    '<section>' + construirCardDatosCotizacion() + construirCardDespacho() + construirCardProductos() + '</section>' +
     construirAsideCarrito() +
   '</main>' + construirBotonFlotanteCarrito();
 }
@@ -1324,6 +1523,13 @@ function wireCotizadorComercialInputs() {
   }
   var familiaCatSel = document.getElementById('cc-select-familia-catalogo');
   if (familiaCatSel) familiaCatSel.addEventListener('change', function (e) { seleccionarFamiliaCatalogo(e.target.value); });
+
+  var despachoTipoEl = document.getElementById('cc-select-despacho-tipo');
+  if (despachoTipoEl) { despachoTipoEl.addEventListener('change', function (e) { cotComSeleccionarTipoDespacho(e.target.value); }); }
+  var despachoComunaEl = document.getElementById('cc-input-despacho-comuna');
+  if (despachoComunaEl) {
+    despachoComunaEl.addEventListener('input', function (e) { cotComOnInputBusquedaDespacho(e.target.value); });
+  }
 }
 
 // ============================================================
