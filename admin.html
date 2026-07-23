@@ -180,6 +180,8 @@ let cotizaciones = [];
 let estadoFiltro = 'Todos';
 let institucionFiltro = 'Todas';
 let filtroUrgencia = 'Todos'; // 'Todos' | 'PagoInformado' | 'Urgente48h' | 'Gestionados'
+let filtroPacienteRut = '';
+let filtroPacienteRutFoco = false; // para no perder el foco del input al re-renderizar
 let filaAbierta = null;
 let channel = null;
 let errorConexion = false;
@@ -1270,6 +1272,7 @@ function renderDashboard() {
   const v = document.getElementById('dashboard-view');
   v.style.display = 'block';
 
+  const textoBusqueda = (filtroPacienteRut || '').trim().toLowerCase();
   const visibles = cotizaciones.filter(function (c) {
     const matchEstado = estadoFiltro === 'Todos' || c.estado === estadoFiltro;
     const matchInst = institucionFiltro === 'Todas' || institucionInfo(c.institucion).label === institucionFiltro;
@@ -1278,7 +1281,11 @@ function renderDashboard() {
       filtroUrgencia === 'PagoInformado' ? esPagoInformadoPendiente(c) :
       filtroUrgencia === 'Urgente48h' ? esUrgente48h(c) :
       filtroUrgencia === 'Gestionados' ? estaGestionado(c) : true;
-    return matchEstado && matchInst && matchUrgencia;
+    const matchBusqueda =
+      !textoBusqueda ? true :
+      (c.paciente || '').toLowerCase().indexOf(textoBusqueda) !== -1 ||
+      (c.rut || '').toLowerCase().indexOf(textoBusqueda) !== -1;
+    return matchEstado && matchInst && matchUrgencia && matchBusqueda;
   }).sort(comparaPrioridadUrgencia);
 
   // Indicadores superiores: siempre sobre el universo filtrado por institución
@@ -1408,6 +1415,7 @@ function renderDashboard() {
       '<div class="toolbar">' +
         '<span class="stat-pill">' + visibles.length + ' de ' + cotizaciones.length + ' cotizaciones</span>' +
         '<div style="display:flex;gap:8px;flex-wrap:wrap;">' +
+          '<input id="filtro-paciente-rut" type="text" placeholder="Buscar por paciente o RUT..." value="' + esc(filtroPacienteRut) + '" style="padding:7px 10px;border-radius:7px;border:1px solid var(--border);font-size:13px;min-width:200px;">' +
           '<select id="filtro-institucion"></select>' +
           '<select id="filtro-estado"></select>' +
           '<button class="btn-export" id="btn-exportar">📊 Exportar a Excel</button>' +
@@ -1433,6 +1441,17 @@ function renderDashboard() {
   ESTADOS.forEach(function (e) { opts += '<option value="' + esc(e) + '"' + (estadoFiltro === e ? ' selected' : '') + '>' + esc(e) + '</option>'; });
   sel.innerHTML = opts;
   sel.addEventListener('change', function (e) { estadoFiltro = e.target.value; renderDashboard(); });
+
+  const fpr = document.getElementById('filtro-paciente-rut');
+  if (fpr) {
+    fpr.addEventListener('input', function (e) { filtroPacienteRut = e.target.value; filtroPacienteRutFoco = true; renderDashboard(); });
+    if (filtroPacienteRutFoco) {
+      fpr.focus();
+      const p = fpr.value.length;
+      try { fpr.setSelectionRange(p, p); } catch (e) {}
+    }
+  }
+
   document.getElementById('btn-logout').addEventListener('click', doLogout);
   document.getElementById('btn-exportar').addEventListener('click', function () { exportarExcel(visibles); });
 }
