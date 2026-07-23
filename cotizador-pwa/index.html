@@ -1745,17 +1745,29 @@ async function confirmarTraspaso() {
     if (!fila || !fila.token_traspaso) throw new Error('Respuesta incompleta');
     var destino = traspasoDestinatarios.find(function (d) { return d.user_id === traspasoDestinatarioSeleccionado; });
     traspasoResultado = {
-      nombreDestino: destino ? destino.nombre : 'el ejecutivo seleccionado',
+      nombreDestino: destino ? destino.nombre : null,
       link: COTIZADOR_COMERCIAL_BASE_URL + '?traspaso=' + fila.token_traspaso
     };
     misTraspasosPendientesPorCotizacion[traspasoModalCotizacion.id] = {
-      id: fila.id, a_vendedor_nombre: traspasoResultado.nombreDestino
+      id: fila.id, a_vendedor_nombre: destino ? destino.nombre : 'Ejecutivo'
     };
   } catch (e) {
     traspasoError = interpretarError(e);
   }
   traspasoEnCurso = false;
   renderApp();
+}
+
+// Mismo patron que compartirCotizacionComercial: wa.me sin numero, sin API,
+// sin backend -- el usuario elige el destinatario dentro de WhatsApp.
+function compartirTraspasoPorWhatsapp() {
+  if (!traspasoResultado || !traspasoResultado.link) return;
+  var folio = traspasoModalCotizacion ? traspasoModalCotizacion.folio : '';
+  var saludo = traspasoResultado.nombreDestino ? ('Hola ' + traspasoResultado.nombreDestino + ',') : 'Hola,';
+  var mensaje = saludo + '\n\n' +
+    'Te estoy traspasando la cotización ' + folio + '.\n\n' +
+    'Ingresa al Cotizador Comercial para revisarla y aceptar la responsabilidad:\n' + traspasoResultado.link;
+  window.open('https://wa.me/?text=' + encodeURIComponent(mensaje), '_blank');
 }
 
 function copiarLinkTraspaso() {
@@ -1802,13 +1814,14 @@ function construirModalTraspaso() {
   if (traspasoResultado) {
     return '<div class="cc-modal-backdrop"><div class="cc-modal-card">' +
       '<h3>Solicitud de traspaso creada</h3>' +
-      '<p style="font-size:13px;color:var(--muted);margin:4px 0 14px;">Destino: <strong>' + esc(traspasoResultado.nombreDestino) + '</strong></p>' +
+      '<p style="font-size:13px;color:var(--muted);margin:4px 0 14px;">Destino: <strong>' + esc(traspasoResultado.nombreDestino || 'el ejecutivo seleccionado') + '</strong></p>' +
       '<div class="cc-modal-field"><label>Link para compartir</label>' +
         '<input type="text" readonly value="' + esc(traspasoResultado.link) + '" style="width:100%;font-size:12px;" onclick="this.select()">' +
       '</div>' +
-      '<div style="display:flex;gap:8px;margin-top:16px;">' +
-        '<button type="button" id="btn-copiar-link-traspaso" class="btn-add" style="width:auto;flex:1;" onclick="copiarLinkTraspaso()">Copiar link</button>' +
-        '<button type="button" class="btn-outline" style="width:auto;flex:1;" onclick="cerrarModalTraspaso()">Cerrar</button>' +
+      '<div style="display:flex;flex-direction:column;gap:8px;margin-top:16px;">' +
+        '<button type="button" class="btn-add" style="width:100%;background:#25d366;border-color:#25d366;" onclick="compartirTraspasoPorWhatsapp()">🟢 Compartir por WhatsApp</button>' +
+        '<button type="button" id="btn-copiar-link-traspaso" class="btn-outline" style="width:100%;" onclick="copiarLinkTraspaso()">📋 Copiar link</button>' +
+        '<button type="button" class="btn-outline" style="width:100%;" onclick="cerrarModalTraspaso()">Cerrar</button>' +
       '</div>' +
     '</div></div>';
   }
