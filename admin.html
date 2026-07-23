@@ -181,7 +181,7 @@ let estadoFiltro = 'Todos';
 let institucionFiltro = 'Todas';
 let filtroUrgencia = 'Todos'; // 'Todos' | 'PagoInformado' | 'Urgente48h' | 'Gestionados'
 let filtroPacienteRut = '';
-let filtroPacienteRutFoco = false; // para no perder el foco del input al re-renderizar
+let visiblesCotizacionesActuales = []; // usado por el export cuando se actualiza la tabla sin renderDashboard completo
 let filaAbierta = null;
 let channel = null;
 let errorConexion = false;
@@ -1267,11 +1267,7 @@ function renderDashboardPiloto() {
   document.getElementById('btn-logout').addEventListener('click', doLogout);
 }
 
-function renderDashboard() {
-  document.getElementById('login-view').style.display = 'none';
-  const v = document.getElementById('dashboard-view');
-  v.style.display = 'block';
-
+function generarListaCotizaciones() {
   const textoBusqueda = (filtroPacienteRut || '').trim().toLowerCase();
   const visibles = cotizaciones.filter(function (c) {
     const matchEstado = estadoFiltro === 'Todos' || c.estado === estadoFiltro;
@@ -1287,17 +1283,6 @@ function renderDashboard() {
       (c.rut || '').toLowerCase().indexOf(textoBusqueda) !== -1;
     return matchEstado && matchInst && matchUrgencia && matchBusqueda;
   }).sort(comparaPrioridadUrgencia);
-
-  // Indicadores superiores: siempre sobre el universo filtrado por institución
-  // (no por estadoFiltro/filtroUrgencia), para que el número no desaparezca
-  // al estar mirando otro filtro.
-  const universoIndicadores = cotizaciones.filter(function (c) {
-    return institucionFiltro === 'Todas' || institucionInfo(c.institucion).label === institucionFiltro;
-  });
-  const countPagoInformado = universoIndicadores.filter(esPagoInformadoPendiente).length;
-  const countUrgente48h = universoIndicadores.filter(esUrgente48h).length;
-  const countGestionados = universoIndicadores.filter(estaGestionado).length;
-  const countTodosIndicador = universoIndicadores.length;
 
   let filasHtml = '';
   if (visibles.length === 0) {
@@ -1382,6 +1367,42 @@ function renderDashboard() {
       }
     });
   }
+  return { visibles: visibles, filasHtml: filasHtml };
+}
+
+// Actualización quirúrgica: solo reescribe la tabla y el contador, SIN tocar
+// el resto del DOM (ni recrear el <input> de búsqueda). Necesario porque en
+// iOS, destruir y recrear el input mientras el teclado numérico manual
+// (botón "123") está activo hace que Safari lo resetee a letras en cada tecla.
+function actualizarListadoCotizaciones() {
+  const resultado = generarListaCotizaciones();
+  visiblesCotizacionesActuales = resultado.visibles;
+  const tbody = document.getElementById('tbody-cotizaciones');
+  if (tbody) tbody.innerHTML = resultado.filasHtml;
+  const pill = document.getElementById('stat-pill-cotizaciones');
+  if (pill) pill.textContent = resultado.visibles.length + ' de ' + cotizaciones.length + ' cotizaciones';
+}
+
+function renderDashboard() {
+  document.getElementById('login-view').style.display = 'none';
+  const v = document.getElementById('dashboard-view');
+  v.style.display = 'block';
+
+  const resultado = generarListaCotizaciones();
+  const visibles = resultado.visibles;
+  const filasHtml = resultado.filasHtml;
+  visiblesCotizacionesActuales = visibles;
+
+  // Indicadores superiores: siempre sobre el universo filtrado por institución
+  // (no por estadoFiltro/filtroUrgencia), para que el número no desaparezca
+  // al estar mirando otro filtro.
+  const universoIndicadores = cotizaciones.filter(function (c) {
+    return institucionFiltro === 'Todas' || institucionInfo(c.institucion).label === institucionFiltro;
+  });
+  const countPagoInformado = universoIndicadores.filter(esPagoInformadoPendiente).length;
+  const countUrgente48h = universoIndicadores.filter(esUrgente48h).length;
+  const countGestionados = universoIndicadores.filter(estaGestionado).length;
+  const countTodosIndicador = universoIndicadores.length;
 
   v.innerHTML =
     '<header class="topbar"><div><div class="brand-name">STRAUMANN</div><div class="brand-sub">GROUP CHILE · NEODENT</div></div>' +
@@ -1413,7 +1434,7 @@ function renderDashboard() {
         '<button class="btn-logout" style="' + (filtroUrgencia==='Gestionados' ? 'background:#065f46;color:#fff;border-color:#065f46;' : '') + '" onclick="filtroUrgencia=\'Gestionados\';renderDashboard();">✓ Ingresados / gestionados (' + countGestionados + ')</button>' +
       '</div>' +
       '<div class="toolbar">' +
-        '<span class="stat-pill">' + visibles.length + ' de ' + cotizaciones.length + ' cotizaciones</span>' +
+        '<span class="stat-pill" id="stat-pill-cotizaciones">' + visibles.length + ' de ' + cotizaciones.length + ' cotizaciones</span>' +
         '<div style="display:flex;gap:8px;flex-wrap:wrap;">' +
           '<input id="filtro-paciente-rut" type="text" name="filtro-paciente-rut-' + Date.now() + '" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" placeholder="Buscar por paciente o RUT..." value="' + esc(filtroPacienteRut) + '" style="padding:7px 10px;border-radius:7px;border:1px solid var(--border);font-size:13px;min-width:200px;">' +
           '<select id="filtro-institucion"></select>' +
@@ -1423,7 +1444,7 @@ function renderDashboard() {
       '</div>' +
       '<div style="overflow-x:auto;">' +
         '<table><thead><tr><th>Institución</th><th>N° Cotización</th><th>Paciente</th><th>Doctor</th><th>Fecha</th><th style="text-align:right;">Total</th><th>Estado</th></tr></thead>' +
-        '<tbody>' + filasHtml + '</tbody></table>' +
+        '<tbody id="tbody-cotizaciones">' + filasHtml + '</tbody></table>' +
       '</div>' +
     '</main>';
 
@@ -1444,16 +1465,11 @@ function renderDashboard() {
 
   const fpr = document.getElementById('filtro-paciente-rut');
   if (fpr) {
-    fpr.addEventListener('input', function (e) { filtroPacienteRut = e.target.value; filtroPacienteRutFoco = true; renderDashboard(); });
-    if (filtroPacienteRutFoco) {
-      fpr.focus();
-      const p = fpr.value.length;
-      try { fpr.setSelectionRange(p, p); } catch (e) {}
-    }
+    fpr.addEventListener('input', function (e) { filtroPacienteRut = e.target.value; actualizarListadoCotizaciones(); });
   }
 
   document.getElementById('btn-logout').addEventListener('click', doLogout);
-  document.getElementById('btn-exportar').addEventListener('click', function () { exportarExcel(visibles); });
+  document.getElementById('btn-exportar').addEventListener('click', function () { exportarExcel(visiblesCotizacionesActuales); });
 }
 
 // ============================================================
