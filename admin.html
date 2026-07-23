@@ -1415,7 +1415,7 @@ function renderDashboard() {
       '<div class="toolbar">' +
         '<span class="stat-pill">' + visibles.length + ' de ' + cotizaciones.length + ' cotizaciones</span>' +
         '<div style="display:flex;gap:8px;flex-wrap:wrap;">' +
-          '<input id="filtro-paciente-rut" type="text" placeholder="Buscar por paciente o RUT..." value="' + esc(filtroPacienteRut) + '" style="padding:7px 10px;border-radius:7px;border:1px solid var(--border);font-size:13px;min-width:200px;">' +
+          '<input id="filtro-paciente-rut" type="text" name="filtro-paciente-rut-' + Date.now() + '" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" placeholder="Buscar por paciente o RUT..." value="' + esc(filtroPacienteRut) + '" style="padding:7px 10px;border-radius:7px;border:1px solid var(--border);font-size:13px;min-width:200px;">' +
           '<select id="filtro-institucion"></select>' +
           '<select id="filtro-estado"></select>' +
           '<button class="btn-export" id="btn-exportar">📊 Exportar a Excel</button>' +
