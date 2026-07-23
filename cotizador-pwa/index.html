@@ -178,6 +178,13 @@
   .cc-estado-tag.estado-rechazada { background:#fef2f2; color:#b91c1c; }
   .cc-estado-tag.estado-vencida { background:#fffbeb; color:#92400e; }
   .cc-estado-tag.estado-anulada { background:#f4f4f5; color:#52525b; }
+  .cc-traspaso-badge { display:inline-block; font-size:11px; font-weight:600; background:#fffbeb; color:#92400e; border:1px solid #fde68a; border-radius:7px; padding:4px 8px; margin-top:8px; }
+  .cc-modal-backdrop { position:fixed; inset:0; background:rgba(0,0,0,0.45); z-index:50; display:flex; align-items:flex-end; justify-content:center; }
+  .cc-modal-card { background:#fff; border-radius:16px 16px 0 0; padding:20px; width:100%; max-width:480px; max-height:88vh; overflow-y:auto; }
+  @media (min-width:640px) { .cc-modal-backdrop { align-items:center; } .cc-modal-card { border-radius:16px; } }
+  .cc-modal-card h3 { margin:0 0 4px; font-size:16px; }
+  .cc-modal-field { margin-top:12px; }
+  .cc-modal-field label { display:block; font-size:12px; font-weight:600; color:var(--muted); margin-bottom:4px; }
 </style>
 </head>
 <body>
@@ -201,7 +208,41 @@ const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
 let miPerfil = null;
 let miUserId = null;
-let vistaComercial = 'nueva'; // 'nueva' | 'mis' | 'detalle'
+let vistaComercial = 'nueva'; // 'nueva' | 'mis' | 'detalle' | 'traspaso'
+
+// ============================================================
+// TRASPASO DE RESPONSABILIDAD -- Etapa 2 (frontend)
+// ============================================================
+// El token se lee UNA VEZ desde la URL al cargar el script, no desde
+// estado en memoria -- asi sobrevive a un refresh completo de pagina en
+// la pantalla de login (el query param sigue en la URL). Nunca se
+// confia en el para autorizar nada; solo se usa para llamar a
+// obtener_traspaso_comercial, que revalida todo contra auth.uid() en
+// el backend.
+let tokenTraspasoURL = new URLSearchParams(window.location.search).get('traspaso');
+
+// Modal "iniciar traspaso" (responsable actual)
+let traspasoModalCotizacion = null; // fila de misCotState.filas elegida, o null si el modal esta cerrado
+let traspasoDestinatarios = [];
+let traspasoDestinatariosCargando = false;
+let traspasoDestinatarioSeleccionado = '';
+let traspasoMotivo = '';
+let traspasoEnCurso = false;
+let traspasoError = '';
+let traspasoResultado = null; // { nombreDestino, link } tras crear exitosamente
+
+// Traspasos que YO inicie y siguen pendientes -- para el badge + cancelar
+// en la lista de Mis Cotizaciones. Mapa cotizacion_id -> fila del traspaso.
+let misTraspasosPendientesPorCotizacion = {};
+let cancelarTraspasoEnCurso = null;
+let cancelarTraspasoError = '';
+
+// Vista del destinatario (llegada por link/token)
+let vistaTraspasoData = null;
+let vistaTraspasoCargando = false;
+let vistaTraspasoError = '';
+let vistaTraspasoRespuestaEnCurso = false;
+let vistaTraspasoResultado = null; // { respuesta: 'aceptado'|'rechazado', responsableNombre }
 // FASE D2.7 -- busqueda dinamica del catalogo con debounce + proteccion
 // contra respuestas antiguas (stale response guard). catalogoBusquedaToken
 // se incrementa en CADA disparo real de busqueda (boton, Enter, o
@@ -245,6 +286,54 @@ async function abrirDetalleCotizacion(cotizacionId) {
     detalleCotizacionError = 'No se pudo abrir el detalle de esta cotización. Verifica que tengas acceso o inténtalo nuevamente.';
   }
   detalleCotizacionCargando = false;
+  renderApp();
+}
+
+// Se llama despues de que el usuario tiene sesion (cargarMiPerfilYEntrar).
+// El token NUNCA autoriza nada por si solo -- obtener_traspaso_comercial
+// revalida auth.uid() contra a_vendedor_id/iniciado_por/super_admin en el
+// backend; si el usuario logueado no corresponde, esto simplemente falla
+// con "No autorizado" y no se muestra ningun dato de la cotizacion.
+async function abrirTraspasoDesdeLink(token) {
+  vistaTraspasoCargando = true;
+  vistaTraspasoError = '';
+  vistaTraspasoData = null;
+  vistaTraspasoResultado = null;
+  renderApp();
+  try {
+    const { data, error } = await sb.rpc('obtener_traspaso_comercial', { p_token_traspaso: token });
+    if (error || !data || data.length === 0) throw (error || new Error('sin datos'));
+    vistaTraspasoData = data[0];
+  } catch (e) {
+    // Mensaje generico deliberado -- no se distingue "token invalido" de
+    // "no te corresponde" (mismo criterio fail-closed que el backend).
+    vistaTraspasoError = 'No pudimos abrir esta solicitud de traspaso. Puede que ya haya sido resuelta o que no te corresponda.';
+  }
+  vistaTraspasoCargando = false;
+  renderApp();
+}
+
+async function responderTraspasoDesdeLink(respuesta) {
+  if (vistaTraspasoRespuestaEnCurso || !tokenTraspasoURL) return;
+  vistaTraspasoRespuestaEnCurso = true;
+  renderApp();
+  try {
+    const { data, error } = await sb.rpc('responder_traspaso_cotizacion_comercial', {
+      p_token_traspaso: tokenTraspasoURL, p_respuesta: respuesta
+    });
+    if (error) throw error;
+    var responsableAnterior = vistaTraspasoData ? vistaTraspasoData.de_vendedor_nombre : null;
+    vistaTraspasoResultado = { respuesta: respuesta, responsableNombre: responsableAnterior };
+    // Punto 7: actualizar Mis Cotizaciones/Dashboard sin refresh manual.
+    // Se fuerza recarga completa (reiniciar=true) para que, apenas el
+    // usuario navegue a "Mis cotizaciones", ya refleje el nuevo estado --
+    // sin depender de que la vista estuviera cargada previamente.
+    misCotState.cargado = false;
+    cargarMisCotizaciones(true);
+  } catch (e) {
+    vistaTraspasoError = interpretarError(e);
+  }
+  vistaTraspasoRespuestaEnCurso = false;
   renderApp();
 }
 
@@ -545,6 +634,16 @@ async function cargarMiPerfilYEntrar() {
       renderLogin('No tienes acceso habilitado al Cotizador Comercial.');
       return;
     }
+  }
+
+  // Punto 5: si el link trae ?traspaso=<token>, prevalece sobre la vista
+  // por defecto -- sin sesion se mostro el login normal (nunca se expuso
+  // nada del traspaso antes de este punto); apenas hay sesion, se resuelve
+  // automaticamente contra el backend, que revalida todo de nuevo.
+  if (tokenTraspasoURL) {
+    vistaComercial = 'traspaso';
+    abrirTraspasoDesdeLink(tokenTraspasoURL);
+    return;
   }
 
   vistaComercial = puedeCrearCotizaciones() ? 'nueva' : 'mis';
@@ -1562,7 +1661,224 @@ async function cargarMisCotizaciones(reiniciar) {
     misCotState.error = interpretarError(e);
   }
   misCotState.cargando = false;
+  if (reiniciar) { cargarMisTraspasosPendientes(); }
   renderApp();
+}
+
+// Traspasos que el usuario inicio y siguen pendientes -- solo para pintar
+// el badge "Traspaso pendiente -> X" y habilitar "Cancelar" en su propia
+// lista. No se pide confirmacion explicita del backend sobre autorizacion
+// aqui -- listar_traspasos_comercial ya filtra por iniciado_por = auth.uid().
+async function cargarMisTraspasosPendientes() {
+  try {
+    const { data, error } = await sb.rpc('listar_traspasos_comercial', { p_alcance: 'iniciados_por_mi' });
+    if (error) throw error;
+    var mapa = {};
+    (data || []).forEach(function (t) {
+      if (t.estado === 'pendiente') { mapa[t.cotizacion_id] = t; }
+    });
+    misTraspasosPendientesPorCotizacion = mapa;
+  } catch (e) {
+    // Silencioso: el badge simplemente no aparece si esto falla, no bloquea
+    // el resto de la pantalla ni muestra un error intrusivo.
+    misTraspasosPendientesPorCotizacion = {};
+  }
+  renderApp();
+}
+
+const COTIZADOR_COMERCIAL_BASE_URL = 'https://cotizador-comercial-straumann.vercel.app/index.html';
+
+function abrirModalTraspaso(cotizacionId) {
+  var fila = misCotState.filas.find(function (x) { return x.id === cotizacionId; });
+  if (!fila) return;
+  traspasoModalCotizacion = fila;
+  traspasoDestinatarioSeleccionado = '';
+  traspasoMotivo = '';
+  traspasoError = '';
+  traspasoResultado = null;
+  traspasoDestinatarios = [];
+  traspasoDestinatariosCargando = true;
+  renderApp();
+  sb.rpc('listar_destinatarios_traspaso_comercial', { p_excluir_vendedor_id: fila.vendedor_id })
+    .then(function (r) {
+      if (r.error) throw r.error;
+      traspasoDestinatarios = r.data || [];
+    })
+    .catch(function () {
+      traspasoDestinatarios = [];
+      traspasoError = 'No se pudo cargar la lista de compañeros. Cierra e intenta nuevamente.';
+    })
+    .finally(function () {
+      traspasoDestinatariosCargando = false;
+      renderApp();
+    });
+}
+
+function cerrarModalTraspaso() {
+  traspasoModalCotizacion = null;
+  traspasoDestinatarios = [];
+  traspasoDestinatarioSeleccionado = '';
+  traspasoMotivo = '';
+  traspasoError = '';
+  traspasoResultado = null;
+  renderApp();
+}
+
+async function confirmarTraspaso() {
+  if (traspasoEnCurso || !traspasoModalCotizacion) return;
+  if (!traspasoDestinatarioSeleccionado) {
+    traspasoError = 'Selecciona a quién quieres traspasar la cotización.';
+    renderApp();
+    return;
+  }
+  traspasoEnCurso = true;
+  traspasoError = '';
+  renderApp();
+  try {
+    const { data, error } = await sb.rpc('iniciar_traspaso_cotizacion_comercial', {
+      p_cotizacion_id: traspasoModalCotizacion.id,
+      p_nuevo_vendedor_id: traspasoDestinatarioSeleccionado,
+      p_motivo: traspasoMotivo || null
+    });
+    if (error) throw error;
+    var fila = Array.isArray(data) ? data[0] : data;
+    if (!fila || !fila.token_traspaso) throw new Error('Respuesta incompleta');
+    var destino = traspasoDestinatarios.find(function (d) { return d.user_id === traspasoDestinatarioSeleccionado; });
+    traspasoResultado = {
+      nombreDestino: destino ? destino.nombre : 'el ejecutivo seleccionado',
+      link: COTIZADOR_COMERCIAL_BASE_URL + '?traspaso=' + fila.token_traspaso
+    };
+    misTraspasosPendientesPorCotizacion[traspasoModalCotizacion.id] = {
+      id: fila.id, a_vendedor_nombre: traspasoResultado.nombreDestino
+    };
+  } catch (e) {
+    traspasoError = interpretarError(e);
+  }
+  traspasoEnCurso = false;
+  renderApp();
+}
+
+function copiarLinkTraspaso() {
+  if (!traspasoResultado || !traspasoResultado.link) return;
+  var texto = traspasoResultado.link;
+  var btn = document.getElementById('btn-copiar-link-traspaso');
+  function marcarCopiado() {
+    if (!btn) return;
+    btn.textContent = '✓ Link copiado';
+    setTimeout(function () { if (btn) btn.textContent = 'Copiar link'; }, 1800);
+  }
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(texto).then(marcarCopiado).catch(function () {});
+  } else {
+    var ta = document.createElement('textarea');
+    ta.value = texto; ta.style.position = 'fixed'; ta.style.opacity = '0';
+    document.body.appendChild(ta); ta.select();
+    try { document.execCommand('copy'); marcarCopiado(); } catch (e) {}
+    document.body.removeChild(ta);
+  }
+}
+
+async function cancelarTraspasoPendiente(traspasoId, cotizacionId) {
+  if (cancelarTraspasoEnCurso) return;
+  cancelarTraspasoEnCurso = traspasoId;
+  cancelarTraspasoError = '';
+  renderApp();
+  try {
+    const { error } = await sb.rpc('cancelar_traspaso_cotizacion_comercial', { p_traspaso_id: traspasoId });
+    if (error) throw error;
+    delete misTraspasosPendientesPorCotizacion[cotizacionId];
+  } catch (e) {
+    cancelarTraspasoError = interpretarError(e);
+  }
+  cancelarTraspasoEnCurso = null;
+  renderApp();
+}
+
+function construirModalTraspaso() {
+  if (!traspasoModalCotizacion) return '';
+  var f = traspasoModalCotizacion;
+  var responsableActualNombre = (f.vendedor_id === miUserId) ? (miPerfil.nombre || 'Tú') : 'Responsable actual';
+
+  if (traspasoResultado) {
+    return '<div class="cc-modal-backdrop"><div class="cc-modal-card">' +
+      '<h3>Solicitud de traspaso creada</h3>' +
+      '<p style="font-size:13px;color:var(--muted);margin:4px 0 14px;">Destino: <strong>' + esc(traspasoResultado.nombreDestino) + '</strong></p>' +
+      '<div class="cc-modal-field"><label>Link para compartir</label>' +
+        '<input type="text" readonly value="' + esc(traspasoResultado.link) + '" style="width:100%;font-size:12px;" onclick="this.select()">' +
+      '</div>' +
+      '<div style="display:flex;gap:8px;margin-top:16px;">' +
+        '<button type="button" id="btn-copiar-link-traspaso" class="btn-add" style="width:auto;flex:1;" onclick="copiarLinkTraspaso()">Copiar link</button>' +
+        '<button type="button" class="btn-outline" style="width:auto;flex:1;" onclick="cerrarModalTraspaso()">Cerrar</button>' +
+      '</div>' +
+    '</div></div>';
+  }
+
+  var opcionesDestino = '<option value="">Selecciona un compañero...</option>' +
+    traspasoDestinatarios.map(function (d) {
+      return '<option value="' + d.user_id + '"' + (traspasoDestinatarioSeleccionado === d.user_id ? ' selected' : '') + '>' + esc(d.nombre) + '</option>';
+    }).join('');
+
+  return '<div class="cc-modal-backdrop"><div class="cc-modal-card">' +
+    '<h3>Traspasar cotización</h3>' +
+    '<p style="font-size:13px;color:var(--muted);margin:4px 0 14px;">Folio ' + esc(f.folio) + ' · ' + esc(f.doctor_nombre) + '</p>' +
+    '<div class="cc-modal-field"><label>Responsable actual</label><div style="font-size:13px;">' + esc(responsableActualNombre) + '</div></div>' +
+    '<div class="cc-modal-field"><label>Nuevo responsable</label>' +
+      (traspasoDestinatariosCargando ? '<div class="empty-msg">Cargando compañeros...</div>' :
+        (traspasoDestinatarios.length === 0 ? '<div class="empty-msg">No hay compañeros disponibles para traspasar.</div>' :
+          '<select id="tr-select-destinatario">' + opcionesDestino + '</select>')) +
+    '</div>' +
+    '<div class="cc-modal-field"><label>Motivo (opcional)</label>' +
+      '<textarea id="tr-input-motivo" rows="2" style="width:100%;font-family:inherit;">' + esc(traspasoMotivo) + '</textarea>' +
+    '</div>' +
+    (traspasoError ? '<div class="msg-error" style="margin-top:10px;">⚠️ ' + esc(traspasoError) + '</div>' : '') +
+    '<div style="display:flex;gap:8px;margin-top:16px;">' +
+      '<button type="button" class="btn-add" style="width:auto;flex:1;" onclick="confirmarTraspaso()" ' + (traspasoEnCurso ? 'disabled' : '') + '>' +
+        (traspasoEnCurso ? 'Enviando...' : 'Solicitar traspaso') +
+      '</button>' +
+      '<button type="button" class="btn-outline" style="width:auto;flex:1;" onclick="cerrarModalTraspaso()" ' + (traspasoEnCurso ? 'disabled' : '') + '>Cancelar</button>' +
+    '</div>' +
+  '</div></div>';
+}
+
+function construirVistaTraspaso() {
+  if (vistaTraspasoCargando) {
+    return '<div class="cc-mis-wrap"><div class="card"><div class="empty-msg">Cargando solicitud de traspaso...</div></div></div>';
+  }
+  if (vistaTraspasoError) {
+    return '<div class="cc-mis-wrap"><div class="card">' +
+      '<div class="msg-error">⚠️ ' + esc(vistaTraspasoError) + '</div>' +
+      '<button type="button" class="btn-outline" style="margin-top:14px;" onclick="vistaComercial=\'mis\';cargarMisCotizaciones(true);">Ir a Mis cotizaciones</button>' +
+    '</div></div>';
+  }
+  if (vistaTraspasoResultado) {
+    var msg = vistaTraspasoResultado.respuesta === 'aceptado'
+      ? 'Traspaso aceptado. Ahora eres responsable de esta cotización.'
+      : 'Traspaso rechazado. La responsabilidad permanece con ' + esc(vistaTraspasoResultado.responsableNombre || 'el ejecutivo anterior') + '.';
+    return '<div class="cc-mis-wrap"><div class="card">' +
+      '<div class="empty-msg" style="color:var(--ink);font-weight:600;">' + msg + '</div>' +
+      '<button type="button" class="btn-add" style="margin-top:16px;width:auto;" onclick="vistaComercial=\'mis\';cargarMisCotizaciones(true);">Ir a Mis cotizaciones</button>' +
+    '</div></div>';
+  }
+  if (!vistaTraspasoData) return '<div class="cc-mis-wrap"><div class="card"><div class="empty-msg">No se pudo cargar la solicitud.</div></div></div>';
+  var d = vistaTraspasoData;
+  return '<div class="cc-mis-wrap"><div class="card">' +
+    '<h2>Solicitud de traspaso</h2>' +
+    '<div class="detalle-grid" style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin:14px 0;">' +
+      campoGrid('Folio', d.folio) +
+      campoGrid('Cliente', d.doctor_nombre) +
+      campoGrid('Estado', ETIQUETAS_ESTADO_COMERCIAL[d.estado_cotizacion] || d.estado_cotizacion) +
+      campoGrid('Total', fmt(d.total)) +
+      campoGrid('Responsable actual', d.de_vendedor_nombre) +
+      campoGrid('Quién inició el traspaso', d.iniciado_por_nombre) +
+    '</div>' +
+    (d.motivo ? '<div style="margin-bottom:14px;">' + campoGrid('Motivo', d.motivo) + '</div>' : '') +
+    '<div style="display:flex;gap:8px;margin-top:8px;">' +
+      '<button type="button" class="btn-add" style="width:auto;flex:1;" onclick="responderTraspasoDesdeLink(\'aceptado\')" ' + (vistaTraspasoRespuestaEnCurso ? 'disabled' : '') + '>' +
+        (vistaTraspasoRespuestaEnCurso ? 'Procesando...' : 'ACEPTAR RESPONSABILIDAD') +
+      '</button>' +
+      '<button type="button" class="btn-outline" style="width:auto;flex:1;" onclick="responderTraspasoDesdeLink(\'rechazado\')" ' + (vistaTraspasoRespuestaEnCurso ? 'disabled' : '') + '>RECHAZAR</button>' +
+    '</div>' +
+  '</div></div>';
 }
 
 const ESTADOS_COMERCIALES = ['borrador', 'enviada', 'aceptada', 'rechazada', 'vencida', 'anulada'];
@@ -1583,6 +1899,34 @@ const ETIQUETAS_ESTADO_COMERCIAL = {
 function construirBadgeEstadoComercial(estado) {
   var etiqueta = ETIQUETAS_ESTADO_COMERCIAL[estado] || estado;
   return '<span class="cc-estado-tag estado-' + esc(estado) + '">' + esc(etiqueta) + '</span>';
+}
+
+// Mismos 3 estados autorizados por el backend (iniciar_traspaso_cotizacion_comercial);
+// esto es solo para decidir si se MUESTRA el boton -- la autorizacion real
+// siempre se revalida en la RPC, el frontend nunca decide por si solo.
+function permiteTraspasar(estado) {
+  return estado === 'borrador' || estado === 'enviada' || estado === 'aceptada';
+}
+function puedeTraspasarFila(f) {
+  if (!permiteTraspasar(f.estado)) return false;
+  return !!(miPerfil && (miPerfil.es_super_admin || miPerfil.es_coordinador || f.vendedor_id === miUserId));
+}
+
+function construirBloqueTraspasoFila(f) {
+  var pendiente = misTraspasosPendientesPorCotizacion[f.id];
+  if (pendiente) {
+    var cancelando = cancelarTraspasoEnCurso === pendiente.id;
+    return '<div class="cc-traspaso-badge">🔄 Traspaso pendiente → ' + esc(pendiente.a_vendedor_nombre || 'Ejecutivo') + '</div>' +
+      '<button type="button" class="btn-outline" style="margin-top:6px;padding:6px 10px;font-size:11px;width:auto;display:block;" ' +
+        'onclick="cancelarTraspasoPendiente(\'' + pendiente.id + '\', \'' + f.id + '\')" ' + (cancelando ? 'disabled' : '') + '>' +
+        (cancelando ? 'Cancelando…' : 'Cancelar traspaso') +
+      '</button>';
+  }
+  if (puedeTraspasarFila(f)) {
+    return '<button type="button" class="btn-outline" style="margin-top:8px;padding:6px 10px;font-size:11px;width:auto;display:block;" ' +
+      'onclick="abrirModalTraspaso(\'' + f.id + '\')">🔁 Traspasar</button>';
+  }
+  return '';
 }
 
 function construirMisCotizaciones() {
@@ -1626,6 +1970,7 @@ function construirMisCotizaciones() {
               ' onchange="toggleIngresado(\'' + f.id + '\', ' + (f.ingresado ? 'true' : 'false') + ')">' +
               (ingresadoEnCurso === f.id ? 'Actualizando…' : 'Ingresado') +
             '</label>' : '') +
+          construirBloqueTraspasoFila(f) +
         '</div>' +
         '<div style="text-align:right;">' +
           '<div class="prod-price-new" style="font-size:16px;">' + fmt(f.total) + '</div>' +
@@ -1654,6 +1999,7 @@ function construirMisCotizaciones() {
       '<p style="font-size:12px;color:var(--muted);margin:0 0 14px;">' + esc(alcanceTexto) + '</p>' +
       (compartirError ? '<div class="msg-error" style="margin-bottom:10px;">⚠️ ' + esc(compartirError) + '</div>' : '') +
       (ingresadoError ? '<div class="msg-error" style="margin-bottom:10px;">⚠️ ' + esc(ingresadoError) + '</div>' : '') +
+      (cancelarTraspasoError ? '<div class="msg-error" style="margin-bottom:10px;">⚠️ ' + esc(cancelarTraspasoError) + '</div>' : '') +
       filtrosHtml + listaHtml + cargarMasHtml +
     '</div>' +
   '</div>';
@@ -1670,6 +2016,13 @@ function wireMisCotizacionesInputs() {
   if (se) se.addEventListener('change', function (e) { misCotState.filtroEstado = e.target.value; cargarMisCotizaciones(true); });
   var sf = document.getElementById('mc-select-facturacion');
   if (sf) sf.addEventListener('change', function (e) { misCotState.filtroFacturacion = e.target.value; cargarMisCotizaciones(true); });
+}
+
+function wireModalTraspasoInputs() {
+  var sel = document.getElementById('tr-select-destinatario');
+  if (sel) sel.addEventListener('change', function (e) { traspasoDestinatarioSeleccionado = e.target.value; });
+  var mot = document.getElementById('tr-input-motivo');
+  if (mot) mot.addEventListener('input', function (e) { traspasoMotivo = e.target.value; });
 }
 
 // ============================================================
@@ -1699,6 +2052,8 @@ function renderApp() {
     contenidoHtml = construirMisCotizaciones();
   } else if (vistaComercial === 'detalle') {
     contenidoHtml = construirDetalleCotizacion();
+  } else if (vistaComercial === 'traspaso') {
+    contenidoHtml = construirVistaTraspaso();
   } else if (!puedeCrearCotizaciones()) {
     contenidoHtml = '<div class="cc-mis-wrap"><div class="card"><div class="empty-msg">Tu perfil no tiene el rol de Ejecutivo Comercial habilitado para crear cotizaciones.</div></div></div>';
   } else {
@@ -1711,11 +2066,13 @@ function renderApp() {
       '<div class="topbar-right"><span>v' + APP_VERSION + '</span><button class="btn-logout" id="btn-logout">Cerrar sesión</button></div>' +
     '</header>' +
     (mostrarNav ? construirNavComercial() : '') +
-    contenidoHtml;
+    contenidoHtml +
+    construirModalTraspaso();
 
   document.getElementById('btn-logout').addEventListener('click', function () { sb.auth.signOut(); });
   wireCotizadorComercialInputs();
   wireMisCotizacionesInputs();
+  wireModalTraspasoInputs();
 }
 
 // ============================================================
