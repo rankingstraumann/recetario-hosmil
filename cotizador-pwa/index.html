@@ -846,11 +846,29 @@ async function cargarCatalogoMarcasFamilias() {
 function seleccionarMarcaCatalogo(marca) {
   cotComState.marcaActiva = marca;
   cotComState.familiaActivaId = null;
+  actualizarCabeceraFiltrosCatalogoDom();
   cargarProductosCatalogo(true);
 }
 function seleccionarFamiliaCatalogo(familiaId) {
   cotComState.familiaActivaId = familiaId || null;
+  actualizarCabeceraFiltrosCatalogoDom();
   cargarProductosCatalogo(true);
+}
+
+// FIX foco -- actualiza SOLO las pestanas de marca y el selector de familia
+// (ambos dependen de marcaActiva/familiaActivaId), sin tocar el input de
+// busqueda ni el contenedor de resultados. Se usa exclusivamente al cambiar
+// de marca/familia (clic/select, nunca mientras se escribe), asi que no hay
+// riesgo de foco en juego -- solo se evita destruir el input innecesariamente.
+function actualizarCabeceraFiltrosCatalogoDom() {
+  var pestanas = document.getElementById('cc-cabecera-filtros-catalogo');
+  if (pestanas) pestanas.innerHTML = construirPestanasMarcaCatalogo();
+  var selectorWrap = document.getElementById('cc-selector-familia-catalogo');
+  if (selectorWrap) {
+    selectorWrap.innerHTML = construirSelectorFamiliaCatalogo();
+    var familiaCatSel = document.getElementById('cc-select-familia-catalogo');
+    if (familiaCatSel) familiaCatSel.addEventListener('change', function (e) { seleccionarFamiliaCatalogo(e.target.value); });
+  }
 }
 
 async function cargarProductosCatalogo(reiniciar) {
@@ -863,7 +881,7 @@ async function cargarProductosCatalogo(reiniciar) {
   var miToken = ++catalogoBusquedaToken;
   cotComState.catalogoCargandoProductos = true;
   cotComState.catalogoErrorProductos = '';
-  renderApp();
+  actualizarResultadosCatalogoDom();
   try {
     // FASE D2.7.1 -- mientras haya texto real de busqueda, se ignora
     // marcaActiva/familiaActivaId en los PARAMETROS enviados a la RPC
@@ -891,7 +909,15 @@ async function cargarProductosCatalogo(reiniciar) {
   }
   if (miToken !== catalogoBusquedaToken) return;
   cotComState.catalogoCargandoProductos = false;
-  renderApp();
+  actualizarResultadosCatalogoDom();
+}
+
+// FIX foco -- actualiza SOLO el contenedor de resultados de productos, sin
+// tocar el resto del DOM (en particular, sin destruir/recrear el input de
+// busqueda, que asi conserva foco y posicion del cursor mientras se escribe).
+function actualizarResultadosCatalogoDom() {
+  var el = document.getElementById('product-list-comercial');
+  if (el) el.innerHTML = construirResultadosCatalogo();
 }
 
 // Debounce del input de busqueda -- dispara cargarProductosCatalogo(true)
@@ -1021,7 +1047,7 @@ async function buscarDespachoComuna() {
   var miToken = ++despachoBusquedaToken;
   cotComState.despacho.buscando = true;
   cotComState.despacho.buscandoError = '';
-  renderApp();
+  actualizarResultadosDespachoDom();
   try {
     const { data, error } = await sb.rpc('buscar_despachos_comuna', {
       p_busqueda: cotComState.despacho.busqueda, p_limite: 3
@@ -1036,7 +1062,14 @@ async function buscarDespachoComuna() {
   }
   if (miToken !== despachoBusquedaToken) return;
   cotComState.despacho.buscando = false;
-  renderApp();
+  actualizarResultadosDespachoDom();
+}
+
+// FIX foco -- actualiza SOLO el contenedor de resultados de despacho, sin
+// tocar el input de comuna (que asi conserva foco y cursor mientras se escribe).
+function actualizarResultadosDespachoDom() {
+  var el = document.getElementById('cc-despacho-resultados');
+  if (el) el.innerHTML = construirResultadosDespachoHtml();
 }
 
 function cotComSeleccionarComunaDespacho(id) {
@@ -1234,10 +1267,12 @@ function construirCardDatosCotizacion() {
 // se puede seleccionar, pero bloquea Simular/Generar hasta que el
 // ejecutivo cambie a "Sin costo" o elija otra comuna -- el bloqueo real
 // vive igual en el backend (simular_cotizacion_comercial / crear_cotizacion_comercial).
-function construirCardDespacho() {
+// FIX foco -- misma logica de resultados de despacho, extraida a funcion
+// propia para poder llamarla tanto en el render completo (construirCardDespacho)
+// como en la actualizacion quirurgica (actualizarResultadosDespachoDom), sin
+// duplicar codigo.
+function construirResultadosDespachoHtml() {
   var d = cotComState.despacho;
-  var esConCosto = d.tipo === 'con_costo';
-
   var resultadosHtml = '';
   if (d.buscando) {
     resultadosHtml = '<div class="cc-hint" style="margin-top:6px;">Buscando comunas...</div>';
@@ -1268,6 +1303,12 @@ function construirCardDespacho() {
         '<div class="cc-hint" style="margin-top:6px;">Comuna: <strong>' + esc(d.comunaTexto) + '</strong> — Costo de despacho: <strong>' + fmt(d.comunaCostoNeto) + '</strong> (fijado por el sistema, no editable)</div>';
     }
   }
+  return resultadosHtml + comunaSeleccionadaHtml;
+}
+
+function construirCardDespacho() {
+  var d = cotComState.despacho;
+  var esConCosto = d.tipo === 'con_costo';
 
   return '<div class="card">' +
     '<h2><span>🚚 Despacho</span></h2>' +
@@ -1280,8 +1321,7 @@ function construirCardDespacho() {
     (esConCosto ?
       '<div style="margin-top:10px;">' +
         '<input type="text" id="cc-input-despacho-comuna" autocomplete="off" placeholder="Buscar comuna (mínimo 3 letras)..." value="' + esc(d.busqueda) + '">' +
-        resultadosHtml +
-        comunaSeleccionadaHtml +
+        '<div id="cc-despacho-resultados">' + construirResultadosDespachoHtml() + '</div>' +
       '</div>'
     : '') +
   '</div>';
@@ -1342,9 +1382,9 @@ function construirCardProductos() {
   if (!cotComState.catalogoCargado) { cargarCatalogoMarcasFamilias(); }
   return '<div class="card">' +
     '<h2>🔍 Productos</h2>' +
-    construirPestanasMarcaCatalogo() +
+    '<div id="cc-cabecera-filtros-catalogo">' + construirPestanasMarcaCatalogo() + '</div>' +
     '<div class="search-row">' +
-      construirSelectorFamiliaCatalogo() +
+      '<span id="cc-selector-familia-catalogo" style="display:contents;">' + construirSelectorFamiliaCatalogo() + '</span>' +
       '<input type="text" id="cc-input-busqueda-catalogo" placeholder="Buscar dentro de esta marca..." value="' + esc(cotComState.busquedaCatalogo) + '">' +
       '<button type="button" class="btn-add" style="width:auto;" onclick="cargarProductosCatalogo(true)">Buscar</button>' +
     '</div>' +
