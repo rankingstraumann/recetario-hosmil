@@ -423,6 +423,41 @@ function fallbackCopy(value, cb) {
 }
 
 function familiasDisponibles() { return FAMILIA_ORDEN.filter(f => PRODUCTS.some(p => p.familia === f)); }
+function normalizarTextoBusqueda(texto) {
+  if (!texto) return '';
+  return texto
+    .toUpperCase()
+    .replace(/[ÁÀÄ]/g, 'A').replace(/[ÉÈË]/g, 'E').replace(/[ÍÌÏ]/g, 'I')
+    .replace(/[ÓÒÖ]/g, 'O').replace(/[ÚÙÜ]/g, 'U').replace(/Ñ/g, 'N')
+    .replace(/(\d),(\d)/g, '$1.$2')
+    .replace(/[®∅(),/]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+function esTokenNumerico(tok) {
+  return /^\d+\.?\d*$/.test(tok);
+}
+function normalizarCodigoBusqueda(codigo) {
+  return (codigo || '').toUpperCase().replace(/\./g, '');
+}
+function coincideTodosLosTerminos(producto, textoBusquedaOriginal) {
+  var qNorm = normalizarTextoBusqueda(textoBusquedaOriginal);
+  if (!qNorm) return true;
+  var codigoSinPuntos = normalizarCodigoBusqueda(producto.codigo);
+  var qCodigoComparable = qNorm.replace(/\s+/g, '').replace(/\./g, '');
+  if (codigoSinPuntos === qCodigoComparable) return true;
+  var haystack = normalizarTextoBusqueda((producto.codigo || '') + ' ' + (producto.descripcion || ''));
+  var haystackTokens = haystack.split(' ');
+  var tokensBusqueda = qNorm.split(' ');
+  return tokensBusqueda.every(function (tok) {
+    if (esTokenNumerico(tok)) {
+      var tokNum = parseFloat(tok);
+      return haystackTokens.some(function (ht) { return esTokenNumerico(ht) && parseFloat(ht) === tokNum; });
+    }
+    return haystack.indexOf(tok) !== -1;
+  });
+}
+
 function productosFiltrados() {
   // FASE 6.0J -- ya no hace falta filtrar productos ocultos aqui: cuando el
   // catalogo maestro carga con exito (cargarCatalogoMaestro()), PRODUCTS ya
@@ -439,7 +474,7 @@ function productosFiltrados() {
   }
   // Con búsqueda: recorrer todo el catálogo ignorando familia activa
   return PRODUCTS.filter(function(p) {
-    return (p.codigo.toLowerCase().includes(q) || p.descripcion.toLowerCase().includes(q));
+    return coincideTodosLosTerminos(p, state.search);
   });
 }
 function agruparPorFamilia(items) {
