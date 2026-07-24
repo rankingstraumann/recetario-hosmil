@@ -928,11 +928,17 @@ function calcDash(datos) {
 
   var total = datos.length;
   var montoTotal = datos.reduce(function(s,c){ return s + (Number(c.total)||0); }, 0);
-  var pedidos = datos.filter(function(c){ return c.estado === 'Pedido ingresado al sistema'; });
+  // Definicion unica de "convertido" -- usada en KPIs, monto convertido,
+  // monto pendiente, % de conversion, pendientes +48h y desglose por
+  // institucion. Depende solo del estado ACTUAL de cada fila: si una
+  // cotizacion retrocede desde uno de estos estados, sale sola de
+  // "convertido" en el siguiente render (no hay acumuladores ni cache).
+  var ESTADOS_CONVERTIDO = ['Pedido ingresado al sistema', 'Pago validado', 'En preparación logística', 'Despachado', 'Cerrado'];
+  var pedidos = datos.filter(function(c){ return ESTADOS_CONVERTIDO.indexOf(c.estado) !== -1; });
   var montoPedidos = pedidos.reduce(function(s,c){ return s + (Number(c.total)||0); }, 0);
   var anuladas = datos.filter(function(c){ return c.estado === 'Anulado'; });
   var pendientes = datos.filter(function(c){
-    return c.estado !== 'Pedido ingresado al sistema' && c.estado !== 'Anulado';
+    return ESTADOS_CONVERTIDO.indexOf(c.estado) === -1 && c.estado !== 'Anulado';
   });
 
   // Por institución
@@ -1019,7 +1025,7 @@ function calcDash(datos) {
     var r = porInstEnriq[label];
     r.n++;
     r.montoCot += Number(c.total) || 0;
-    if (c.estado === 'Pedido ingresado al sistema') { r.pedidos++; r.montoIng += Number(c.total) || 0; }
+    if (ESTADOS_CONVERTIDO.indexOf(c.estado) !== -1) { r.pedidos++; r.montoIng += Number(c.total) || 0; }
   });
 
   return {
