@@ -670,7 +670,8 @@ function actualizarResultadosProfesionalDom() {
             'style="display:block;width:100%;text-align:left;padding:8px 10px;border:none;border-bottom:1px solid var(--border,#e4e4e7);background:#fff;cursor:pointer;">' +
             esc(p.tratamiento + ' ' + p.apellido) + '</button>';
         }).join('') +
-        '</div>';
+        '</div>' +
+        '<div style="font-size:11px;color:#a1a1aa;margin-top:4px;">Selecciona una coincidencia para confirmar el profesional.</div>';
     } else {
       html = '<div style="font-size:12px;color:#a1a1aa;margin-top:4px;">Sin coincidencias.</div>';
     }
@@ -835,6 +836,9 @@ async function generarCotizacion() {
   const doctorFinal = profesionalSel ? (profesionalSel.tratamiento + ' ' + profesionalSel.apellido) : state.doctorOtro.trim();
   if (cartItemsList().length === 0) {
     state.errorMsg = 'Agrega al menos un producto del recetario antes de generar la cotización.'; renderCart(); return;
+  }
+  if (!doctorFinal && !state.profesionalSeleccionado && !state.profesionalModoLibre && state.profesionalBusqueda.trim()) {
+    state.errorMsg = "Selecciona un profesional de la lista o usa '+ Ingresar profesional manualmente'."; renderCart(); return;
   }
   if (!state.paciente.trim() || !doctorFinal) {
     state.errorMsg = 'Completa el nombre del paciente y selecciona (o escribe) el doctor tratante.'; renderCart(); return;
