@@ -152,7 +152,7 @@
           <div id="doctor-field"></div>
           <div class="span2">
             <input type="text" id="f-direccion" placeholder="Dirección del paciente (para facturación)" style="width:100%;">
-            <p style="font-size:11px;color:#a1a1aa;margin:4px 0 0;">📦 El despacho siempre es a Hospital Militar — esta dirección es solo para la factura.</p>
+            <p id="mensaje-despacho" style="font-size:11px;color:#a1a1aa;margin:4px 0 0;">📦 El despacho se asignará automáticamente según el profesional seleccionado.</p>
           </div>
           <input type="text" id="f-obs" class="span2" placeholder="Observaciones (opcional)">
           <div class="span2" style="display:flex;align-items:center;gap:10px;flex-wrap:wrap;">
@@ -579,6 +579,18 @@ function setQty(codigo, qty) { if (qty<=0) delete state.cart[codigo]; else state
 function removeFromCart(codigo) { delete state.cart[codigo]; renderCart(); renderFloating(); }
 function vaciarCarrito() { state.cart={}; renderCart(); renderFloating(); }
 
+function actualizarMensajeDespacho() {
+  const el = document.getElementById('mensaje-despacho');
+  if (!el) return;
+  if (state.profesionalSeleccionado) {
+    const p = state.profesionalSeleccionado;
+    el.textContent = '📦 Despacho: ' + p.sucursal + ' — ' + p.direccion_despacho;
+  } else if (state.profesionalModoLibre) {
+    el.textContent = '📦 Despacho: Hospital Militar (HOSMIL)';
+  } else {
+    el.textContent = '📦 El despacho se asignará automáticamente según el profesional seleccionado.';
+  }
+}
 function seleccionarProfesional(id) {
   const p = PROFESIONALES.find(function (x) { return String(x.id) === String(id); });
   if (!p) return;
@@ -614,6 +626,7 @@ function renderDoctorField() {
       '</div>';
     document.getElementById('f-doctor-otro').addEventListener('input', function (e) { state.doctorOtro = e.target.value; });
     document.getElementById('btn-volver-buscar').addEventListener('click', volverABuscarProfesional);
+    actualizarMensajeDespacho();
     return;
   }
 
@@ -624,6 +637,7 @@ function renderDoctorField() {
       '<button type="button" id="btn-cambiar-profesional" style="margin-left:auto;font-size:11px;color:#a1a1aa;background:none;border:none;cursor:pointer;">Cambiar</button>' +
       '</div>';
     document.getElementById('btn-cambiar-profesional').addEventListener('click', quitarProfesionalSeleccionado);
+    actualizarMensajeDespacho();
     return;
   }
 
@@ -639,6 +653,7 @@ function renderDoctorField() {
     actualizarResultadosProfesionalDom();
   });
   actualizarResultadosProfesionalDom();
+  actualizarMensajeDespacho();
 }
 
 function actualizarResultadosProfesionalDom() {
