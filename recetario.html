@@ -227,7 +227,39 @@ const PRODUCTS = [{"codigo":"075.098W","descripcion":"Emdogain 0.15 ml 5-Pack","
 // institucion se vio afectado.
 // ────────────────────────────────────────────────────────────────────────────
 const FAMILIA_ORDEN = ['ACQUA', 'NEOPOROS', 'TAPAS - CICATRIZADORES', 'BASES DE TITANIO', 'REHABILITACIÓN', 'LINEA DE BIOMATERIALES'];
-const DOCTORES = ['Otro / nuevo doctor'];
+// FASE Profesionales HOSMIL -- reemplaza el listado vacio anterior. Se
+// carga UNA VEZ desde listar_profesionales_institucion('HOSMIL') y se
+// mantiene en memoria; el filtrado del autocomplete es 100% local.
+let PROFESIONALES = [];
+let profesionalesCargados = false;
+
+function normalizarTextoProfesional(texto) {
+  if (!texto) return '';
+  return texto
+    .toUpperCase()
+    .replace(/[ÁÀÄ]/g, 'A').replace(/[ÉÈË]/g, 'E').replace(/[ÍÌÏ]/g, 'I')
+    .replace(/[ÓÒÖ]/g, 'O').replace(/[ÚÙÜ]/g, 'U').replace(/Ñ/g, 'N')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+async function cargarProfesionales() {
+  try {
+    const { data, error } = await sb.rpc('listar_profesionales_institucion', { p_institucion_codigo: 'HOSMIL' });
+    if (error) throw error;
+    PROFESIONALES = data || [];
+  } catch (e) {
+    PROFESIONALES = []; // si falla, el usuario siempre puede usar "Profesional no encontrado"
+  }
+  profesionalesCargados = true;
+}
+function buscarProfesionalesLocal(texto) {
+  const qNorm = normalizarTextoProfesional(texto).replace(/^(DR|DRA)\.?\s+/, '');
+  if (qNorm.length < 2) return [];
+  return PROFESIONALES.filter(function (p) {
+    const haystack = normalizarTextoProfesional(p.tratamiento + ' ' + p.apellido + ' ' + p.nombre_completo);
+    return haystack.indexOf(qNorm) !== -1;
+  }).slice(0, 5);
+}
 const NICOLE_EMAIL = 'nicole.navarrete@straumann.com';
 const NICOLE_WSP = '56947943058';
 const COBRANZA_EMAIL = 'cobranza.cl@straumann.com';
@@ -348,6 +380,7 @@ const state = {
   cart: {},
   paciente: '', rut: '', pacienteEmail: '', pacienteWhatsapp: '', pacienteDireccion: '',
   doctorSel: '', doctorOtro: '', obs: '', fechaCirugia: '',
+  profesionalBusqueda: '', profesionalSeleccionado: null, profesionalModoLibre: false,
   search: '', familiaFiltro: 'Todas', consentimiento: false,
   view: 'recetario',
   activeQuote: null,
@@ -546,21 +579,83 @@ function setQty(codigo, qty) { if (qty<=0) delete state.cart[codigo]; else state
 function removeFromCart(codigo) { delete state.cart[codigo]; renderCart(); renderFloating(); }
 function vaciarCarrito() { state.cart={}; renderCart(); renderFloating(); }
 
+function seleccionarProfesional(id) {
+  const p = PROFESIONALES.find(function (x) { return String(x.id) === String(id); });
+  if (!p) return;
+  state.profesionalSeleccionado = p;
+  state.profesionalBusqueda = '';
+  state.profesionalModoLibre = false;
+  renderDoctorField();
+}
+function quitarProfesionalSeleccionado() {
+  state.profesionalSeleccionado = null;
+  state.profesionalBusqueda = '';
+  renderDoctorField();
+}
+function activarModoLibre() {
+  state.profesionalModoLibre = true;
+  state.profesionalSeleccionado = null;
+  state.profesionalBusqueda = '';
+  state.doctorOtro = '';
+  renderDoctorField();
+}
+function volverABuscarProfesional() {
+  state.profesionalModoLibre = false;
+  state.doctorOtro = '';
+  renderDoctorField();
+}
 function renderDoctorField() {
   const c = document.getElementById('doctor-field');
-  if (state.doctorSel === 'Otro / nuevo doctor') {
+
+  if (state.profesionalModoLibre) {
     c.innerHTML = '<div style="display:flex;gap:6px;">' +
       '<input type="text" id="f-doctor-otro" placeholder="Nombre del doctor tratante" style="flex:1;" value="' + esc(state.doctorOtro) + '">' +
-      '<button type="button" id="btn-volver-lista" style="font-size:11px;color:#a1a1aa;background:none;border:none;cursor:pointer;white-space:nowrap;">Volver a la lista</button>' +
+      '<button type="button" id="btn-volver-buscar" style="font-size:11px;color:#a1a1aa;background:none;border:none;cursor:pointer;white-space:nowrap;">Volver a buscar</button>' +
       '</div>';
-    document.getElementById('f-doctor-otro').addEventListener('input', function(e){ state.doctorOtro = e.target.value; });
-    document.getElementById('btn-volver-lista').addEventListener('click', function(){ state.doctorSel=''; state.doctorOtro=''; renderDoctorField(); });
-  } else {
-    let opts = '<option value="">Selecciona el doctor tratante</option>';
-    DOCTORES.forEach(function(d){ opts += '<option value="' + esc(d) + '"' + (state.doctorSel===d?' selected':'') + '>' + esc(d) + '</option>'; });
-    c.innerHTML = '<select id="f-doctor-sel">' + opts + '</select>';
-    document.getElementById('f-doctor-sel').addEventListener('change', function(e){ state.doctorSel = e.target.value; renderDoctorField(); });
+    document.getElementById('f-doctor-otro').addEventListener('input', function (e) { state.doctorOtro = e.target.value; });
+    document.getElementById('btn-volver-buscar').addEventListener('click', volverABuscarProfesional);
+    return;
   }
+
+  if (state.profesionalSeleccionado) {
+    const p = state.profesionalSeleccionado;
+    c.innerHTML = '<div style="display:flex;align-items:center;gap:8px;padding:8px 10px;border:1px solid var(--border,#e4e4e7);border-radius:8px;background:#f0fdf4;">' +
+      '<span style="color:#15803d;font-weight:600;">✓ ' + esc(p.tratamiento + ' ' + p.apellido) + '</span>' +
+      '<button type="button" id="btn-cambiar-profesional" style="margin-left:auto;font-size:11px;color:#a1a1aa;background:none;border:none;cursor:pointer;">Cambiar</button>' +
+      '</div>';
+    document.getElementById('btn-cambiar-profesional').addEventListener('click', quitarProfesionalSeleccionado);
+    return;
+  }
+
+  const resultados = buscarProfesionalesLocal(state.profesionalBusqueda);
+  let resultadosHtml = '';
+  if (state.profesionalBusqueda.trim().length >= 2) {
+    if (resultados.length > 0) {
+      resultadosHtml = '<div style="border:1px solid var(--border,#e4e4e7);border-radius:8px;margin-top:4px;overflow:hidden;">' +
+        resultados.map(function (p) {
+          return '<button type="button" data-prof-id="' + esc(p.id) + '" class="btn-sel-profesional" ' +
+            'style="display:block;width:100%;text-align:left;padding:8px 10px;border:none;border-bottom:1px solid var(--border,#e4e4e7);background:#fff;cursor:pointer;">' +
+            esc(p.tratamiento + ' ' + p.apellido) + '</button>';
+        }).join('') +
+        '</div>';
+    } else {
+      resultadosHtml = '<div style="font-size:12px;color:#a1a1aa;margin-top:4px;">Sin coincidencias.</div>';
+    }
+  }
+
+  c.innerHTML =
+    '<input type="text" id="f-profesional-busqueda" placeholder="Buscar profesional (mínimo 2 letras)..." autocomplete="off" value="' + esc(state.profesionalBusqueda) + '">' +
+    resultadosHtml +
+    '<button type="button" id="btn-profesional-no-encontrado" style="font-size:11px;color:#a1a1aa;background:none;border:none;cursor:pointer;margin-top:4px;">Profesional no encontrado</button>';
+
+  document.getElementById('f-profesional-busqueda').addEventListener('input', function (e) {
+    state.profesionalBusqueda = e.target.value;
+    renderDoctorField();
+  });
+  document.querySelectorAll('.btn-sel-profesional').forEach(function (btn) {
+    btn.addEventListener('click', function () { seleccionarProfesional(btn.getAttribute('data-prof-id')); });
+  });
+  document.getElementById('btn-profesional-no-encontrado').addEventListener('click', activarModoLibre);
 }
 
 function renderProductList() {
@@ -710,7 +805,8 @@ function renderFloating() {
 }
 
 async function generarCotizacion() {
-  const doctorFinal = state.doctorSel === 'Otro / nuevo doctor' ? state.doctorOtro.trim() : state.doctorSel;
+  const profesionalSel = state.profesionalSeleccionado;
+  const doctorFinal = profesionalSel ? (profesionalSel.tratamiento + ' ' + profesionalSel.apellido) : state.doctorOtro.trim();
   if (cartItemsList().length === 0) {
     state.errorMsg = 'Agrega al menos un producto del recetario antes de generar la cotización.'; renderCart(); return;
   }
@@ -786,6 +882,9 @@ async function generarCotizacion() {
       payload: {
         numero: quote.numero, institucion: quote.institucion, paciente: quote.paciente, rut: quote.rut, fecha_cirugia: quote.fechaCirugia || null,
         paciente_email: quote.pacienteEmail, paciente_whatsapp: quote.pacienteWhatsapp, paciente_direccion: quote.pacienteDireccion, doctor: quote.doctor,
+        doctor_origen: profesionalSel ? 'lista_hosmil' : 'texto_libre',
+        profesional_id: profesionalSel ? profesionalSel.id : null,
+        institucion_codigo: 'HOSMIL',
         fecha: quote.fecha, observaciones: quote.observaciones, items: quote.items, total: quote.total,
         estado: quote.estado, historial: quote.historial
       }
@@ -1014,6 +1113,14 @@ renderCart();
 renderFloating();
 
 cargarCatalogoMaestro(); // Catálogo maestro activo por defecto -- ver comentario en su declaración
+cargarProfesionales().then(function () {
+  // Solo re-renderizar si el usuario todavia no interactuo con el campo
+  // (evita destruir el input mientras escribe -- mismo riesgo ya corregido
+  // en el buscador de productos del Cotizador Comercial).
+  if (!state.profesionalBusqueda && !state.profesionalSeleccionado && !state.profesionalModoLibre) {
+    renderDoctorField();
+  }
+});
 
 if ('serviceWorker' in navigator) {
   window.addEventListener('load', function () {
