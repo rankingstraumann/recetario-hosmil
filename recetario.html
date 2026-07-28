@@ -592,7 +592,7 @@ function quitarProfesionalSeleccionado() {
   state.profesionalBusqueda = '';
   renderDoctorField();
 }
-function activarModoLibre() {
+function activarModoManual() {
   state.profesionalModoLibre = true;
   state.profesionalSeleccionado = null;
   state.profesionalBusqueda = '';
@@ -609,7 +609,7 @@ function renderDoctorField() {
 
   if (state.profesionalModoLibre) {
     c.innerHTML = '<div style="display:flex;gap:6px;">' +
-      '<input type="text" id="f-doctor-otro" placeholder="Nombre del doctor tratante" style="flex:1;" value="' + esc(state.doctorOtro) + '">' +
+      '<input type="text" id="f-doctor-otro" placeholder="Dr./Dra. y apellido (ej: Dr. Martínez)" style="flex:1;" value="' + esc(state.doctorOtro) + '">' +
       '<button type="button" id="btn-volver-buscar" style="font-size:11px;color:#a1a1aa;background:none;border:none;cursor:pointer;white-space:nowrap;">Volver a buscar</button>' +
       '</div>';
     document.getElementById('f-doctor-otro').addEventListener('input', function (e) { state.doctorOtro = e.target.value; });
@@ -627,11 +627,29 @@ function renderDoctorField() {
     return;
   }
 
+  // FIX foco -- el input vive fuera del contenedor que se actualiza en cada
+  // tecla (#profesional-resultados), asi que nunca se destruye/recrea
+  // mientras el usuario escribe.
+  c.innerHTML =
+    '<input type="text" id="f-profesional-busqueda" placeholder="Buscar profesional (mínimo 2 letras)..." autocomplete="off" value="' + esc(state.profesionalBusqueda) + '">' +
+    '<div id="profesional-resultados"></div>';
+
+  document.getElementById('f-profesional-busqueda').addEventListener('input', function (e) {
+    state.profesionalBusqueda = e.target.value;
+    actualizarResultadosProfesionalDom();
+  });
+  actualizarResultadosProfesionalDom();
+}
+
+function actualizarResultadosProfesionalDom() {
+  const cont = document.getElementById('profesional-resultados');
+  if (!cont) return;
+
   const resultados = buscarProfesionalesLocal(state.profesionalBusqueda);
-  let resultadosHtml = '';
+  let html = '';
   if (state.profesionalBusqueda.trim().length >= 2) {
     if (resultados.length > 0) {
-      resultadosHtml = '<div style="border:1px solid var(--border,#e4e4e7);border-radius:8px;margin-top:4px;overflow:hidden;">' +
+      html = '<div style="border:1px solid var(--border,#e4e4e7);border-radius:8px;margin-top:4px;overflow:hidden;">' +
         resultados.map(function (p) {
           return '<button type="button" data-prof-id="' + esc(p.id) + '" class="btn-sel-profesional" ' +
             'style="display:block;width:100%;text-align:left;padding:8px 10px;border:none;border-bottom:1px solid var(--border,#e4e4e7);background:#fff;cursor:pointer;">' +
@@ -639,23 +657,16 @@ function renderDoctorField() {
         }).join('') +
         '</div>';
     } else {
-      resultadosHtml = '<div style="font-size:12px;color:#a1a1aa;margin-top:4px;">Sin coincidencias.</div>';
+      html = '<div style="font-size:12px;color:#a1a1aa;margin-top:4px;">Sin coincidencias.</div>';
     }
   }
+  html += '<button type="button" id="btn-profesional-no-encontrado" style="font-size:11px;color:#a1a1aa;background:none;border:none;cursor:pointer;margin-top:4px;">+ Ingresar profesional manualmente</button>';
 
-  c.innerHTML =
-    '<input type="text" id="f-profesional-busqueda" placeholder="Buscar profesional (mínimo 2 letras)..." autocomplete="off" value="' + esc(state.profesionalBusqueda) + '">' +
-    resultadosHtml +
-    '<button type="button" id="btn-profesional-no-encontrado" style="font-size:11px;color:#a1a1aa;background:none;border:none;cursor:pointer;margin-top:4px;">Profesional no encontrado</button>';
-
-  document.getElementById('f-profesional-busqueda').addEventListener('input', function (e) {
-    state.profesionalBusqueda = e.target.value;
-    renderDoctorField();
-  });
+  cont.innerHTML = html;
   document.querySelectorAll('.btn-sel-profesional').forEach(function (btn) {
     btn.addEventListener('click', function () { seleccionarProfesional(btn.getAttribute('data-prof-id')); });
   });
-  document.getElementById('btn-profesional-no-encontrado').addEventListener('click', activarModoLibre);
+  document.getElementById('btn-profesional-no-encontrado').addEventListener('click', activarModoManual);
 }
 
 function renderProductList() {
@@ -882,7 +893,7 @@ async function generarCotizacion() {
       payload: {
         numero: quote.numero, institucion: quote.institucion, paciente: quote.paciente, rut: quote.rut, fecha_cirugia: quote.fechaCirugia || null,
         paciente_email: quote.pacienteEmail, paciente_whatsapp: quote.pacienteWhatsapp, paciente_direccion: quote.pacienteDireccion, doctor: quote.doctor,
-        doctor_origen: profesionalSel ? 'lista_hosmil' : 'texto_libre',
+        doctor_origen: profesionalSel ? 'lista_hosmil' : 'manual_hosmil',
         profesional_id: profesionalSel ? profesionalSel.id : null,
         institucion_codigo: 'HOSMIL',
         fecha: quote.fecha, observaciones: quote.observaciones, items: quote.items, total: quote.total,
