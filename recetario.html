@@ -380,7 +380,7 @@ const state = {
   cart: {},
   paciente: '', rut: '', pacienteEmail: '', pacienteWhatsapp: '', pacienteDireccion: '',
   doctorSel: '', doctorOtro: '', obs: '', fechaCirugia: '',
-  profesionalBusqueda: '', profesionalSeleccionado: null, profesionalModoLibre: false,
+  profesionalBusqueda: '', profesionalSeleccionado: null, profesionalModoLibre: false, profesionalManualConfirmado: false,
   search: '', familiaFiltro: 'Todas', consentimiento: false,
   view: 'recetario',
   activeQuote: null,
@@ -606,18 +606,39 @@ function quitarProfesionalSeleccionado() {
 }
 function activarModoManual() {
   state.profesionalModoLibre = true;
+  state.profesionalManualConfirmado = false;
   state.profesionalSeleccionado = null;
   state.profesionalBusqueda = '';
   state.doctorOtro = '';
   renderDoctorField();
 }
+function confirmarManualDesdeBusqueda() {
+  // Copia EXACTAMENTE lo que el usuario escribio (sin inferir Dr./Dra.)
+  // y lo deja confirmado de inmediato, sin pedirle que lo vuelva a escribir.
+  state.doctorOtro = state.profesionalBusqueda.trim();
+  state.profesionalModoLibre = true;
+  state.profesionalManualConfirmado = true;
+  state.profesionalBusqueda = '';
+  renderDoctorField();
+}
 function volverABuscarProfesional() {
   state.profesionalModoLibre = false;
+  state.profesionalManualConfirmado = false;
   state.doctorOtro = '';
   renderDoctorField();
 }
 function renderDoctorField() {
   const c = document.getElementById('doctor-field');
+
+  if (state.profesionalModoLibre && state.profesionalManualConfirmado) {
+    c.innerHTML = '<div style="display:flex;align-items:center;gap:8px;padding:8px 10px;border:1px solid var(--border,#e4e4e7);border-radius:8px;background:#f0fdf4;">' +
+      '<span style="color:#15803d;font-weight:600;">✓ ' + esc(state.doctorOtro) + '</span>' +
+      '<button type="button" id="btn-cambiar-manual" style="margin-left:auto;font-size:11px;color:#a1a1aa;background:none;border:none;cursor:pointer;">Cambiar</button>' +
+      '</div>';
+    document.getElementById('btn-cambiar-manual').addEventListener('click', volverABuscarProfesional);
+    actualizarMensajeDespacho();
+    return;
+  }
 
   if (state.profesionalModoLibre) {
     c.innerHTML = '<div style="display:flex;gap:6px;">' +
@@ -660,9 +681,10 @@ function actualizarResultadosProfesionalDom() {
   const cont = document.getElementById('profesional-resultados');
   if (!cont) return;
 
+  const textoBusqueda = state.profesionalBusqueda.trim();
   const resultados = buscarProfesionalesLocal(state.profesionalBusqueda);
   let html = '';
-  if (state.profesionalBusqueda.trim().length >= 2) {
+  if (textoBusqueda.length >= 2) {
     if (resultados.length > 0) {
       html = '<div style="border:1px solid var(--border,#e4e4e7);border-radius:8px;margin-top:4px;overflow:hidden;">' +
         resultados.map(function (p) {
@@ -671,17 +693,25 @@ function actualizarResultadosProfesionalDom() {
             esc(p.tratamiento + ' ' + p.apellido) + '</button>';
         }).join('') +
         '</div>' +
-        '<div style="font-size:11px;color:#a1a1aa;margin-top:4px;">Selecciona una coincidencia para confirmar el profesional.</div>';
-    } else {
-      html = '<div style="font-size:12px;color:#a1a1aa;margin-top:4px;">Sin coincidencias.</div>';
+        '<div style="font-size:11px;color:#a1a1aa;margin-top:4px;">Selecciona una coincidencia para confirmar el profesional.</div>' +
+        '<button type="button" id="btn-profesional-no-encontrado" style="font-size:11px;color:#a1a1aa;background:none;border:none;cursor:pointer;margin-top:4px;">+ Ingresar profesional manualmente</button>';
+      cont.innerHTML = html;
+      document.querySelectorAll('.btn-sel-profesional').forEach(function (btn) {
+        btn.addEventListener('click', function () { seleccionarProfesional(btn.getAttribute('data-prof-id')); });
+      });
+      document.getElementById('btn-profesional-no-encontrado').addEventListener('click', activarModoManual);
+      return;
     }
+    // Sin coincidencias -- ofrecer usar directamente lo ya escrito como
+    // profesional manual, sin pedirle al usuario que lo vuelva a escribir.
+    html = '<button type="button" id="btn-usar-manual" style="display:block;width:100%;text-align:left;padding:8px 10px;margin-top:4px;border:1px solid var(--border,#e4e4e7);border-radius:8px;background:#f0fdf4;color:#15803d;font-weight:600;cursor:pointer;">' +
+      '✓ Usar "' + esc(textoBusqueda) + '" como profesional manual</button>';
+    cont.innerHTML = html;
+    document.getElementById('btn-usar-manual').addEventListener('click', confirmarManualDesdeBusqueda);
+    return;
   }
-  html += '<button type="button" id="btn-profesional-no-encontrado" style="font-size:11px;color:#a1a1aa;background:none;border:none;cursor:pointer;margin-top:4px;">+ Ingresar profesional manualmente</button>';
 
-  cont.innerHTML = html;
-  document.querySelectorAll('.btn-sel-profesional').forEach(function (btn) {
-    btn.addEventListener('click', function () { seleccionarProfesional(btn.getAttribute('data-prof-id')); });
-  });
+  cont.innerHTML = '<button type="button" id="btn-profesional-no-encontrado" style="font-size:11px;color:#a1a1aa;background:none;border:none;cursor:pointer;margin-top:4px;">+ Ingresar profesional manualmente</button>';
   document.getElementById('btn-profesional-no-encontrado').addEventListener('click', activarModoManual);
 }
 
@@ -838,7 +868,11 @@ async function generarCotizacion() {
     state.errorMsg = 'Agrega al menos un producto del recetario antes de generar la cotización.'; renderCart(); return;
   }
   if (!doctorFinal && !state.profesionalSeleccionado && !state.profesionalModoLibre && state.profesionalBusqueda.trim()) {
-    state.errorMsg = "Selecciona un profesional de la lista o usa '+ Ingresar profesional manualmente'."; renderCart(); return;
+    const hayCoincidencias = buscarProfesionalesLocal(state.profesionalBusqueda).length > 0;
+    state.errorMsg = hayCoincidencias
+      ? "Selecciona un profesional de la lista o usa '+ Ingresar profesional manualmente'."
+      : "Confirma '" + state.profesionalBusqueda.trim() + "' como profesional manual para continuar.";
+    renderCart(); return;
   }
   if (!state.paciente.trim() || !doctorFinal) {
     state.errorMsg = 'Completa el nombre del paciente y selecciona (o escribe) el doctor tratante.'; renderCart(); return;
