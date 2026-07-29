@@ -252,11 +252,28 @@ async function cargarProfesionales() {
   }
   profesionalesCargados = true;
 }
+function agruparProfesionales() {
+  // Agrupa las filas de PROFESIONALES (1 fila = 1 combinacion profesional+sede)
+  // por identidad REAL del profesional (correo + nombre_completo normalizados),
+  // NO por apellido -- evita entradas visuales duplicadas para quien atiende
+  // en mas de una sede.
+  var grupos = {};
+  var orden = [];
+  PROFESIONALES.forEach(function (p) {
+    var key = normalizarTextoProfesional(p.correo || '') + '||' + normalizarTextoProfesional(p.nombre_completo || '');
+    if (!grupos[key]) {
+      grupos[key] = { key: key, tratamiento: p.tratamiento, apellido: p.apellido, nombre_completo: p.nombre_completo, correo: p.correo, sedes: [] };
+      orden.push(key);
+    }
+    grupos[key].sedes.push({ id: p.id, sucursal: p.sucursal, direccion_despacho: p.direccion_despacho });
+  });
+  return orden.map(function (k) { return grupos[k]; });
+}
 function buscarProfesionalesLocal(texto) {
   const qNorm = normalizarTextoProfesional(texto).replace(/^(DR|DRA)\.?\s+/, '');
   if (qNorm.length < 2) return [];
-  return PROFESIONALES.filter(function (p) {
-    const haystack = normalizarTextoProfesional(p.tratamiento + ' ' + p.apellido + ' ' + p.nombre_completo);
+  return agruparProfesionales().filter(function (g) {
+    const haystack = normalizarTextoProfesional(g.tratamiento + ' ' + g.apellido + ' ' + g.nombre_completo);
     return haystack.indexOf(qNorm) !== -1;
   }).slice(0, 5);
 }
@@ -380,7 +397,7 @@ const state = {
   cart: {},
   paciente: '', rut: '', pacienteEmail: '', pacienteWhatsapp: '', pacienteDireccion: '',
   doctorSel: '', doctorOtro: '', obs: '', fechaCirugia: '',
-  profesionalBusqueda: '', profesionalSeleccionado: null, profesionalModoLibre: false, profesionalManualConfirmado: false,
+  profesionalBusqueda: '', profesionalSeleccionado: null, profesionalModoLibre: false, profesionalManualConfirmado: false, profesionalPersonaPendiente: null,
   search: '', familiaFiltro: 'Todas', consentimiento: false,
   view: 'recetario',
   activeQuote: null,
@@ -582,7 +599,9 @@ function vaciarCarrito() { state.cart={}; renderCart(); renderFloating(); }
 function actualizarMensajeDespacho() {
   const el = document.getElementById('mensaje-despacho');
   if (!el) return;
-  if (state.profesionalSeleccionado) {
+  if (state.profesionalPersonaPendiente) {
+    el.textContent = '📦 Selecciona la sede del profesional para definir el despacho.';
+  } else if (state.profesionalSeleccionado) {
     const p = state.profesionalSeleccionado;
     el.textContent = '📦 Despacho: ' + p.sucursal + ' — ' + p.direccion_despacho;
   } else if (state.profesionalModoLibre) {
@@ -595,19 +614,42 @@ function seleccionarProfesional(id) {
   const p = PROFESIONALES.find(function (x) { return String(x.id) === String(id); });
   if (!p) return;
   state.profesionalSeleccionado = p;
+  state.profesionalPersonaPendiente = null;
   state.profesionalBusqueda = '';
   state.profesionalModoLibre = false;
   renderDoctorField();
 }
 function quitarProfesionalSeleccionado() {
   state.profesionalSeleccionado = null;
+  state.profesionalPersonaPendiente = null;
   state.profesionalBusqueda = '';
+  renderDoctorField();
+}
+function elegirPersonaProfesional(key) {
+  const grupo = agruparProfesionales().find(function (g) { return g.key === key; });
+  if (!grupo) return;
+  if (grupo.sedes.length === 1) {
+    seleccionarProfesional(grupo.sedes[0].id);
+    return;
+  }
+  // Multisede: NO confirmar una fila arbitraria -- preguntar la sede.
+  state.profesionalPersonaPendiente = grupo;
+  state.profesionalBusqueda = '';
+  renderDoctorField();
+}
+function elegirSedeProfesional(id) {
+  state.profesionalPersonaPendiente = null;
+  seleccionarProfesional(id);
+}
+function cancelarSeleccionSede() {
+  state.profesionalPersonaPendiente = null;
   renderDoctorField();
 }
 function activarModoManual() {
   state.profesionalModoLibre = true;
   state.profesionalManualConfirmado = false;
   state.profesionalSeleccionado = null;
+  state.profesionalPersonaPendiente = null;
   state.profesionalBusqueda = '';
   state.doctorOtro = '';
   renderDoctorField();
@@ -629,6 +671,28 @@ function volverABuscarProfesional() {
 }
 function renderDoctorField() {
   const c = document.getElementById('doctor-field');
+
+  if (state.profesionalPersonaPendiente) {
+    const g = state.profesionalPersonaPendiente;
+    c.innerHTML = '<div style="border:1px solid var(--border,#e4e4e7);border-radius:8px;padding:8px 10px;">' +
+      '<div style="font-weight:600;margin-bottom:4px;">' + esc(g.tratamiento + ' ' + g.apellido) + '</div>' +
+      '<div style="font-size:12px;color:#71717a;margin-bottom:6px;">¿Dónde atiende esta cotización?</div>' +
+      '<div style="display:flex;gap:6px;flex-wrap:wrap;">' +
+        g.sedes.map(function (s) {
+          return '<button type="button" data-sede-id="' + esc(s.id) + '" class="btn-elegir-sede" ' +
+            'style="padding:6px 12px;border:1px solid var(--border,#e4e4e7);border-radius:8px;background:#fff;cursor:pointer;">' +
+            esc(s.sucursal) + '</button>';
+        }).join('') +
+      '</div>' +
+      '<button type="button" id="btn-cancelar-sede" style="font-size:11px;color:#a1a1aa;background:none;border:none;cursor:pointer;margin-top:6px;">Cancelar</button>' +
+      '</div>';
+    document.querySelectorAll('.btn-elegir-sede').forEach(function (btn) {
+      btn.addEventListener('click', function () { elegirSedeProfesional(btn.getAttribute('data-sede-id')); });
+    });
+    document.getElementById('btn-cancelar-sede').addEventListener('click', cancelarSeleccionSede);
+    actualizarMensajeDespacho();
+    return;
+  }
 
   if (state.profesionalModoLibre && state.profesionalManualConfirmado) {
     c.innerHTML = '<div style="display:flex;align-items:center;gap:8px;padding:8px 10px;border:1px solid var(--border,#e4e4e7);border-radius:8px;background:#f0fdf4;">' +
@@ -654,7 +718,8 @@ function renderDoctorField() {
   if (state.profesionalSeleccionado) {
     const p = state.profesionalSeleccionado;
     c.innerHTML = '<div style="display:flex;align-items:center;gap:8px;padding:8px 10px;border:1px solid var(--border,#e4e4e7);border-radius:8px;background:#f0fdf4;">' +
-      '<span style="color:#15803d;font-weight:600;">✓ ' + esc(p.tratamiento + ' ' + p.apellido) + '</span>' +
+      '<div><span style="color:#15803d;font-weight:600;">✓ ' + esc(p.tratamiento + ' ' + p.apellido) + '</span>' +
+      '<div style="font-size:11px;color:#15803d;">' + esc(p.sucursal) + '</div></div>' +
       '<button type="button" id="btn-cambiar-profesional" style="margin-left:auto;font-size:11px;color:#a1a1aa;background:none;border:none;cursor:pointer;">Cambiar</button>' +
       '</div>';
     document.getElementById('btn-cambiar-profesional').addEventListener('click', quitarProfesionalSeleccionado);
@@ -687,17 +752,17 @@ function actualizarResultadosProfesionalDom() {
   if (textoBusqueda.length >= 2) {
     if (resultados.length > 0) {
       html = '<div style="border:1px solid var(--border,#e4e4e7);border-radius:8px;margin-top:4px;overflow:hidden;">' +
-        resultados.map(function (p) {
-          return '<button type="button" data-prof-id="' + esc(p.id) + '" class="btn-sel-profesional" ' +
+        resultados.map(function (g) {
+          return '<button type="button" data-persona-key="' + esc(g.key) + '" class="btn-sel-persona" ' +
             'style="display:block;width:100%;text-align:left;padding:8px 10px;border:none;border-bottom:1px solid var(--border,#e4e4e7);background:#fff;cursor:pointer;">' +
-            esc(p.tratamiento + ' ' + p.apellido) + '</button>';
+            esc(g.tratamiento + ' ' + g.apellido) + '</button>';
         }).join('') +
         '</div>' +
         '<div style="font-size:11px;color:#a1a1aa;margin-top:4px;">Selecciona una coincidencia para confirmar el profesional.</div>' +
         '<button type="button" id="btn-profesional-no-encontrado" style="font-size:11px;color:#a1a1aa;background:none;border:none;cursor:pointer;margin-top:4px;">+ Ingresar profesional manualmente</button>';
       cont.innerHTML = html;
-      document.querySelectorAll('.btn-sel-profesional').forEach(function (btn) {
-        btn.addEventListener('click', function () { seleccionarProfesional(btn.getAttribute('data-prof-id')); });
+      document.querySelectorAll('.btn-sel-persona').forEach(function (btn) {
+        btn.addEventListener('click', function () { elegirPersonaProfesional(btn.getAttribute('data-persona-key')); });
       });
       document.getElementById('btn-profesional-no-encontrado').addEventListener('click', activarModoManual);
       return;
@@ -866,6 +931,10 @@ async function generarCotizacion() {
   const doctorFinal = profesionalSel ? (profesionalSel.tratamiento + ' ' + profesionalSel.apellido) : state.doctorOtro.trim();
   if (cartItemsList().length === 0) {
     state.errorMsg = 'Agrega al menos un producto del recetario antes de generar la cotización.'; renderCart(); return;
+  }
+  if (!doctorFinal && state.profesionalPersonaPendiente) {
+    const g = state.profesionalPersonaPendiente;
+    state.errorMsg = 'Selecciona la sede de ' + g.tratamiento + ' ' + g.apellido + ' para continuar.'; renderCart(); return;
   }
   if (!doctorFinal && !state.profesionalSeleccionado && !state.profesionalModoLibre && state.profesionalBusqueda.trim()) {
     const hayCoincidencias = buscarProfesionalesLocal(state.profesionalBusqueda).length > 0;
