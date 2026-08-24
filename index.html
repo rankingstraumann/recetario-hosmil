@@ -241,6 +241,19 @@ function render(q) {
     '<p style="margin:0;color:#3f3f46;">' + esc(q.observaciones) + '</p></div>'
   ) : '';
 
+  // Despacho HOSMIL -- solo esta institucion muestra despacho aqui: usa el
+  // snapshot real (sucursal + direccion) cuando existan ambos campos; si
+  // falta alguno (historica o snapshot parcial), fallback seguro al texto
+  // generico. Otras instituciones no muestran este bloque (comportamiento
+  // preexistente, sin cambios).
+  var despachoHtml = '';
+  if (q.institucion_codigo === 'HOSMIL') {
+    var despachoTexto = (q.profesional_sucursal && q.profesional_direccion_despacho)
+      ? (q.profesional_sucursal + ' — ' + q.profesional_direccion_despacho)
+      : 'Hospital Militar (HOSMIL)';
+    despachoHtml = '<div style="grid-column:1/-1;"><div class="field-label">Despacho</div><div class="field-value">' + esc(despachoTexto) + '</div></div>';
+  }
+
   document.getElementById('main').innerHTML =
     '<div class="card">' +
     '<div class="card-head">' +
@@ -256,6 +269,7 @@ function render(q) {
     '<div><div class="field-label">Institución</div><div class="field-value">' + esc(q.institucion) + '</div></div>' +
     '<div><div class="field-label">Paciente</div><div class="field-value">' + esc(q.paciente) + (q.rut ? ' · ' + esc(q.rut) : '') + '</div></div>' +
     '<div style="grid-column:1/-1;"><div class="field-label">Doctor tratante</div><div class="field-value">' + esc(q.doctor) + '</div></div>' +
+    despachoHtml +
     '</div>' +
     '<table><thead><tr><th>Producto</th><th class="center">Cant.</th><th class="right">Subtotal</th></tr></thead>' +
     '<tbody>' + itemsHtml + '</tbody></table>' +

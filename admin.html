@@ -737,10 +737,15 @@ async function copiarGestionCompleta(id, btn) {
   // Dirección de despacho: para todas las instituciones es la dirección
   // institucional fija (inst.despacho). Excepción ARMADA: el despacho se
   // hace a la misma dirección de facturación del paciente, por lo que se
-  // usa c.paciente_direccion en su lugar.
+  // usa c.paciente_direccion en su lugar. Excepción HOSMIL: si la
+  // cotización tiene snapshot de profesional (sede seleccionada), se usa
+  // esa sede + dirección real en vez del genérico institucional. Si no
+  // existe snapshot (histórica), se mantiene el fallback genérico actual.
   const direccionDespacho = (inst.codigo === 'ARMADA')
     ? valorSeguro(c.paciente_direccion)
-    : (inst.despacho || '-');
+    : (inst.codigo === 'HOSMIL' && c.profesional_sucursal && c.profesional_direccion_despacho)
+      ? (c.profesional_sucursal + ' — ' + c.profesional_direccion_despacho)
+      : (inst.despacho || '-');
 
   // Productos: misma data y misma lógica de descuento que el detalle visual
   // (descuentoEfectivo / fmt), reutilizadas sin modificar
@@ -1358,7 +1363,11 @@ function generarListaCotizaciones() {
           (c.fecha_cirugia ? '<div><strong>Fecha de cirugía:</strong> ' + esc(c.fecha_cirugia) + '</div>' : '') +
           '</div>' +
           '<div style="margin-bottom:10px;"><button class="btn-logout" onclick="copiarGestionCompleta(\'' + c.id + '\', this)">📋 Copiar gestión completa</button></div>' +
-          '<div style="font-size:11px;color:#92400e;background:#fffbeb;border:1px solid #fde68a;border-radius:6px;padding:6px 10px;margin-bottom:10px;display:inline-block;">📦 Despacho siempre a ' + esc(inst.despacho) + ', independiente de la dirección de facturación.</div>' +
+          '<div style="font-size:11px;color:#92400e;background:#fffbeb;border:1px solid #fde68a;border-radius:6px;padding:6px 10px;margin-bottom:10px;display:inline-block;">📦 Despacho siempre a ' + esc(
+            (inst.codigo === 'HOSMIL' && c.profesional_sucursal && c.profesional_direccion_despacho)
+              ? (c.profesional_sucursal + ' — ' + c.profesional_direccion_despacho)
+              : inst.despacho
+          ) + ', independiente de la dirección de facturación.</div>' +
           (c.comprobante_path ? '<div style="margin-bottom:10px;display:flex;gap:8px;flex-wrap:wrap;"><button class="btn-logout" onclick="verComprobante(\'' + c.comprobante_path.replace(/'/g,"\\'") + '\', this)">📎 Ver comprobante de pago</button><button class="btn-logout" onclick="copiarLinkComprobante(\'' + c.comprobante_path.replace(/'/g,"\\'") + '\', this)">🔗 Copiar link comprobante</button></div>' : '') +
           (esSuperAdmin() && c.estado === 'Anulado'
             ? '<div style="margin-bottom:10px;"><button class="btn-logout" style="color:#b91c1c;border-color:#fecaca;" onclick="eliminarCotizacionAnulada(\'' + c.id + '\', this)">🗑️ Eliminar anulado</button></div>'
