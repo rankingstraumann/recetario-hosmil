@@ -628,7 +628,7 @@ function renderCart() {
             '<span class="qty-val">' + it.cantidad + '</span>' +
             '<button onclick="setQty(\'' + it.codigo + '\', \'' + it.familia + '\', ' + (it.cantidad+1) + ')">+</button>' +
           '</div>' +
-          '<span style="font-size:12px;font-weight:600;">' + fmt(it.precioFinal * it.cantidad) + '</span>' +
+          '<div style="text-align:right;"><span style="font-size:12px;font-weight:600;">' + fmt(it.precioFinal * it.cantidad) + '</span><div style="font-size:9px;color:#a1a1aa;">Precio final c/dscto.</div></div>' +
         '</div></div>';
     });
     itemsEl.innerHTML = html;
