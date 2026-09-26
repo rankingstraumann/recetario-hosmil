@@ -172,6 +172,7 @@ function responsableDeInstitucion(inst) {
 }
 
 var currentQuote = null;
+var saldoPendienteActual = null;
 var currentToken = null;
 
 async function subirComprobante() {
@@ -180,10 +181,11 @@ async function subirComprobante() {
   var file = input.files[0];
   if (!file) return;
   var montoInput = document.getElementById('f-monto-pagado');
-  var monto = parseFloat(montoInput.value);
+  var montoTexto = montoInput.value.trim();
+  var monto = montoTexto === '' ? saldoPendienteActual : parseFloat(montoTexto);
   var msgEl = document.getElementById('upload-msg');
   if (!monto || monto <= 0) {
-    msgEl.innerHTML = '<div class="hint" style="color:#b91c1c;">Indica cuánto transferiste en este comprobante para continuar.</div>';
+    msgEl.innerHTML = '<div class="hint" style="color:#b91c1c;">Indica cuánto transferiste, o déjalo vacío si pagaste el total.</div>';
     return;
   }
 
@@ -201,6 +203,7 @@ async function subirComprobante() {
     var { data: rpcData, error: rpcErr } = await sb.rpc('registrar_pago_publico', { p_token: currentToken, p_comprobante_path: path, p_monto: monto });
     if (rpcErr) throw rpcErr;
 
+    saldoPendienteActual = rpcData.saldo;
     var estadoBox = document.getElementById('estado-pago-box');
     if (rpcData.saldo <= 0) {
       estadoBox.innerHTML = '<div class="msg-success">✅ Pago completo recibido. Ya avisamos a ' + responsableDeInstitucion(q.institucion).nombre + '.</div>';
@@ -208,7 +211,7 @@ async function subirComprobante() {
       document.getElementById('upload-label').style.display = 'none';
       document.getElementById('monto-field').style.display = 'none';
     } else {
-      estadoBox.innerHTML = '<div class="msg-success">✅ Comprobante recibido — Pagado: ' + fmt(rpcData.pagado) + ' de ' + fmt(rpcData.total) + ' · Falta: ' + fmt(rpcData.saldo) + '</div>';
+      estadoBox.innerHTML = '<div class="msg-success">✅ Comprobante recibido — Pagado: ' + fmt(rpcData.pagado) + ' de ' + fmt(rpcData.total) + ' · <strong>Falta: ' + fmt(rpcData.saldo) + '</strong></div>';
       btn.disabled = false;
       btn.textContent = 'Subir otro comprobante';
     }
@@ -243,6 +246,7 @@ async function avisarPagoRecibido(canal) {
 
 function render(q) {
   currentQuote = q;
+  saldoPendienteActual = (q.saldo_pendiente !== undefined && q.saldo_pendiente !== null) ? q.saldo_pendiente : q.total;
   document.getElementById('printBtn').style.display = 'flex';
   var resp = responsableDeInstitucion(q.institucion);
 
@@ -327,12 +331,12 @@ function render(q) {
       '<label for="f-comprobante" class="upload-label" id="upload-label">📎 Elegir foto o PDF del comprobante</label>' +
       '<div class="upload-filename" id="upload-filename"></div>' +
       '<div id="monto-field" style="display:none;margin:10px 0;">' +
-        '<label for="f-monto-pagado" style="font-size:12px;color:#52525b;display:block;margin-bottom:4px;">¿Cuánto transferiste en este comprobante?</label>' +
+        '<label for="f-monto-pagado" style="font-size:12px;color:#52525b;display:block;margin-bottom:4px;">¿Cuánto transferiste? (déjalo vacío si pagaste el total)</label>' +
         '<input type="number" id="f-monto-pagado" placeholder="Ej: 40000" style="width:100%;padding:10px;border:1px solid #e4e4e7;border-radius:8px;font-size:14px;">' +
       '</div>' +
+      '<div id="estado-pago-box"></div>' +
       '<button class="btn-solid" id="btn-subir-comprobante" style="display:none;" onclick="subirComprobante()">Subir comprobante</button>' +
       '<div id="upload-msg"></div>' +
-      '<div id="estado-pago-box"></div>' +
       '<p class="hint" style="margin:14px 0 6px;">\u00bfPrefieres avisar sin subir archivo?</p>'
     : '') +
     '<div class="send-buttons">' +
@@ -343,6 +347,9 @@ function render(q) {
     '</div>';
 
   if (currentToken) {
+    if (q.total_pagado > 0 && q.saldo_pendiente > 0) {
+      document.getElementById('estado-pago-box').innerHTML = '<div class="msg-success">Pagado: ' + fmt(q.total_pagado) + ' de ' + fmt(q.total) + ' · <strong>Falta: ' + fmt(q.saldo_pendiente) + '</strong></div>';
+    }
     document.getElementById('f-comprobante').addEventListener('change', function (e) {
       var file = e.target.files[0];
       var btn = document.getElementById('btn-subir-comprobante');
@@ -351,6 +358,7 @@ function render(q) {
       if (file) {
         nameEl.textContent = file.name + ' (' + Math.round(file.size / 1024) + ' KB)';
         btn.style.display = 'flex';
+        btn.textContent = (q.total_pagado > 0) ? 'Subir otro comprobante' : 'Subir comprobante';
         montoField.style.display = 'block';
       } else {
         nameEl.textContent = '';
