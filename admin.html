@@ -161,12 +161,13 @@ const SUPABASE_URL = 'https://gzimllusbxjorbsbtsse.supabase.co';
 const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imd6aW1sbHVzYnhqb3Jic2J0c3NlIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE5NDQ4NDcsImV4cCI6MjA5NzUyMDg0N30.DFq-_PY10hyr2QmMUXk-v8VW2LKYz3bAW37VCutwmzY';
 const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
-const ESTADOS = ['Borrador','Cotización generada','Enviada al paciente','Pendiente de pago','Pago informado','Pago validado','Pedido ingresado al sistema','En preparación logística','Despachado','Cerrado','Anulado'];
+const ESTADOS = ['Borrador','Cotización generada','Enviada al paciente','Pendiente de pago','Pagado parcialmente','Pago informado','Pago validado','Pedido ingresado al sistema','En preparación logística','Despachado','Cerrado','Anulado'];
 const ESTADO_COLOR = {
   'Borrador': '#f4f4f5;color:#3f3f46',
   'Cotización generada': '#eff6ff;color:#1d4ed8',
   'Enviada al paciente': '#eef2ff;color:#4338ca',
   'Pendiente de pago': '#fffbeb;color:#92400e',
+  'Pagado parcialmente': '#fff7ed;color:#c2410c',
   'Pago informado': '#fef3c7;color:#92400e',
   'Pago validado': '#ecfdf5;color:#047857',
   'Pedido ingresado al sistema': '#d1fae5;color:#065f46',
@@ -177,6 +178,7 @@ const ESTADO_COLOR = {
 };
 
 let cotizaciones = [];
+let pagosPorCotizacion = {}; // cotizacion_id -> [{comprobante_path, monto, created_at}]
 let estadoFiltro = 'Todos';
 let institucionFiltro = 'Todas';
 let filtroUrgencia = 'Todos'; // 'Todos' | 'PagoInformado' | 'Urgente48h' | 'Gestionados'
@@ -550,6 +552,18 @@ async function cargarCotizaciones() {
       cotizaciones = data;
       errorConexion = false;
       errorConexionMsg = '';
+      try {
+        const { data: pagosData, error: pagosErr } = await sb.from('cotizacion_pagos').select('*').order('created_at', { ascending: true });
+        if (!pagosErr && pagosData) {
+          pagosPorCotizacion = {};
+          pagosData.forEach(function (p) {
+            if (!pagosPorCotizacion[p.cotizacion_id]) pagosPorCotizacion[p.cotizacion_id] = [];
+            pagosPorCotizacion[p.cotizacion_id].push(p);
+          });
+        }
+      } catch (e) {
+        console.warn('[Admin] No se pudo cargar cotizacion_pagos (degradación controlada):', e);
+      }
     } else if (error) {
       console.warn('[Admin] Error en cargarCotizaciones:', error.message, error);
       const msg = (error.message || '').toLowerCase();
@@ -622,6 +636,34 @@ function toggleFila(id) {
   if (sel.length > 0) return;
   filaAbierta = filaAbierta === id ? null : id;
   renderDashboard();
+}
+
+function renderBloqueComprobantes(c) {
+  const pagos = pagosPorCotizacion[c.id];
+  if (pagos && pagos.length > 0) {
+    const totalPagado = pagos.reduce(function (acc, p) { return acc + Number(p.monto); }, 0);
+    const saldo = Math.max(Number(c.total) - totalPagado, 0);
+    const saldoTxt = saldo > 0
+      ? '<span style="color:#c2410c;font-weight:600;">Falta: ' + fmt(saldo) + '</span>'
+      : '<span style="color:#047857;font-weight:600;">✅ Pago completo</span>';
+    let filas = pagos.map(function (p, i) {
+      const pathEsc = p.comprobante_path.replace(/'/g, "\\'");
+      return '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:4px;">' +
+        '<span style="font-size:12px;color:#52525b;">#' + (i + 1) + ' — ' + fmt(p.monto) + ' (' + new Date(p.created_at).toLocaleDateString('es-CL') + ')</span>' +
+        '<button class="btn-logout" onclick="verComprobante(\'' + pathEsc + '\', this)">📎 Ver</button>' +
+        '<button class="btn-logout" onclick="copiarLinkComprobante(\'' + pathEsc + '\', this)">🔗 Copiar link</button>' +
+        '</div>';
+    }).join('');
+    return '<div style="margin-bottom:10px;">' +
+      '<div style="font-size:12px;margin-bottom:6px;">Pagado: <strong>' + fmt(totalPagado) + '</strong> de <strong>' + fmt(c.total) + '</strong> — ' + saldoTxt + '</div>' +
+      filas + '</div>';
+  }
+  // Fallback: cotizaciones anteriores a esta funcionalidad, solo con comprobante_path legacy
+  if (c.comprobante_path) {
+    const pathEsc = c.comprobante_path.replace(/'/g, "\\'");
+    return '<div style="margin-bottom:10px;display:flex;gap:8px;flex-wrap:wrap;"><button class="btn-logout" onclick="verComprobante(\'' + pathEsc + '\', this)">📎 Ver comprobante de pago</button><button class="btn-logout" onclick="copiarLinkComprobante(\'' + pathEsc + '\', this)">🔗 Copiar link comprobante</button></div>';
+  }
+  return '';
 }
 
 async function verComprobante(path, btn) {
@@ -1368,7 +1410,7 @@ function generarListaCotizaciones() {
               ? (c.profesional_sucursal + ' — ' + c.profesional_direccion_despacho)
               : inst.despacho
           ) + ', independiente de la dirección de facturación.</div>' +
-          (c.comprobante_path ? '<div style="margin-bottom:10px;display:flex;gap:8px;flex-wrap:wrap;"><button class="btn-logout" onclick="verComprobante(\'' + c.comprobante_path.replace(/'/g,"\\'") + '\', this)">📎 Ver comprobante de pago</button><button class="btn-logout" onclick="copiarLinkComprobante(\'' + c.comprobante_path.replace(/'/g,"\\'") + '\', this)">🔗 Copiar link comprobante</button></div>' : '') +
+          renderBloqueComprobantes(c) +
           (esSuperAdmin() && c.estado === 'Anulado'
             ? '<div style="margin-bottom:10px;"><button class="btn-logout" style="color:#b91c1c;border-color:#fecaca;" onclick="eliminarCotizacionAnulada(\'' + c.id + '\', this)">🗑️ Eliminar anulado</button></div>'
             : '') +

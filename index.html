@@ -179,9 +179,15 @@ async function subirComprobante() {
   var input = document.getElementById('f-comprobante');
   var file = input.files[0];
   if (!file) return;
+  var montoInput = document.getElementById('f-monto-pagado');
+  var monto = parseFloat(montoInput.value);
+  var msgEl = document.getElementById('upload-msg');
+  if (!monto || monto <= 0) {
+    msgEl.innerHTML = '<div class="hint" style="color:#b91c1c;">Indica cuánto transferiste en este comprobante para continuar.</div>';
+    return;
+  }
 
   var btn = document.getElementById('btn-subir-comprobante');
-  var msgEl = document.getElementById('upload-msg');
   btn.disabled = true;
   btn.textContent = 'Subiendo\u2026';
   msgEl.innerHTML = '';
@@ -192,12 +198,23 @@ async function subirComprobante() {
     var { error: upErr } = await sb.storage.from('comprobantes').upload(path, file, { contentType: file.type });
     if (upErr) throw upErr;
 
-    var { error: rpcErr } = await sb.rpc('marcar_pago_informado_publico', { p_token: currentToken, p_comprobante_path: path });
+    var { data: rpcData, error: rpcErr } = await sb.rpc('registrar_pago_publico', { p_token: currentToken, p_comprobante_path: path, p_monto: monto });
     if (rpcErr) throw rpcErr;
 
-    msgEl.innerHTML = '<div class="msg-success">✅ Comprobante recibido. Ya avisamos a ' + responsableDeInstitucion(q.institucion).nombre + '.</div>';
-    btn.style.display = 'none';
-    document.getElementById('upload-label').style.display = 'none';
+    var estadoBox = document.getElementById('estado-pago-box');
+    if (rpcData.saldo <= 0) {
+      estadoBox.innerHTML = '<div class="msg-success">✅ Pago completo recibido. Ya avisamos a ' + responsableDeInstitucion(q.institucion).nombre + '.</div>';
+      btn.style.display = 'none';
+      document.getElementById('upload-label').style.display = 'none';
+      document.getElementById('monto-field').style.display = 'none';
+    } else {
+      estadoBox.innerHTML = '<div class="msg-success">✅ Comprobante recibido — Pagado: ' + fmt(rpcData.pagado) + ' de ' + fmt(rpcData.total) + ' · Falta: ' + fmt(rpcData.saldo) + '</div>';
+      btn.disabled = false;
+      btn.textContent = 'Subir otro comprobante';
+    }
+    input.value = '';
+    montoInput.value = '';
+    document.getElementById('upload-filename').textContent = '';
   } catch (e) {
     msgEl.innerHTML = '<div class="hint" style="color:#b91c1c;">No pudimos subir el archivo. Intenta de nuevo o usa los botones de abajo.</div>';
     btn.disabled = false;
@@ -309,8 +326,13 @@ function render(q) {
       '<input type="file" id="f-comprobante" accept="image/*,.pdf" style="display:none;">' +
       '<label for="f-comprobante" class="upload-label" id="upload-label">📎 Elegir foto o PDF del comprobante</label>' +
       '<div class="upload-filename" id="upload-filename"></div>' +
+      '<div id="monto-field" style="display:none;margin:10px 0;">' +
+        '<label for="f-monto-pagado" style="font-size:12px;color:#52525b;display:block;margin-bottom:4px;">¿Cuánto transferiste en este comprobante?</label>' +
+        '<input type="number" id="f-monto-pagado" placeholder="Ej: 40000" style="width:100%;padding:10px;border:1px solid #e4e4e7;border-radius:8px;font-size:14px;">' +
+      '</div>' +
       '<button class="btn-solid" id="btn-subir-comprobante" style="display:none;" onclick="subirComprobante()">Subir comprobante</button>' +
       '<div id="upload-msg"></div>' +
+      '<div id="estado-pago-box"></div>' +
       '<p class="hint" style="margin:14px 0 6px;">\u00bfPrefieres avisar sin subir archivo?</p>'
     : '') +
     '<div class="send-buttons">' +
@@ -325,12 +347,15 @@ function render(q) {
       var file = e.target.files[0];
       var btn = document.getElementById('btn-subir-comprobante');
       var nameEl = document.getElementById('upload-filename');
+      var montoField = document.getElementById('monto-field');
       if (file) {
         nameEl.textContent = file.name + ' (' + Math.round(file.size / 1024) + ' KB)';
         btn.style.display = 'flex';
+        montoField.style.display = 'block';
       } else {
         nameEl.textContent = '';
         btn.style.display = 'none';
+        montoField.style.display = 'none';
       }
     });
   }
