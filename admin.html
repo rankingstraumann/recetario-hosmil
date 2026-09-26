@@ -747,18 +747,30 @@ async function copiarGestionCompleta(id, btn) {
     setTimeout(function () { btn.textContent = original; btn.disabled = false; }, 1200);
   }
 
-  // Sección comprobante: si falla, no rompe el resto del bloque (degradación controlada)
-  let comprobanteTxt = '-';
-  let comprobanteEsLink = false;
-  if (c.comprobante_path) {
+  // Sección comprobantes: uno por cada pago registrado (o el legacy si no hay
+  // filas nuevas). Si falla generar algún link, no rompe el resto del bloque.
+  let listaComprobantes = []; // [{texto: 'monto (fecha)', link: url|null}]
+  const pagosDeEsta = pagosPorCotizacion[c.id];
+  if (pagosDeEsta && pagosDeEsta.length > 0) {
+    for (const p of pagosDeEsta) {
+      let link = null;
+      try {
+        const { data, error } = await sb.storage.from('comprobantes').createSignedUrl(p.comprobante_path, 604800);
+        if (error || !data || !data.signedUrl) throw error || new Error('sin url');
+        link = data.signedUrl;
+      } catch (e) {
+        console.warn('[Admin] No se pudo generar link de un comprobante para gestión completa:', e);
+      }
+      listaComprobantes.push({ texto: fmt(p.monto) + ' (' + new Date(p.created_at).toLocaleDateString('es-CL') + ')', link: link });
+    }
+  } else if (c.comprobante_path) {
     try {
       const { data, error } = await sb.storage.from('comprobantes').createSignedUrl(c.comprobante_path, 604800); // 7 días — link va dentro de correo a Nicole/Customer
       if (error || !data || !data.signedUrl) throw error || new Error('sin url');
-      comprobanteTxt = data.signedUrl;
-      comprobanteEsLink = true;
+      listaComprobantes.push({ texto: null, link: data.signedUrl });
     } catch (e) {
       console.warn('[Admin] No se pudo generar link de comprobante para gestión completa:', e);
-      comprobanteTxt = 'No se pudo generar link';
+      listaComprobantes.push({ texto: null, link: null });
     }
   }
 
@@ -803,12 +815,18 @@ async function copiarGestionCompleta(id, btn) {
   });
 
   // ── Texto plano (fallback si el navegador no soporta ClipboardItem) ──────────
+  const lineasComprobantesTxt = listaComprobantes.length > 0
+    ? listaComprobantes.map(function (cp, i) {
+        const etiqueta = cp.texto ? ('Comprobante ' + (i + 1) + ' — ' + cp.texto + ': ') : 'Link comprobante de pago: ';
+        return etiqueta + (cp.link || 'No se pudo generar link');
+      })
+    : ['Link comprobante de pago: -'];
   const textoPlano = [
     datosLineas.join('\n'),
     '',
     'Despachar a: ' + direccionDespacho,
     '',
-    'Link comprobante de pago: ' + comprobanteTxt,
+    lineasComprobantesTxt.join('\n'),
     '',
     'PEDIDO / PRODUCTOS',
     'Código | Descripción | Cant. | Dscto. | Subtotal',
@@ -839,9 +857,13 @@ async function copiarGestionCompleta(id, btn) {
     '<tbody>' + filasProductosHtml + '</tbody>' +
   '</table>';
 
-  const comprobanteHtml = comprobanteEsLink
-    ? '<a href="' + esc(comprobanteTxt) + '">' + esc(comprobanteTxt) + '</a>'
-    : esc(comprobanteTxt);
+  const comprobantesHtmlBloque = listaComprobantes.length > 0
+    ? listaComprobantes.map(function (cp, i) {
+        const etiqueta = cp.texto ? ('Comprobante ' + (i + 1) + ' — ' + cp.texto + ': ') : 'Link comprobante de pago: ';
+        const valor = cp.link ? ('<a href="' + esc(cp.link) + '">' + esc(cp.link) + '</a>') : 'No se pudo generar link';
+        return '<div>' + esc(etiqueta) + valor + '</div>';
+      }).join('')
+    : '<div>Link comprobante de pago: -</div>';
 
   const datosHtml = datosLineas.map(function (linea) {
     const idx = linea.indexOf(': ');
@@ -858,7 +880,7 @@ async function copiarGestionCompleta(id, btn) {
     '<br><br>' +
     '<div>Despachar a: ' + esc(direccionDespacho) + '</div>' +
     '<br><br>' +
-    '<div>Link comprobante de pago: ' + comprobanteHtml + '</div>' +
+    comprobantesHtmlBloque +
     '<br><br>' +
     '<div style="font-weight:bold;">PEDIDO / PRODUCTOS</div>' +
     '<br>' +
