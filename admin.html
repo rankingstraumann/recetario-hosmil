@@ -283,7 +283,7 @@ function construirTabsPrincipales(activo) {
 // funcion de esta seccion ejecuta INSERT/UPDATE/DELETE. Solo consume
 // las 7 funciones de solo lectura ya creadas en Fase 4.1 (matriz_*).
 // ============================================================
-const MATRIZ_INSTITUCIONES = ['UMAYORT', 'HOSMIL', 'UDP', 'UNAB', 'UMAYOR', 'ARMADA'];
+const MATRIZ_INSTITUCIONES = ['UMAYORT', 'HOSMIL', 'UDP', 'UNAB', 'UMAYOR', 'ARMADA', 'PDI'];
 let matrizInstitucionSel = ''; // codigo de institucion seleccionada, '' = ninguna
 let matrizResumenRows = [];
 let matrizCatalogoRows = [];
@@ -335,7 +335,7 @@ let matrizSimVisCalculando = false;
 // Ningun acceso directo (sb.from) a producto_exclusion_institucion ni a
 // solicitudes_cambio_disponibilidad_producto en todo este bloque.
 // ============================================================
-const DISP_INSTITUCIONES = ['ARMADA', 'HOSMIL', 'UC', 'UDP', 'UMAYOR', 'UMAYORT', 'UNAB'];
+const DISP_INSTITUCIONES = ['ARMADA', 'HOSMIL', 'UC', 'UDP', 'UMAYOR', 'UMAYORT', 'UNAB', 'PDI'];
 
 // Crear solicitud desde el modal de simulacion existente (6.0A/6.0C)
 let matrizDispMotivo = '';
@@ -428,6 +428,9 @@ function institucionInfo(inst) {
   if (s.indexOf('ARMADA') !== -1 || s.indexOf('CENTRAL ODONT') !== -1 || s.indexOf('CENTRALODONTOLOGICA') !== -1) {
     return { label: 'ARMADA', color: '#f0fdf4;color:#166534', despacho: 'Central Odontológica Armada', responsable: 'Catalina', codigo: 'ARMADA' };
   }
+  if (s.indexOf('POLICIA DE INVESTIGACIONES') !== -1 || s.indexOf('POLICÍA DE INVESTIGACIONES') !== -1 || s.indexOf('PDI') !== -1) {
+    return { label: 'PDI', color: '#ecfdf5;color:#047857', despacho: 'Dirección del paciente', responsable: 'Nicole', codigo: 'PDI' };
+  }
   return { label: inst || '-', color: '#f4f4f5;color:#3f3f46', despacho: inst || '-', responsable: '-', codigo: '' };
 }
 
@@ -439,6 +442,7 @@ const DOMINIO_POR_CODIGO = {
   UMAYORT: 'https://recetario-umayor-temuco.vercel.app/',
   ARMADA: 'https://recetario-centralodontologica.vercel.app/',
   UC: 'https://recetario-uc.vercel.app/',
+  PDI: 'https://recetario-pdi.vercel.app/',
 };
 function linkPublicoDe(c) {
   const inst = institucionInfo(c.institucion);
@@ -789,13 +793,13 @@ async function copiarGestionCompleta(id, btn) {
   ];
 
   // Dirección de despacho: para todas las instituciones es la dirección
-  // institucional fija (inst.despacho). Excepción ARMADA: el despacho se
-  // hace a la misma dirección de facturación del paciente, por lo que se
+  // institucional fija (inst.despacho). Excepción ARMADA y PDI: el despacho
+  // se hace a la misma dirección de facturación del paciente, por lo que se
   // usa c.paciente_direccion en su lugar. Excepción HOSMIL: si la
   // cotización tiene snapshot de profesional (sede seleccionada), se usa
   // esa sede + dirección real en vez del genérico institucional. Si no
   // existe snapshot (histórica), se mantiene el fallback genérico actual.
-  const direccionDespacho = (inst.codigo === 'ARMADA')
+  const direccionDespacho = (inst.codigo === 'ARMADA' || inst.codigo === 'PDI')
     ? valorSeguro(c.paciente_direccion)
     : (inst.codigo === 'HOSMIL' && c.profesional_sucursal && c.profesional_direccion_despacho)
       ? (c.profesional_sucursal + ' — ' + c.profesional_direccion_despacho)
@@ -1427,11 +1431,15 @@ function generarListaCotizaciones() {
           (c.fecha_cirugia ? '<div><strong>Fecha de cirugía:</strong> ' + esc(c.fecha_cirugia) + '</div>' : '') +
           '</div>' +
           '<div style="margin-bottom:10px;"><button class="btn-logout" onclick="copiarGestionCompleta(\'' + c.id + '\', this)">📋 Copiar gestión completa</button></div>' +
-          '<div style="font-size:11px;color:#92400e;background:#fffbeb;border:1px solid #fde68a;border-radius:6px;padding:6px 10px;margin-bottom:10px;display:inline-block;">📦 Despacho siempre a ' + esc(
-            (inst.codigo === 'HOSMIL' && c.profesional_sucursal && c.profesional_direccion_despacho)
-              ? (c.profesional_sucursal + ' — ' + c.profesional_direccion_despacho)
-              : inst.despacho
-          ) + ', independiente de la dirección de facturación.</div>' +
+          '<div style="font-size:11px;color:#92400e;background:#fffbeb;border:1px solid #fde68a;border-radius:6px;padding:6px 10px;margin-bottom:10px;display:inline-block;">📦 ' + (
+            (inst.codigo === 'ARMADA' || inst.codigo === 'PDI')
+              ? 'Despacho a la dirección del paciente: ' + esc(valorSeguro(c.paciente_direccion))
+              : 'Despacho siempre a ' + esc(
+                  (inst.codigo === 'HOSMIL' && c.profesional_sucursal && c.profesional_direccion_despacho)
+                    ? (c.profesional_sucursal + ' — ' + c.profesional_direccion_despacho)
+                    : inst.despacho
+                ) + ', independiente de la dirección de facturación'
+          ) + '.</div>' +
           renderBloqueComprobantes(c) +
           (esSuperAdmin() && c.estado === 'Anulado'
             ? '<div style="margin-bottom:10px;"><button class="btn-logout" style="color:#b91c1c;border-color:#fecaca;" onclick="eliminarCotizacionAnulada(\'' + c.id + '\', this)">🗑️ Eliminar anulado</button></div>'

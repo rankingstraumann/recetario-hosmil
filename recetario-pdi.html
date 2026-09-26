@@ -158,8 +158,8 @@
           </div>
           <div id="doctor-field"></div>
           <div class="span2">
-            <input type="text" id="f-direccion" placeholder="Dirección del paciente (para facturación)" style="width:100%;">
-            <p id="mensaje-despacho" style="font-size:11px;color:#a1a1aa;margin:4px 0 0;">📦 El despacho se realizará a la institución PDI — esta dirección es solo para la factura.</p>
+            <input type="text" id="f-direccion" placeholder="Dirección del paciente (facturación y despacho)" style="width:100%;">
+            <p id="mensaje-despacho" style="font-size:11px;color:#a1a1aa;margin:4px 0 0;">📦 El despacho se realizará a la dirección que indiques del paciente.</p>
           </div>
           <input type="text" id="f-obs" class="span2" placeholder="Observaciones (opcional)">
         </div>
@@ -607,16 +607,10 @@ function buscarProfesionalesLocal(texto) {
 function actualizarMensajeDespacho() {
   const el = document.getElementById('mensaje-despacho');
   if (!el) return;
-  if (state.profesionalPersonaPendiente) {
-    el.textContent = '📦 Selecciona la sede del profesional para definir el despacho.';
-  } else if (state.profesionalSeleccionado) {
-    const p = state.profesionalSeleccionado;
-    el.textContent = '📦 Despacho: ' + p.sucursal + ' — ' + p.direccion_despacho;
-  } else if (state.profesionalModoLibre) {
-    el.textContent = '📦 El despacho se realizará a la institución PDI.';
-  } else {
-    el.textContent = '📦 El despacho se asignará automáticamente según el profesional seleccionado.';
-  }
+  const dir = state.pacienteDireccion.trim();
+  el.textContent = dir
+    ? '📦 Despacho a: ' + dir
+    : '📦 El despacho se realizará a la dirección que indiques del paciente.';
 }
 function seleccionarProfesional(id) {
   const p = PROFESIONALES.find(function (x) { return String(x.id) === String(id); });
@@ -1134,6 +1128,7 @@ function limpiarFormulario() {
   document.getElementById('f-obs').value = '';
   document.getElementById('f-consentimiento').checked = false;
   document.getElementById('f-search').value = '';
+  actualizarMensajeDespacho();
 
   renderDoctorField();
   renderMarcaToggle();
@@ -1234,7 +1229,7 @@ document.getElementById('f-wsp').addEventListener('input', function(e){
   e.target.value = e.target.value.replace(/\D/g,'').slice(0,8);
   state.pacienteWhatsapp = e.target.value;
 });
-document.getElementById('f-direccion').addEventListener('input', function(e){ state.pacienteDireccion = e.target.value; });
+document.getElementById('f-direccion').addEventListener('input', function(e){ state.pacienteDireccion = e.target.value; actualizarMensajeDespacho(); });
 document.getElementById('f-obs').addEventListener('input', function(e){ state.obs = e.target.value; });
 document.getElementById('f-search').addEventListener('input', function(e) {
   state.search = e.target.value;
