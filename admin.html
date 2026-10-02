@@ -642,6 +642,30 @@ function toggleFila(id) {
   renderDashboard();
 }
 
+async function eliminarPagoAdmin(pagoId, btn) {
+  if (!esSuperAdmin()) return; // defensa extra en frontend; el RPC igual lo valida server-side
+  const confirmado = confirm('Esto elimina definitivamente este comprobante y recalcula el pago de la cotización. ¿Confirmas?');
+  if (!confirmado) return;
+
+  const original = btn.textContent;
+  btn.textContent = 'Eliminando…';
+  btn.disabled = true;
+  try {
+    const { error } = await sb.rpc('eliminar_pago_admin', { p_pago_id: pagoId });
+    if (error) {
+      alert('No se pudo eliminar: ' + error.message);
+      btn.textContent = original;
+      btn.disabled = false;
+      return;
+    }
+    await cargarCotizaciones(); // refresca lista + pagosPorCotizacion + badges automáticamente
+  } catch (e) {
+    alert('Error de red al intentar eliminar. Intenta de nuevo.');
+    btn.textContent = original;
+    btn.disabled = false;
+  }
+}
+
 function renderBloqueComprobantes(c) {
   const pagos = pagosPorCotizacion[c.id];
   if (pagos && pagos.length > 0) {
@@ -656,6 +680,7 @@ function renderBloqueComprobantes(c) {
         '<span style="font-size:12px;color:#52525b;">#' + (i + 1) + ' — ' + fmt(p.monto) + ' (' + new Date(p.created_at).toLocaleDateString('es-CL') + ')</span>' +
         '<button class="btn-logout" onclick="verComprobante(\'' + pathEsc + '\', this)">📎 Ver</button>' +
         '<button class="btn-logout" onclick="copiarLinkComprobante(\'' + pathEsc + '\', this)">🔗 Copiar link</button>' +
+        (esSuperAdmin() ? '<button class="btn-logout" style="color:#b91c1c;" onclick="eliminarPagoAdmin(\'' + p.id + '\', this)">🗑️ Eliminar</button>' : '') +
         '</div>';
     }).join('');
     return '<div style="margin-bottom:10px;">' +

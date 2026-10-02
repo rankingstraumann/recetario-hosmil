@@ -173,7 +173,14 @@ function responsableDeInstitucion(inst) {
 
 var currentQuote = null;
 var saldoPendienteActual = null;
+var duplicadoConfirmado = false;
 var currentToken = null;
+
+async function calcularHashArchivo(file) {
+  const buffer = await file.arrayBuffer();
+  const hashBuffer = await crypto.subtle.digest('SHA-256', buffer);
+  return Array.from(new Uint8Array(hashBuffer)).map(function (b) { return b.toString(16).padStart(2, '0'); }).join('');
+}
 
 async function subirComprobante() {
   var q = currentQuote; if (!q || !currentToken) return;
@@ -190,19 +197,35 @@ async function subirComprobante() {
   }
 
   var btn = document.getElementById('btn-subir-comprobante');
+  var textoOriginalBtn = btn.textContent;
   btn.disabled = true;
-  btn.textContent = 'Subiendo\u2026';
+  btn.textContent = 'Verificando\u2026';
   msgEl.innerHTML = '';
 
   try {
+    var hash = await calcularHashArchivo(file);
+
+    if (!duplicadoConfirmado) {
+      var { data: dupData } = await sb.rpc('verificar_comprobante_duplicado', { p_token: currentToken, p_hash: hash });
+      if (dupData && dupData.duplicado) {
+        msgEl.innerHTML = '<div class="hint" style="color:#b91c1c;">Este archivo ya lo subiste antes (' + fmt(dupData.monto) + ', el ' + new Date(dupData.fecha).toLocaleDateString('es-CL') + '). Si es una transferencia distinta, presiona "' + textoOriginalBtn + '" de nuevo para confirmar.</div>';
+        duplicadoConfirmado = true;
+        btn.disabled = false;
+        btn.textContent = textoOriginalBtn;
+        return;
+      }
+    }
+
+    btn.textContent = 'Subiendo\u2026';
     var ext = file.name.split('.').pop();
     var path = institucionCodigo(q.institucion) + '/' + currentToken + '-' + Date.now() + '.' + ext;
     var { error: upErr } = await sb.storage.from('comprobantes').upload(path, file, { contentType: file.type });
     if (upErr) throw upErr;
 
-    var { data: rpcData, error: rpcErr } = await sb.rpc('registrar_pago_publico', { p_token: currentToken, p_comprobante_path: path, p_monto: monto });
+    var { data: rpcData, error: rpcErr } = await sb.rpc('registrar_pago_publico', { p_token: currentToken, p_comprobante_path: path, p_monto: monto, p_archivo_hash: hash });
     if (rpcErr) throw rpcErr;
 
+    duplicadoConfirmado = false;
     saldoPendienteActual = rpcData.saldo;
     var estadoBox = document.getElementById('estado-pago-box');
     if (rpcData.saldo <= 0) {
@@ -221,7 +244,7 @@ async function subirComprobante() {
   } catch (e) {
     msgEl.innerHTML = '<div class="hint" style="color:#b91c1c;">No pudimos subir el archivo. Intenta de nuevo o usa los botones de abajo.</div>';
     btn.disabled = false;
-    btn.textContent = 'Subir comprobante';
+    btn.textContent = textoOriginalBtn;
   }
 }
 
@@ -355,6 +378,7 @@ function render(q) {
       var btn = document.getElementById('btn-subir-comprobante');
       var nameEl = document.getElementById('upload-filename');
       var montoField = document.getElementById('monto-field');
+      duplicadoConfirmado = false;
       if (file) {
         nameEl.textContent = file.name + ' (' + Math.round(file.size / 1024) + ' KB)';
         btn.style.display = 'flex';
