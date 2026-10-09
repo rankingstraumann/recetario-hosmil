@@ -1277,33 +1277,38 @@ function renderDashboardPiloto() {
   }
 
   // Tabla institución enriquecida con conversión y montos
+  var bl = 'border-left:1px solid var(--border);';
+  var tInst = { n: 0, pedidos: 0, montoCot: 0, montoIng: 0 };
+  var convTxt = function (ped, n) { var c = n > 0 ? (ped / n * 100) : 0; return (Number.isInteger(c) ? c : c.toFixed(1)) + '%'; };
+  var filaInst = function (nombre, r, esTotal) {
+    var conv = r.n > 0 ? (r.pedidos / r.n * 100) : 0;
+    var convColor = conv >= 50 ? 'var(--red)' : 'var(--ink)';
+    return '<tr style="' + (esTotal ? 'font-weight:800;background:#fafafa;' : '') + '">' +
+      '<td>' + esc(nombre) + '</td>' +
+      '<td class="num" style="' + bl + '">' + r.n + '</td>' +
+      '<td class="num">' + r.pedidos + '</td>' +
+      '<td class="num" style="font-weight:700;color:' + convColor + '">' + convTxt(r.pedidos, r.n) + '</td>' +
+      '<td class="num" style="' + bl + '">' + fmt(r.montoCot) + '</td>' +
+      '<td class="num">' + fmt(r.montoIng) + '</td>' +
+    '</tr>';
+  };
   var instRows = Object.keys(d.porInstEnriq).sort(function(a,b){
     return d.porInstEnriq[b].n - d.porInstEnriq[a].n;
   }).map(function(k) {
     var r = d.porInstEnriq[k];
-    var conv = r.n > 0 ? (r.pedidos / r.n * 100) : 0;
-    var convStr = (Number.isInteger(conv) ? conv : conv.toFixed(1)) + '%';
-    var convColor = conv >= 50 ? 'var(--red)' : 'var(--ink)';
-    return '<tr>' +
-      '<td>' + esc(k) + '</td>' +
-      '<td class="num">' + r.n + '</td>' +
-      '<td class="num">' + r.pedidos + '</td>' +
-      '<td class="num" style="font-weight:700;color:' + convColor + '">' + convStr + '</td>' +
-      '<td class="num">' + fmt(r.montoCot) + '</td>' +
-      '<td class="num">' + fmt(r.montoIng) + '</td>' +
-    '</tr>';
+    tInst.n += r.n; tInst.pedidos += r.pedidos; tInst.montoCot += r.montoCot; tInst.montoIng += r.montoIng;
+    return filaInst(k, r, false);
   }).join('');
   var tablaInst =
     '<div class="dash-section"><h3>Por institución</h3>' +
-    '<table class="dash-table"><thead><tr>' +
-      '<th>Institución</th>' +
-      '<th class="num">Cotizaciones</th>' +
-      '<th class="num">Pedidos</th>' +
-      '<th class="num">Conversión</th>' +
-      '<th class="num">Monto cotizado</th>' +
-      '<th class="num">Monto ingresado</th>' +
-    '</tr></thead>' +
-    '<tbody>' + (instRows || '<tr><td colspan="6" style="color:var(--muted);padding:16px 10px">Sin datos</td></tr>') + '</tbody></table></div>';
+    '<div style="overflow-x:auto;"><table class="dash-table"><thead>' +
+    '<tr><th rowspan="2">Institución</th>' +
+      '<th class="num" colspan="3" style="text-align:center;' + bl + '">COTIZACIONES</th>' +
+      '<th class="num" colspan="2" style="text-align:center;' + bl + '">MONTOS</th></tr>' +
+    '<tr><th class="num" style="' + bl + '">Total</th><th class="num">Pedidos</th><th class="num">Conversión</th>' +
+      '<th class="num" style="' + bl + '">Cotizado</th><th class="num">Ingresado</th></tr></thead>' +
+    '<tbody>' + (instRows ? instRows + filaInst('TOTAL', tInst, true) : '<tr><td colspan="6" style="color:var(--muted);padding:16px 10px">Sin datos</td></tr>') + '</tbody></table></div>' +
+    '<div style="font-size:11px;color:var(--muted);margin-top:8px;line-height:1.5;"><b>Total</b> = cotizaciones del período. <b>Pedidos</b> = en estado Pago validado o posterior. <b>Conversión</b> = Pedidos / Total. <b>Ingresado</b> = monto de esos pedidos.</div></div>';
 
   // Tabla por estado
   var estadoRows = Object.keys(d.porEstado).sort(function(a,b){
@@ -1366,7 +1371,7 @@ function renderDashboardPiloto() {
     '</div>' +
     '<div id="imp-rec-box"></div>' +
     renderGraficoEvolucion(d.serieEvolucion) +
-    '<div class="dash-row2">' + tablaInst + tablaEstado + '</div>' +
+    '<div class="dash-row2" style="grid-template-columns:3fr 2fr;">' + tablaInst + tablaEstado + '</div>' +
     tablaDia +
     '</main>';
 
