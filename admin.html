@@ -4502,7 +4502,8 @@ function segImpPintar() {
       { label: 'Paciente', key: 'paciente' }, { label: 'Estado', key: 'estado' }, { label: 'Unidades Straumann', key: 'unid_straumann' },
       { label: 'Unidades Neodent', key: 'unid_neodent' }, { label: 'Días sin movimiento', key: 'dias_sin_movimiento' },
       { label: 'WhatsApp', value: function (r) { return r.paciente_whatsapp ? '+56 9 ' + r.paciente_whatsapp : ''; } },
-      { label: 'Correo', key: 'paciente_email' }, { label: 'Total', key: 'total' }
+      { label: 'Correo', key: 'paciente_email' }, { label: 'Total', key: 'total' },
+      { label: 'Link cotización', value: function (r) { var c = cotizaciones.find(function (x) { return x.id === r.cotizacion_id; }); return c ? linkPublicoDe(c) : ''; } }
     ], 'Seguimiento', 'Seguimiento_implantes');
   });
 }
