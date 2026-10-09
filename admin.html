@@ -4351,14 +4351,14 @@ function impTablaHtml(grupos, titulo, etiquetaClave, confLabel, idExport) {
     '<div style="overflow-x:auto;"><table class="dash-table"><thead>' +
     '<tr><th rowspan="2">' + esc(etiquetaClave) + '</th><th class="num" colspan="3" style="text-align:center;color:var(--red);border-left:1px solid var(--border);">NEODENT</th>' +
     '<th class="num" colspan="3" style="text-align:center;border-left:1px solid var(--border);">STRAUMANN (incl. BLT)</th>' +
-    '<th class="num" colspan="3" style="text-align:center;border-left:1px solid var(--border);">AMBAS MARCAS</th></tr>' +
+    '<th class="num" colspan="4" style="text-align:center;border-left:1px solid var(--border);">TOTAL (NEODENT + STRAUMANN)</th></tr>' +
     '<tr><th class="num" style="border-left:1px solid var(--border);">Total</th><th class="num">' + cl + '</th><th class="num">Por seguir</th>' +
     '<th class="num" style="border-left:1px solid var(--border);">Total</th><th class="num">' + cl + '</th><th class="num">Por seguir</th>' +
-    '<th class="num" style="border-left:1px solid var(--border);">Total</th><th class="num">% Straumann</th><th class="num">Cotiz. por seguir</th></tr></thead><tbody>' +
-    (filas || '<tr><td colspan="10" style="color:var(--muted);padding:16px 10px">Sin implantes en el período</td></tr>') +
+    '<th class="num" style="border-left:1px solid var(--border);">Total implantes</th><th class="num">% Neodent</th><th class="num">% Straumann</th><th class="num">Cotiz. por seguir</th></tr></thead><tbody>' +
+    (filas || '<tr><td colspan="11" style="color:var(--muted);padding:16px 10px">Sin implantes en el período</td></tr>') +
     (filas ? impFilaHtml('TOTAL', t, true) : '') + '</tbody></table></div>' +
     '<div style="font-size:11px;color:var(--muted);margin-top:8px;line-height:1.5;">' +
-    '<b>Total</b> = unidades de implante solicitadas (sin anuladas). <b>' + cl + '</b> = ' + esc(confLabel) + '. <b>Por seguir</b> = el resto (aún sin confirmar). ' +
+    '<b>Total</b> = unidades de implante solicitadas (sin anuladas). <b>Total implantes</b> = Neodent + Straumann de esa fila (ej.: 121 + 19 = 140), y los % son la parte de cada marca sobre ese total. <b>' + cl + '</b> = ' + esc(confLabel) + '. <b>Por seguir</b> = el resto (aún sin confirmar). ' +
     'Se clasifica por la familia del Maestro de Productos; BLT cuenta como Straumann.</div></div>';
 }
 function impFilaHtml(nombre, g, esTotal) {
@@ -4367,7 +4367,7 @@ function impFilaHtml(nombre, g, esTotal) {
     '<td class="num" style="' + bl + '">' + g.neo + '</td><td class="num">' + g.neoConf + '</td><td class="num">' + g.neoPend + '</td>' +
     '<td class="num" style="' + bl + '">' + g.str + '</td><td class="num">' + g.strConf + '</td>' +
     '<td class="num" style="' + (g.strPend > 0 ? 'color:var(--red);font-weight:700;' : '') + '">' + g.strPend + '</td>' +
-    '<td class="num" style="' + bl + '">' + tot + '</td><td class="num" style="font-weight:700;">' + impPct(g.str, tot) + '</td><td class="num">' + g.cotPend + '</td></tr>';
+    '<td class="num" style="' + bl + '">' + tot + '</td><td class="num">' + impPct(g.neo, tot) + '</td><td class="num" style="font-weight:700;">' + impPct(g.str, tot) + '</td><td class="num">' + g.cotPend + '</td></tr>';
 }
 function impExportar(grupos, etiquetaClave, confLabel, base) {
   exportarMatrizExcel(grupos, [
@@ -4375,6 +4375,7 @@ function impExportar(grupos, etiquetaClave, confLabel, base) {
     { label: 'Neodent total', key: 'neo' }, { label: 'Neodent confirmados', key: 'neoConf' }, { label: 'Neodent por seguir', key: 'neoPend' },
     { label: 'Straumann (incl. BLT) total', key: 'str' }, { label: 'Straumann confirmados', key: 'strConf' }, { label: 'Straumann por seguir', key: 'strPend' },
     { label: 'Total implantes', value: function (g) { return g.neo + g.str; } },
+    { label: '% Neodent', value: function (g) { return impPct(g.neo, g.neo + g.str); } },
     { label: '% Straumann', value: function (g) { return impPct(g.str, g.neo + g.str); } },
     { label: 'Cotizaciones por seguir', key: 'cotPend' }
   ], 'Implantes', base);
