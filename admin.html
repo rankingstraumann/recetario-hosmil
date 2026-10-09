@@ -4402,9 +4402,7 @@ function impRecPintar() {
   var datosR = impFiltrarMes(impRec.datos, impRec.mes);
   var g = impAgrupar(datosR, 'institucion_codigo', 'unidades_confirmadas');
   var sufR = impRec.mes ? ' — ' + impEtiqueta(impRec.mes, 'mes') : '';
-  box.innerHTML = head + impTablaHtml(g, 'Unidades por institución' + sufR, 'Institución', 'Pago validado + Pedido ingresado al sistema', 'btn-imp-rec-xls') +
-    impPivotHtml(impRec.datos, 'institucion_codigo', 'Institución', 'Straumann', 'Straumann (incl. BLT) por institución y mes') +
-    impPivotHtml(impRec.datos, 'institucion_codigo', 'Institución', 'Neodent', 'Neodent por institución y mes');
+  box.innerHTML = head + impTablaHtml(g, 'Unidades por institución' + sufR, 'Institución', 'Pago validado + Pedido ingresado al sistema', 'btn-imp-rec-xls');
   document.getElementById('btn-imp-rec-xls').addEventListener('click', function () { impExportar(g, 'Institución', '', 'Implantes_por_institucion' + (impRec.mes ? '_' + impRec.mes : '')); });
 }
 function impRecMes(m) { impRec.mes = m; if (m && impRec.periodo !== 'todo') { impRec.periodo = 'todo'; impRec.cargado = false; impRecCargar(); } else { impRecPintar(); } }
@@ -4432,9 +4430,7 @@ function impCotPintar() {
   var datosC = impFiltrarMes(impCot.datos, impCot.mes);
   var g = impAgrupar(datosC, 'cliente_nombre', 'unidades_ingresadas');
   var sufC = impCot.mes ? ' — ' + impEtiqueta(impCot.mes, 'mes') : '';
-  box.innerHTML = head + impTablaHtml(g, 'Unidades por cliente' + sufC, 'Cliente', 'cotización ingresada', 'btn-imp-cot-xls') +
-    impPivotHtml(impCot.datos, 'cliente_nombre', 'Cliente', 'Straumann', 'Straumann (incl. BLT) por cliente y mes') +
-    impPivotHtml(impCot.datos, 'cliente_nombre', 'Cliente', 'Neodent', 'Neodent por cliente y mes');
+  box.innerHTML = head + impTablaHtml(g, 'Unidades por cliente' + sufC, 'Cliente', 'cotización ingresada', 'btn-imp-cot-xls');
   document.getElementById('btn-imp-cot-xls').addEventListener('click', function () { impExportar(g, 'Cliente', '', 'Implantes_cotizador_por_cliente' + (impCot.mes ? '_' + impCot.mes : '')); });
 }
 function impCotMes(m) { impCot.mes = m; if (m && impCot.periodo !== 'todo') { impCot.periodo = 'todo'; impCot.cargado = false; impCotCargar(); } else { impCotPintar(); } }
