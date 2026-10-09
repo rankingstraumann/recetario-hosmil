@@ -224,6 +224,28 @@ function comparaPrioridadUrgencia(a, b) {
 }
 let vistaActiva = 'cotizaciones'; // 'cotizaciones' | 'dashboard' | 'matriz' | 'cotizadorComercial' | 'dashboardCotizador'
 let dashFiltro = 'todo'; // 'hoy' | '7d' | '30d' | 'todo'
+// Filtro propio del cuadro "Por institución" (independiente del filtro general de arriba)
+let dashInstPeriodo = 'todo'; // 'mes_actual' | '30d' | 'todo'
+let dashInstMes = '';         // 'YYYY-MM' (hora de Chile) o ''
+function dashInstMesDe(c) { try { return new Date(c.created_at).toLocaleDateString('en-CA', { timeZone: 'America/Santiago' }).slice(0, 7); } catch (e) { return ''; } }
+function dashInstFiltrar(rows) {
+  if (dashInstMes) return rows.filter(function (c) { return dashInstMesDe(c) === dashInstMes; });
+  if (dashInstPeriodo === 'mes_actual') { var m = dashInstMesDe({ created_at: new Date().toISOString() }); return rows.filter(function (c) { return dashInstMesDe(c) === m; }); }
+  if (dashInstPeriodo === '30d') { var lim = Date.now() - 30 * 86400000; return rows.filter(function (c) { return new Date(c.created_at).getTime() >= lim; }); }
+  return rows;
+}
+function dashInstSetPeriodo(p) { dashInstPeriodo = p; dashInstMes = ''; renderDashboardPiloto(); }
+function dashInstSetMes(m) { dashInstMes = m; renderDashboardPiloto(); }
+function dashInstFiltrosHtml() {
+  var meses = Array.from(new Set(cotizaciones.map(dashInstMesDe).filter(Boolean))).sort().reverse();
+  var etq = function (k) { var p = k.split('-'); return ['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic'][(+p[1]) - 1] + ' ' + p[0]; };
+  return '<div class="dash-filters"><span style="font-size:12px;font-weight:600;color:var(--muted);margin-right:4px;">Período:</span>' +
+    [['mes_actual', 'Mes actual'], ['30d', 'Últimos 30 días'], ['todo', 'Todo']].map(function (p) {
+      return '<button class="dash-filter-btn' + (!dashInstMes && dashInstPeriodo === p[0] ? ' active' : '') + '" onclick="dashInstSetPeriodo(\'' + p[0] + '\')">' + p[1] + '</button>';
+    }).join('') +
+    '<select class="dash-filter-btn' + (dashInstMes ? ' active' : '') + '" style="padding:6px 10px;" onchange="dashInstSetMes(this.value)"><option value="">Elegir mes…</option>' +
+    meses.map(function (m) { return '<option value="' + m + '"' + (dashInstMes === m ? ' selected' : '') + '>' + etq(m) + '</option>'; }).join('') + '</select></div>';
+}
 // FASE ADMIN-D1 -- Dashboard Cotizador (productividad por ejecutivo del
 // Cotizador Comercial). Backend: dashboard_cotizador_comercial(p_periodo),
 // RPC nueva de solo lectura. Por defecto "mes_actual" para que la primera
@@ -1236,6 +1258,7 @@ function renderDashboardPiloto() {
   var v = document.getElementById('dashboard-view');
   var datos = filtrarPorPeriodo(cotizaciones, dashFiltro);
   var d = calcDash(datos);
+  var dInst = calcDash(dashInstFiltrar(cotizaciones));   // cuadro "Por institución": filtro propio
 
   var tabsHtml = construirTabsPrincipales('dashboard');
 
@@ -1296,15 +1319,15 @@ function renderDashboardPiloto() {
       '<td class="num">' + fmt(r.montoPend) + '</td>' +
     '</tr>';
   };
-  var instRows = Object.keys(d.porInstEnriq).sort(function(a,b){
-    return d.porInstEnriq[b].n - d.porInstEnriq[a].n;
+  var instRows = Object.keys(dInst.porInstEnriq).sort(function(a,b){
+    return dInst.porInstEnriq[b].n - dInst.porInstEnriq[a].n;
   }).map(function(k) {
-    var r = d.porInstEnriq[k];
+    var r = dInst.porInstEnriq[k];
     tInst.n += r.n; tInst.pedidos += r.pedidos; tInst.pend += r.pend; tInst.montoCot += r.montoCot; tInst.montoIng += r.montoIng; tInst.montoPend += r.montoPend;
     return filaInst(k, r, false);
   }).join('');
   var tablaInst =
-    '<div class="dash-section"><h3>Por institución</h3>' +
+    '<div class="dash-section"><h3>Por institución</h3>' + dashInstFiltrosHtml() +
     '<div style="overflow-x:auto;"><table class="dash-table"><thead>' +
     '<tr><th rowspan="2">Institución</th>' +
       '<th class="num" colspan="4" style="text-align:center;' + bl + '">COTIZACIONES (SIN ANULADAS)</th>' +
