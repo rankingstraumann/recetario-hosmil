@@ -1363,12 +1363,14 @@ function renderDashboardPiloto() {
       '</div>' +
       (d.implantesTotal === 0 ? '<div style="font-size:12px;color:var(--muted);margin-top:10px;">Sin implantes en el período seleccionado.</div>' : '') +
     '</div>' +
+    '<div id="imp-rec-box"></div>' +
     renderGraficoEvolucion(d.serieEvolucion) +
     '<div class="dash-row2">' + tablaInst + tablaEstado + '</div>' +
     tablaDia +
     '</main>';
 
   document.getElementById('btn-logout').addEventListener('click', doLogout);
+  impRecMontar();
 }
 
 function generarListaCotizaciones() {
@@ -1551,9 +1553,11 @@ function renderDashboard() {
           '<input id="filtro-paciente-rut" type="text" name="filtro-paciente-rut-' + Date.now() + '" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" placeholder="Buscar por paciente o RUT..." value="' + esc(filtroPacienteRut) + '" style="padding:7px 10px;border-radius:7px;border:1px solid var(--border);font-size:13px;min-width:200px;">' +
           '<select id="filtro-institucion"></select>' +
           '<select id="filtro-estado"></select>' +
+          '<button class="btn-export" id="btn-seg-imp" onclick="segImpAlternar()">🎯 Seguimiento implantes</button>' +
           '<button class="btn-export" id="btn-exportar">📊 Exportar a Excel</button>' +
         '</div>' +
       '</div>' +
+      '<div id="seg-imp-box"></div>' +
       '<div style="overflow-x:auto;">' +
         '<table><thead><tr><th>Institución</th><th>N° Cotización</th><th>Paciente</th><th>Doctor</th><th>Fecha</th><th style="text-align:right;">Total</th><th>Estado</th></tr></thead>' +
         '<tbody id="tbody-cotizaciones">' + filasHtml + '</tbody></table>' +
@@ -1582,6 +1586,7 @@ function renderDashboard() {
 
   document.getElementById('btn-logout').addEventListener('click', doLogout);
   document.getElementById('btn-exportar').addEventListener('click', function () { exportarExcel(visiblesCotizacionesActuales); });
+  if (segImp.abierto) segImpPintar();
 }
 
 // ============================================================
@@ -4182,10 +4187,11 @@ function renderDashboardCotizador() {
     filtrosHtml +
     (dashCotCargando ? '<div style="padding:24px;text-align:center;color:var(--muted);">Cargando…</div>' :
       (dashCotError ? '<div style="background:#fff3cd;border:1px solid #fde68a;border-radius:10px;padding:14px 18px;margin:10px 0;text-align:center;font-size:13px;">⚠️ ' + esc(dashCotError) + '</div>' :
-        cardsHtml + tablaHtml)) +
+        cardsHtml + tablaHtml + '<div id="imp-cot-box"></div>')) +
     '</main>';
 
   document.getElementById('btn-logout').addEventListener('click', doLogout);
+  if (!dashCotCargando && !dashCotError) impCotMontar();
 }
 
 function renderCotizadorComercial() {
@@ -4260,6 +4266,189 @@ function wireCotizadorComercialInputs() {
     busq.addEventListener('input', function (e) { cotComState.busqueda = e.target.value; });
     busq.addEventListener('keydown', function (e) { if (e.key === 'Enter') cotComBuscarProductos(); });
   }
+}
+
+// ============================================================
+// COMPLEMENTO ADMIN -- Implantes por marca, institucion y seguimiento.
+// Solo lectura: consume 3 RPC nuevas (dashboard_implantes_recetario,
+// seguimiento_implantes_recetario, dashboard_implantes_cotizador). BLT se
+// agrupa como Straumann. No altera ninguna metrica ni vista existente.
+// ============================================================
+let impRec = { periodo: 'todo', datos: [], cargando: false, error: '', cargado: false };
+let impCot = { periodo: 'todo', datos: [], cargando: false, error: '', cargado: false };
+let segImp = { abierto: false, datos: [], cargando: false, error: '', cargado: false, marca: 'Todas', inst: 'Todas' };
+
+function impNum(v) { return Number(v) || 0; }
+function impPct(a, b) { return b > 0 ? (Math.round(a / b * 1000) / 10) + '%' : '—'; }
+function impPeriodoBtns(estado, fnRecarga) {
+  return '<div class="dash-filters"><span style="font-size:12px;font-weight:600;color:var(--muted);margin-right:4px;">Período:</span>' +
+    [['mes_actual', 'Mes actual'], ['30d', 'Últimos 30 días'], ['todo', 'Todo']].map(function (p) {
+      return '<button class="dash-filter-btn' + (estado.periodo === p[0] ? ' active' : '') + '" onclick="' + fnRecarga + '(\'' + p[0] + '\')">' + p[1] + '</button>';
+    }).join('') + '</div>';
+}
+
+// Agrupa filas RPC por clave (institucion o cliente) -> {neo, str, neoPend, strPend, strConf, cotPend}
+function impAgrupar(rows, claveCampo, confCampo) {
+  var m = {};
+  rows.forEach(function (r) {
+    var k = r[claveCampo] || '(sin dato)';
+    var o = m[k] || (m[k] = { clave: k, neo: 0, str: 0, neoPend: 0, strPend: 0, neoConf: 0, strConf: 0, cotPend: 0 });
+    var tot = impNum(r.unidades_total), pend = impNum(r.unidades_pendientes), conf = impNum(r[confCampo]);
+    if (r.marca_grupo === 'Neodent') { o.neo += tot; o.neoPend += pend; o.neoConf += conf; }
+    else { o.str += tot; o.strPend += pend; o.strConf += conf; }
+    o.cotPend += impNum(r.cotizaciones_pendientes);
+  });
+  return Object.keys(m).map(function (k) { return m[k]; }).sort(function (a, b) { return (b.str + b.neo) - (a.str + a.neo); });
+}
+
+function impTablaHtml(grupos, titulo, etiquetaClave, confLabel, idExport) {
+  var t = { neo: 0, str: 0, neoPend: 0, strPend: 0, strConf: 0, cotPend: 0 };
+  var filas = grupos.map(function (g) {
+    Object.keys(t).forEach(function (k) { t[k] += g[k]; });
+    return impFilaHtml(g.clave, g, false);
+  }).join('');
+  return '<div class="dash-section"><div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:10px;">' +
+    '<h3 style="margin:0;">' + esc(titulo) + '</h3>' +
+    '<button class="btn-export" id="' + idExport + '">📊 Exportar a Excel</button></div>' +
+    '<div style="overflow-x:auto;"><table class="dash-table"><thead><tr><th>' + esc(etiquetaClave) + '</th>' +
+    '<th class="num">Neodent</th><th class="num">Straumann (incl. BLT)</th><th class="num">Total</th><th class="num">% Straumann</th>' +
+    '<th class="num">Straumann ' + esc(confLabel) + '</th><th class="num">Straumann por seguir</th><th class="num">Neodent por seguir</th><th class="num">Cotiz. por seguir</th></tr></thead><tbody>' +
+    (filas || '<tr><td colspan="9" style="color:var(--muted);padding:16px 10px">Sin implantes en el período</td></tr>') +
+    (filas ? impFilaHtml('TOTAL', t, true) : '') + '</tbody></table></div>' +
+    '<div style="font-size:11px;color:var(--muted);margin-top:8px;">Unidades de implante (sin anulados). Se clasifica por la familia del Maestro de Productos; BLT cuenta como Straumann.</div></div>';
+}
+function impFilaHtml(nombre, g, esTotal) {
+  var tot = g.neo + g.str, st = esTotal ? 'font-weight:800;background:#fafafa;' : '';
+  return '<tr style="' + st + '"><td>' + esc(nombre) + '</td><td class="num">' + g.neo + '</td><td class="num">' + g.str + '</td><td class="num">' + tot + '</td>' +
+    '<td class="num" style="font-weight:700;">' + impPct(g.str, tot) + '</td><td class="num">' + g.strConf + '</td>' +
+    '<td class="num" style="' + (g.strPend > 0 ? 'color:var(--red);font-weight:700;' : '') + '">' + g.strPend + '</td>' +
+    '<td class="num">' + g.neoPend + '</td><td class="num">' + g.cotPend + '</td></tr>';
+}
+function impExportar(grupos, etiquetaClave, confLabel, base) {
+  exportarMatrizExcel(grupos, [
+    { label: etiquetaClave, key: 'clave' }, { label: 'Neodent', key: 'neo' }, { label: 'Straumann (incl. BLT)', key: 'str' },
+    { label: 'Total', value: function (g) { return g.neo + g.str; } },
+    { label: '% Straumann', value: function (g) { return impPct(g.str, g.neo + g.str); } },
+    { label: 'Straumann ' + confLabel, key: 'strConf' }, { label: 'Straumann por seguir', key: 'strPend' },
+    { label: 'Neodent por seguir', key: 'neoPend' }, { label: 'Cotizaciones por seguir', key: 'cotPend' }
+  ], 'Implantes', base);
+}
+
+// ---- Recetarios (Dashboard Recetario) ----
+async function impRecCargar(periodo) {
+  if (periodo) { impRec.periodo = periodo; impRec.cargado = false; }
+  impRec.cargando = true; impRec.error = '';
+  impRecPintar();
+  try {
+    const { data, error } = await sb.rpc('dashboard_implantes_recetario', { p_periodo: impRec.periodo === 'todo' ? null : impRec.periodo });
+    if (error) throw error;
+    impRec.datos = data || []; impRec.cargado = true;
+  } catch (e) { impRec.datos = []; impRec.error = 'No se pudo cargar el detalle de implantes por institución.'; }
+  impRec.cargando = false;
+  impRecPintar();
+}
+function impRecMontar() { if (!impRec.cargado && !impRec.cargando) impRecCargar(); else impRecPintar(); }
+function impRecPintar() {
+  var box = document.getElementById('imp-rec-box'); if (!box) return;
+  var head = '<div class="dash-section" style="margin-bottom:0;border-bottom-left-radius:0;border-bottom-right-radius:0;"><h3 style="margin:0 0 4px;">Implantes por marca e institución</h3>' +
+    '<p style="margin:0 0 10px;font-size:12px;color:var(--muted);">Complementa "Implantes cotizados". Excluye anuladas y clasifica por familia del Maestro.</p>' + impPeriodoBtns(impRec, 'impRecCargar') + '</div>';
+  if (impRec.cargando) { box.innerHTML = head + '<div style="padding:16px;text-align:center;color:var(--muted);">Cargando…</div>'; return; }
+  if (impRec.error) { box.innerHTML = head + '<div style="background:#fff3cd;border:1px solid #fde68a;border-radius:10px;padding:12px 16px;font-size:13px;">⚠️ ' + esc(impRec.error) + '</div>'; return; }
+  var g = impAgrupar(impRec.datos, 'institucion_codigo', 'unidades_confirmadas');
+  box.innerHTML = head + impTablaHtml(g, 'Unidades por institución', 'Institución', 'confirmados', 'btn-imp-rec-xls');
+  document.getElementById('btn-imp-rec-xls').addEventListener('click', function () { impExportar(g, 'Institución', 'confirmados', 'Implantes_por_institucion'); });
+}
+
+// ---- Cotizador Comercial (Dashboard Cotizador) ----
+async function impCotCargar(periodo) {
+  if (periodo) { impCot.periodo = periodo; impCot.cargado = false; }
+  impCot.cargando = true; impCot.error = '';
+  impCotPintar();
+  try {
+    const { data, error } = await sb.rpc('dashboard_implantes_cotizador', { p_periodo: impCot.periodo === 'todo' ? null : impCot.periodo });
+    if (error) throw error;
+    impCot.datos = data || []; impCot.cargado = true;
+  } catch (e) { impCot.datos = []; impCot.error = 'No se pudo cargar el detalle de implantes por cliente.'; }
+  impCot.cargando = false;
+  impCotPintar();
+}
+function impCotMontar() { if (!impCot.cargado && !impCot.cargando) impCotCargar(); else impCotPintar(); }
+function impCotPintar() {
+  var box = document.getElementById('imp-cot-box'); if (!box) return;
+  var head = '<div class="dash-section" style="margin-bottom:0;border-bottom-left-radius:0;border-bottom-right-radius:0;"><h3 style="margin:0 0 4px;">Implantes por marca y cliente</h3>' +
+    '<p style="margin:0 0 10px;font-size:12px;color:var(--muted);">Cotizador Comercial: unidades de implante por cliente. "Por seguir" = cotización no ingresada (excluye rechazadas).</p>' + impPeriodoBtns(impCot, 'impCotCargar') + '</div>';
+  if (impCot.cargando) { box.innerHTML = head + '<div style="padding:16px;text-align:center;color:var(--muted);">Cargando…</div>'; return; }
+  if (impCot.error) { box.innerHTML = head + '<div style="background:#fff3cd;border:1px solid #fde68a;border-radius:10px;padding:12px 16px;font-size:13px;">⚠️ ' + esc(impCot.error) + '</div>'; return; }
+  var g = impAgrupar(impCot.datos, 'cliente_nombre', 'unidades_ingresadas');
+  box.innerHTML = head + impTablaHtml(g, 'Unidades por cliente', 'Cliente', 'ingresados', 'btn-imp-cot-xls');
+  document.getElementById('btn-imp-cot-xls').addEventListener('click', function () { impExportar(g, 'Cliente', 'ingresados', 'Implantes_cotizador_por_cliente'); });
+}
+
+// ---- Seguimiento (pestana Cotizaciones) ----
+async function segImpAlternar() {
+  segImp.abierto = !segImp.abierto;
+  segImpPintar();
+  if (segImp.abierto && !segImp.cargado && !segImp.cargando) await segImpCargar();
+}
+async function segImpCargar() {
+  segImp.cargando = true; segImp.error = ''; segImpPintar();
+  try {
+    const { data, error } = await sb.rpc('seguimiento_implantes_recetario', { p_marca_grupo: null, p_institucion: null });
+    if (error) throw error;
+    segImp.datos = data || []; segImp.cargado = true;
+  } catch (e) { segImp.datos = []; segImp.error = 'No se pudo cargar el seguimiento de implantes.'; }
+  segImp.cargando = false; segImpPintar();
+}
+function segImpFiltrados() {
+  return segImp.datos.filter(function (r) {
+    if (segImp.inst !== 'Todas' && r.institucion_codigo !== segImp.inst) return false;
+    if (segImp.marca === 'Straumann' && impNum(r.unid_straumann) <= 0) return false;
+    if (segImp.marca === 'Neodent' && impNum(r.unid_neodent) <= 0) return false;
+    return true;
+  });
+}
+function segImpPintar() {
+  var box = document.getElementById('seg-imp-box'); if (!box) return;
+  var btn = document.getElementById('btn-seg-imp');
+  if (btn) btn.classList.toggle('active', segImp.abierto);
+  if (!segImp.abierto) { box.innerHTML = ''; return; }
+  var cab = '<div class="dash-section"><h3>🎯 Seguimiento de implantes (sin Pago validado / Pedido ingresado)</h3>';
+  if (segImp.cargando) { box.innerHTML = cab + '<div style="padding:12px;color:var(--muted);">Cargando…</div></div>'; return; }
+  if (segImp.error) { box.innerHTML = cab + '<div style="background:#fff3cd;border:1px solid #fde68a;border-radius:10px;padding:12px 16px;font-size:13px;">⚠️ ' + esc(segImp.error) + '</div></div>'; return; }
+  var insts = Array.from(new Set(segImp.datos.map(function (r) { return r.institucion_codigo; }))).sort();
+  var rows = segImpFiltrados();
+  var uStr = 0, uNeo = 0;
+  rows.forEach(function (r) { uStr += impNum(r.unid_straumann); uNeo += impNum(r.unid_neodent); });
+  var filas = rows.map(function (r) {
+    var d = impNum(r.dias_sin_movimiento);
+    var wa = r.paciente_whatsapp ? String(r.paciente_whatsapp).replace(/\D/g, '') : '';
+    var waHtml = wa ? '<a href="https://wa.me/569' + wa + '" target="_blank" rel="noopener">+56 9 ' + esc(r.paciente_whatsapp) + '</a>' : '-';
+    return '<tr><td>' + esc(r.institucion_codigo) + '</td><td>' + esc(r.numero) + '</td><td>' + esc(r.doctor || '-') + '</td><td>' + esc(r.paciente || '-') + '</td>' +
+      '<td>' + esc(r.estado) + '</td><td class="num">' + impNum(r.unid_straumann) + '</td><td class="num">' + impNum(r.unid_neodent) + '</td>' +
+      '<td class="num" style="' + (d >= 7 ? 'color:var(--red);font-weight:700;' : '') + '">' + d + '</td><td>' + waHtml + '</td><td>' + esc(r.paciente_email || '-') + '</td></tr>';
+  }).join('');
+  box.innerHTML = cab +
+    '<div style="display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:10px;">' +
+      '<select id="seg-imp-marca"><option>Todas</option><option>Straumann</option><option>Neodent</option></select>' +
+      '<select id="seg-imp-inst"><option>Todas</option>' + insts.map(function (i) { return '<option>' + esc(i) + '</option>'; }).join('') + '</select>' +
+      '<span class="stat-pill">' + rows.length + ' cotizaciones · Straumann ' + uStr + ' · Neodent ' + uNeo + ' un.</span>' +
+      '<button class="btn-export" id="btn-seg-imp-xls">📊 Exportar a Excel</button></div>' +
+    '<div style="overflow-x:auto;"><table class="dash-table"><thead><tr><th>Institución</th><th>N°</th><th>Doctor</th><th>Paciente</th><th>Estado</th>' +
+    '<th class="num">Un. Straumann</th><th class="num">Un. Neodent</th><th class="num">Días sin movimiento</th><th>WhatsApp</th><th>Correo</th></tr></thead><tbody>' +
+    (filas || '<tr><td colspan="10" style="color:var(--muted);padding:16px 10px">Sin cotizaciones por seguir con estos filtros</td></tr>') + '</tbody></table></div></div>';
+  var sm = document.getElementById('seg-imp-marca'), si = document.getElementById('seg-imp-inst');
+  sm.value = segImp.marca; si.value = segImp.inst;
+  sm.addEventListener('change', function (e) { segImp.marca = e.target.value; segImpPintar(); });
+  si.addEventListener('change', function (e) { segImp.inst = e.target.value; segImpPintar(); });
+  document.getElementById('btn-seg-imp-xls').addEventListener('click', function () {
+    exportarMatrizExcel(rows, [
+      { label: 'Institución', key: 'institucion_codigo' }, { label: 'N° Cotización', key: 'numero' }, { label: 'Doctor', key: 'doctor' },
+      { label: 'Paciente', key: 'paciente' }, { label: 'Estado', key: 'estado' }, { label: 'Unidades Straumann', key: 'unid_straumann' },
+      { label: 'Unidades Neodent', key: 'unid_neodent' }, { label: 'Días sin movimiento', key: 'dias_sin_movimiento' },
+      { label: 'WhatsApp', value: function (r) { return r.paciente_whatsapp ? '+56 9 ' + r.paciente_whatsapp : ''; } },
+      { label: 'Correo', key: 'paciente_email' }, { label: 'Total', key: 'total' }
+    ], 'Seguimiento', 'Seguimiento_implantes');
+  });
 }
 
 sb.auth.onAuthStateChange(function (event, session) {
