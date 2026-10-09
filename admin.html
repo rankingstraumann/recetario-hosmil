@@ -4275,8 +4275,8 @@ function wireCotizadorComercialInputs() {
 // seguimiento_implantes_recetario, dashboard_implantes_cotizador). BLT se
 // agrupa como Straumann. No altera ninguna metrica ni vista existente.
 // ============================================================
-let impRec = { periodo: 'todo', datos: [], cargando: false, error: '', cargado: false };
-let impCot = { periodo: 'todo', datos: [], cargando: false, error: '', cargado: false };
+let impRec = { vista: 'inst', periodo: 'todo', datos: [], cargando: false, error: '', cargado: false };
+let impCot = { vista: 'inst', periodo: 'todo', datos: [], cargando: false, error: '', cargado: false };
 let segImp = { abierto: false, datos: [], cargando: false, error: '', cargado: false, marca: 'Todas', inst: 'Todas' };
 
 function impNum(v) { return Number(v) || 0; }
@@ -4293,20 +4293,53 @@ function impAgrupar(rows, claveCampo, confCampo) {
   var m = {};
   rows.forEach(function (r) {
     var k = r[claveCampo] || '(sin dato)';
-    var o = m[k] || (m[k] = { clave: k, neo: 0, str: 0, neoPend: 0, strPend: 0, neoConf: 0, strConf: 0, cotPend: 0 });
+    var o = m[k] || (m[k] = { clave: k, etiqueta: impEtiqueta(k, claveCampo), neo: 0, str: 0, neoPend: 0, strPend: 0, neoConf: 0, strConf: 0, cotPend: 0 });
     var tot = impNum(r.unidades_total), pend = impNum(r.unidades_pendientes), conf = impNum(r[confCampo]);
     if (r.marca_grupo === 'Neodent') { o.neo += tot; o.neoPend += pend; o.neoConf += conf; }
     else { o.str += tot; o.strPend += pend; o.strConf += conf; }
     o.cotPend += impNum(r.cotizaciones_pendientes);
   });
-  return Object.keys(m).map(function (k) { return m[k]; }).sort(function (a, b) { return (b.str + b.neo) - (a.str + a.neo); });
+  var arr = Object.keys(m).map(function (k) { return m[k]; });
+  return arr.sort(claveCampo === 'mes' ? function (a, b) { return a.clave < b.clave ? -1 : 1; } : function (a, b) { return (b.str + b.neo) - (a.str + a.neo); });
+}
+var IMP_MESES = ['Ene', 'Feb', 'Mar', 'Abr', 'May', 'Jun', 'Jul', 'Ago', 'Sep', 'Oct', 'Nov', 'Dic'];
+function impEtiqueta(k, campo) {
+  if (campo !== 'mes') return k;
+  var p = String(k).split('-'); return p.length === 2 ? IMP_MESES[(+p[1]) - 1] + ' ' + p[0] : k;
+}
+// Tabla cruzada: filas = institucion/cliente, columnas = meses, para una marca (Neodent | Straumann)
+function impPivotHtml(rows, claveCampo, claveLabel, marca, titulo) {
+  var meses = Array.from(new Set(rows.map(function (r) { return r.mes; }))).sort();
+  var filas = {}, tot = {}, totGen = 0;
+  rows.forEach(function (r) {
+    if (r.marca_grupo !== marca) return;
+    var k = r[claveCampo] || '(sin dato)', u = impNum(r.unidades_total);
+    filas[k] = filas[k] || { _t: 0 }; filas[k][r.mes] = (filas[k][r.mes] || 0) + u; filas[k]._t += u;
+    tot[r.mes] = (tot[r.mes] || 0) + u; totGen += u;
+  });
+  var claves = Object.keys(filas).sort(function (a, b) { return filas[b]._t - filas[a]._t; });
+  var celda = function (v) { return '<td class="num">' + (v || '·') + '</td>'; };
+  var cuerpo = claves.map(function (k) {
+    return '<tr><td>' + esc(k) + '</td>' + meses.map(function (m) { return celda(filas[k][m]); }).join('') + '<td class="num" style="font-weight:700;">' + filas[k]._t + '</td></tr>';
+  }).join('');
+  return '<div class="dash-section"><h3>' + esc(titulo) + '</h3><div style="overflow-x:auto;"><table class="dash-table"><thead><tr><th>' + esc(claveLabel) + '</th>' +
+    meses.map(function (m) { return '<th class="num">' + esc(impEtiqueta(m, 'mes')) + '</th>'; }).join('') + '<th class="num">Total</th></tr></thead><tbody>' +
+    (cuerpo || '<tr><td colspan="' + (meses.length + 2) + '" style="color:var(--muted);padding:16px 10px">Sin datos</td></tr>') +
+    (cuerpo ? '<tr style="font-weight:800;background:#fafafa;"><td>TOTAL</td>' + meses.map(function (m) { return '<td class="num">' + (tot[m] || 0) + '</td>'; }).join('') + '<td class="num">' + totGen + '</td></tr>' : '') +
+    '</tbody></table></div></div>';
+}
+function impVistaBtns(estado, fn) {
+  return '<div class="dash-filters"><span style="font-size:12px;font-weight:600;color:var(--muted);margin-right:4px;">Vista:</span>' +
+    [['inst', estado.etiquetaInst], ['mes', 'Por mes']].map(function (p) {
+      return '<button class="dash-filter-btn' + (estado.vista === p[0] ? ' active' : '') + '" onclick="' + fn + '(\'' + p[0] + '\')">' + p[1] + '</button>';
+    }).join('') + '</div>';
 }
 
 function impTablaHtml(grupos, titulo, etiquetaClave, confLabel, idExport) {
   var t = { neo: 0, str: 0, neoPend: 0, strPend: 0, strConf: 0, cotPend: 0 };
   var filas = grupos.map(function (g) {
     Object.keys(t).forEach(function (k) { t[k] += g[k]; });
-    return impFilaHtml(g.clave, g, false);
+    return impFilaHtml(g.etiqueta, g, false);
   }).join('');
   return '<div class="dash-section"><div style="display:flex;justify-content:space-between;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:10px;">' +
     '<h3 style="margin:0;">' + esc(titulo) + '</h3>' +
@@ -4327,7 +4360,7 @@ function impFilaHtml(nombre, g, esTotal) {
 }
 function impExportar(grupos, etiquetaClave, confLabel, base) {
   exportarMatrizExcel(grupos, [
-    { label: etiquetaClave, key: 'clave' }, { label: 'Neodent', key: 'neo' }, { label: 'Straumann (incl. BLT)', key: 'str' },
+    { label: etiquetaClave, key: 'etiqueta' }, { label: 'Neodent', key: 'neo' }, { label: 'Straumann (incl. BLT)', key: 'str' },
     { label: 'Total', value: function (g) { return g.neo + g.str; } },
     { label: '% Straumann', value: function (g) { return impPct(g.str, g.neo + g.str); } },
     { label: 'Straumann ' + confLabel, key: 'strConf' }, { label: 'Straumann por seguir', key: 'strPend' },
@@ -4341,13 +4374,14 @@ async function impRecCargar(periodo) {
   impRec.cargando = true; impRec.error = '';
   impRecPintar();
   try {
-    const { data, error } = await sb.rpc('dashboard_implantes_recetario', { p_periodo: impRec.periodo === 'todo' ? null : impRec.periodo });
+    const { data, error } = await sb.rpc('dashboard_implantes_recetario_mensual', { p_periodo: impRec.periodo === 'todo' ? null : impRec.periodo });
     if (error) throw error;
     impRec.datos = data || []; impRec.cargado = true;
   } catch (e) { impRec.datos = []; impRec.error = 'No se pudo cargar el detalle de implantes por institución.'; }
   impRec.cargando = false;
   impRecPintar();
 }
+function impRecVista(v) { impRec.vista = v; impRecPintar(); }
 function impRecMontar() { if (!impRec.cargado && !impRec.cargando) impRecCargar(); else impRecPintar(); }
 function impRecPintar() {
   var box = document.getElementById('imp-rec-box'); if (!box) return;
@@ -4355,9 +4389,15 @@ function impRecPintar() {
     '<p style="margin:0 0 10px;font-size:12px;color:var(--muted);">Complementa "Implantes cotizados". Excluye anuladas y clasifica por familia del Maestro.</p>' + impPeriodoBtns(impRec, 'impRecCargar') + '</div>';
   if (impRec.cargando) { box.innerHTML = head + '<div style="padding:16px;text-align:center;color:var(--muted);">Cargando…</div>'; return; }
   if (impRec.error) { box.innerHTML = head + '<div style="background:#fff3cd;border:1px solid #fde68a;border-radius:10px;padding:12px 16px;font-size:13px;">⚠️ ' + esc(impRec.error) + '</div>'; return; }
-  var g = impAgrupar(impRec.datos, 'institucion_codigo', 'unidades_confirmadas');
-  box.innerHTML = head + impTablaHtml(g, 'Unidades por institución', 'Institución', 'confirmados', 'btn-imp-rec-xls');
-  document.getElementById('btn-imp-rec-xls').addEventListener('click', function () { impExportar(g, 'Institución', 'confirmados', 'Implantes_por_institucion'); });
+  impRec.etiquetaInst = 'Por institución';
+  var campo = impRec.vista === 'mes' ? 'mes' : 'institucion_codigo';
+  var etq = impRec.vista === 'mes' ? 'Mes' : 'Institución';
+  var g = impAgrupar(impRec.datos, campo, 'unidades_confirmadas');
+  box.innerHTML = head + impVistaBtns(impRec, 'impRecVista') +
+    impTablaHtml(g, impRec.vista === 'mes' ? 'Unidades por mes (mes de creación de la cotización)' : 'Unidades por institución', etq, 'confirmados', 'btn-imp-rec-xls') +
+    impPivotHtml(impRec.datos, 'institucion_codigo', 'Institución', 'Straumann', 'Straumann (incl. BLT) por institución y mes') +
+    impPivotHtml(impRec.datos, 'institucion_codigo', 'Institución', 'Neodent', 'Neodent por institución y mes');
+  document.getElementById('btn-imp-rec-xls').addEventListener('click', function () { impExportar(g, etq, 'confirmados', impRec.vista === 'mes' ? 'Implantes_por_mes' : 'Implantes_por_institucion'); });
 }
 
 // ---- Cotizador Comercial (Dashboard Cotizador) ----
@@ -4366,13 +4406,14 @@ async function impCotCargar(periodo) {
   impCot.cargando = true; impCot.error = '';
   impCotPintar();
   try {
-    const { data, error } = await sb.rpc('dashboard_implantes_cotizador', { p_periodo: impCot.periodo === 'todo' ? null : impCot.periodo });
+    const { data, error } = await sb.rpc('dashboard_implantes_cotizador_mensual', { p_periodo: impCot.periodo === 'todo' ? null : impCot.periodo });
     if (error) throw error;
     impCot.datos = data || []; impCot.cargado = true;
   } catch (e) { impCot.datos = []; impCot.error = 'No se pudo cargar el detalle de implantes por cliente.'; }
   impCot.cargando = false;
   impCotPintar();
 }
+function impCotVista(v) { impCot.vista = v; impCotPintar(); }
 function impCotMontar() { if (!impCot.cargado && !impCot.cargando) impCotCargar(); else impCotPintar(); }
 function impCotPintar() {
   var box = document.getElementById('imp-cot-box'); if (!box) return;
@@ -4380,9 +4421,15 @@ function impCotPintar() {
     '<p style="margin:0 0 10px;font-size:12px;color:var(--muted);">Cotizador Comercial: unidades de implante por cliente. "Por seguir" = cotización no ingresada (excluye rechazadas).</p>' + impPeriodoBtns(impCot, 'impCotCargar') + '</div>';
   if (impCot.cargando) { box.innerHTML = head + '<div style="padding:16px;text-align:center;color:var(--muted);">Cargando…</div>'; return; }
   if (impCot.error) { box.innerHTML = head + '<div style="background:#fff3cd;border:1px solid #fde68a;border-radius:10px;padding:12px 16px;font-size:13px;">⚠️ ' + esc(impCot.error) + '</div>'; return; }
-  var g = impAgrupar(impCot.datos, 'cliente_nombre', 'unidades_ingresadas');
-  box.innerHTML = head + impTablaHtml(g, 'Unidades por cliente', 'Cliente', 'ingresados', 'btn-imp-cot-xls');
-  document.getElementById('btn-imp-cot-xls').addEventListener('click', function () { impExportar(g, 'Cliente', 'ingresados', 'Implantes_cotizador_por_cliente'); });
+  impCot.etiquetaInst = 'Por cliente';
+  var campoC = impCot.vista === 'mes' ? 'mes' : 'cliente_nombre';
+  var etqC = impCot.vista === 'mes' ? 'Mes' : 'Cliente';
+  var g = impAgrupar(impCot.datos, campoC, 'unidades_ingresadas');
+  box.innerHTML = head + impVistaBtns(impCot, 'impCotVista') +
+    impTablaHtml(g, impCot.vista === 'mes' ? 'Unidades por mes' : 'Unidades por cliente', etqC, 'ingresados', 'btn-imp-cot-xls') +
+    impPivotHtml(impCot.datos, 'cliente_nombre', 'Cliente', 'Straumann', 'Straumann (incl. BLT) por cliente y mes') +
+    impPivotHtml(impCot.datos, 'cliente_nombre', 'Cliente', 'Neodent', 'Neodent por cliente y mes');
+  document.getElementById('btn-imp-cot-xls').addEventListener('click', function () { impExportar(g, etqC, 'ingresados', impCot.vista === 'mes' ? 'Implantes_cotizador_por_mes' : 'Implantes_cotizador_por_cliente'); });
 }
 
 // ---- Seguimiento (pestana Cotizaciones) ----
