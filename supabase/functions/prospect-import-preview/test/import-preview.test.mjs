@@ -1,5 +1,5 @@
 // Pruebas del analisis (parse.ts + xlsx_read.ts). Ejecutar: ./run-tests.sh   (Node >= 22, --experimental-strip-types)
-// La libreria XLSX se inyecta: aqui y en produccion es SheetJS 0.20.3 (vendor/xlsx.mjs).
+// La libreria XLSX se inyecta: aqui y en produccion es SheetJS 0.20.3 (vendor/xlsx.mini.mjs).
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
@@ -9,7 +9,7 @@ import { analyze, decodeCsv, parseCsv, normExternalId, normYear, normTrade, norm
 import { readWorkbook } from '../xlsx_read.ts';
 
 const here = dirname(fileURLToPath(import.meta.url));
-import * as XLSX from '../vendor/xlsx.mjs';
+import { XLSX } from '../vendor/xlsx.mini.mjs';
 const xlsxBytes = new Uint8Array(readFileSync(join(here, 'fixtures/trade_up_ficticio.xlsx')));
 const csvBytes = new Uint8Array(readFileSync(join(here, 'fixtures/telefonos_ficticio.csv')));
 

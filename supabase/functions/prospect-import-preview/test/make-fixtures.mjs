@@ -1,8 +1,8 @@
-// Genera fixtures 100% FICTICIOS (sin clientes reales). Usa SheetJS 0.20.3 vendorizada (../vendor/xlsx.mjs). Uso: node make-fixtures.mjs
+// Genera fixtures 100% FICTICIOS (sin clientes reales). Usa SheetJS 0.20.3 vendorizada (../vendor/xlsx.mini.mjs). Uso: node make-fixtures.mjs
 import { writeFileSync, mkdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import * as XLSX from '../vendor/xlsx.mjs';
+import { XLSX } from '../vendor/xlsx.mini.mjs';
 import * as fs from 'node:fs';
 XLSX.set_fs(fs);
 const dir = join(dirname(fileURLToPath(import.meta.url)), 'fixtures'); mkdirSync(dir, { recursive: true });

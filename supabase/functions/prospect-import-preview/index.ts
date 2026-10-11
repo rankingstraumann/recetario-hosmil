@@ -7,9 +7,10 @@
 //  - Parsing determinista (sin IA, sin servicios externos). No se evaluan formulas.
 //  - Los logs contienen SOLO contadores/codigos; nunca nombres, telefonos, correos ni filas.
 import { createClient } from 'npm:@supabase/supabase-js@2.45.4';
-// SheetJS 0.20.3 oficial, VENDORIZADA (sin modificar) en ./vendor/xlsx.mjs; ver vendor/VENDOR.md (origen + SHA-256).
-// Se empaqueta con la funcion: sin descarga ni CDN en runtime. No usar npm:xlsx (0.18.5, vulnerable).
-import * as XLSX from './vendor/xlsx.mjs';
+// SheetJS 0.20.3 oficial, build MINI (solo XLSX; sin CSV) VENDORIZADO en ./vendor/xlsx.mini.mjs: contenido oficial + 1 linea `export { XLSX };`.
+// Ver vendor/VENDOR.md (origen, transformacion y SHA-256). Sin descarga ni CDN en runtime. No usar npm:xlsx (0.18.5, vulnerable).
+// El CSV NO pasa por SheetJS: lo procesa parseCsv/decodeCsv (parse.ts).
+import { XLSX } from './vendor/xlsx.mini.mjs';
 import { analyze, decodeCsv, ImportError, LIMITS, parseCsv, type Existing, type RawSheet } from './parse.ts';
 import { readWorkbook } from './xlsx_read.ts';
 
