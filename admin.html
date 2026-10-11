@@ -4784,6 +4784,7 @@ function prospectosLimpiar() {
   leadsSubvista = 'leads'; prospectosDatos = []; prospectosImports = []; prospectosCargado = false; prospectosCargando = false;
   prospectosError = null; prospectosFiltro = { q: '', origen: '', consent: '', estado: '', lote: '', prueba: null };
   prospectosImp = { abierto: false, analizando: false, error: null, res: null, filtro: '', file: null, confirmando: false, resultado: null, modo: 'test' };
+  prospectosEnr = prospectosEnrNuevo();
 }
 function prospectosInyectarEstilos() {
   if (document.getElementById('prospectos-estilos')) return;
@@ -4854,6 +4855,7 @@ function prospectosBarraHtml() {
     '<label class="ld-chk"><input type="checkbox" id="pr-prueba"' + (prospectosFiltro.prueba ? ' checked' : '') + '> Incluir prospectos de prueba</label>' +
     '<button class="ld-btn" id="pr-refrescar">↻ Actualizar</button>' +
     '<button class="ld-btn primary" id="pr-importar">⬆ Importar prospectos</button>' +
+    '<button class="ld-btn" id="pr-enriquecer">✚ Enriquecer prospectos</button>' +
     '</div>';
 }
 function prospectosEnlazarBarra() {
@@ -4865,8 +4867,10 @@ function prospectosEnlazarBarra() {
   });
   document.getElementById('pr-prueba').addEventListener('change', function (e) { prospectosFiltro.prueba = e.target.checked; renderLeadsDigital(); });
   document.getElementById('pr-refrescar').addEventListener('click', function () { prospectosCargar(); });
-  document.getElementById('pr-importar').addEventListener('click', function () { prospectosImp.abierto = !prospectosImp.abierto; prospectosImp.modo = 'test'; prospectosImportPintar(); });
+  document.getElementById('pr-importar').addEventListener('click', function () { prospectosImp.abierto = !prospectosImp.abierto; prospectosImp.modo = 'test'; if (prospectosImp.abierto) prospectosEnr.abierto = false; prospectosEnrPintar(); prospectosImportPintar(); });
+  document.getElementById('pr-enriquecer').addEventListener('click', function () { prospectosEnr.abierto = !prospectosEnr.abierto; if (prospectosEnr.abierto) prospectosImp.abierto = false; prospectosImportPintar(); prospectosEnrPintar(); });
   prospectosImportPintar();
+  prospectosEnrPintar();
 }
 async function prospectosCargar() {
   if (prospectosCargando) return;
@@ -5109,6 +5113,139 @@ function prospectosImportPintar() {
   });
 }
 
+// ---- Enriquecer prospectos (Outbound 5): completa nombre / móvil / email de prospectos REALES existentes por Sold-To exacto. ----
+// Nunca crea prospectos, nunca sobrescribe datos existentes, no toca consentimiento ni estado de contacto, no envía WhatsApp.
+function prospectosEnrNuevo() { return { abierto: false, analizando: false, error: null, res: null, filtro: '', file: null, confirmando: false, resultado: null, ack: false }; }
+var prospectosEnr = prospectosEnrNuevo();
+var PROSP_ENR_ESTADOS = ['ACTUALIZA', 'SIN_CAMBIOS', 'SIN_MATCH', 'INVALIDO', 'DUPLICADO_ARCHIVO', 'MATCH_MULTIPLE'];
+var PROSP_ENR_ETIQUETA = { ACTUALIZA: 'COMPLETA DATOS', SIN_CAMBIOS: 'SIN CAMBIOS', SIN_MATCH: 'SIN MATCH', INVALIDO: 'INVÁLIDO', DUPLICADO_ARCHIVO: 'REPETIDO EN ARCHIVO', MATCH_MULTIPLE: 'REPETIDO EN BASE' };
+var PROSP_ENR_CLASE = { ACTUALIZA: 'ok', SIN_CAMBIOS: 'unk', SIN_MATCH: 'dup', INVALIDO: 'no', DUPLICADO_ARCHIVO: 'dup', MATCH_MULTIPLE: 'dup' };
+var PROSP_ENR_CAMPO = { full_name: 'Contacto', phone: 'Móvil', email: 'Email' };
+var PROSP_ENR_AVISO = { telefono_duplicado: 'Teléfono duplicado', telefono_no_movil_valido: 'Teléfono no es móvil válido (no se carga)', email_invalido: 'Email inválido (no se carga)', sold_to_invalido: 'Sold-To inválido', sin_sold_to: 'Sin Sold-To', sold_to_repetido_en_archivo: 'Sold-To repetido en el archivo (se omite)', sold_to_repetido_en_base: 'Sold-To repetido en la base (se omite)' };
+
+async function prospectosEnrInvocar(file, modo, extra) {
+  var fd = new FormData(); fd.append('file', file, file.name); fd.append('mode', modo);
+  if (extra) Object.keys(extra).forEach(function (k) { fd.append(k, extra[k]); });
+  var r = await sb.functions.invoke('prospect-import-preview', { body: fd });
+  if (r.error) {
+    var msg = 'No se pudo procesar el archivo.';
+    try { if (r.error.context && r.error.context.json) { var j = await r.error.context.json(); if (j && j.message) msg = j.message; } } catch (x) {}
+    throw new Error(msg);
+  }
+  if (!r.data || r.data.ok !== true) throw new Error((r.data && r.data.message) || 'Respuesta inesperada.');
+  return r.data;
+}
+async function prospectosEnrAnalizar(file) {
+  var E = prospectosEnr;
+  E.error = null; E.res = null; E.filtro = ''; E.file = null; E.resultado = null; E.ack = false;
+  if (!file) return;
+  var nombre = (file.name || '').toLowerCase();
+  if (!/\.(xlsx|csv)$/.test(nombre)) { E.error = 'Solo se aceptan archivos .xlsx o .csv.'; prospectosEnrPintar(); return; }
+  if (file.size > PROSP_IMP_MAX_BYTES) { E.error = 'El archivo supera 5 MB.'; prospectosEnrPintar(); return; }
+  E.analizando = true; prospectosEnrPintar();
+  try {
+    var d = await prospectosEnrInvocar(file, 'enrich_preview');
+    if (d.enrichment_performed !== false) throw new Error('Respuesta inesperada del análisis.');
+    E.res = d; E.file = file;
+  } catch (e) { E.error = (e && e.message) ? e.message : 'No se pudo analizar el archivo.'; }
+  E.analizando = false; prospectosEnrPintar();
+}
+async function prospectosEnrConfirmar() {
+  var E = prospectosEnr;
+  if (!E.res || !E.file || E.confirmando || E.resultado) return;
+  var s = E.res.summary;
+  if (!s.filas_a_actualizar) return;
+  if (s.telefonos_duplicados > 0 && !E.ack) return;
+  var texto = 'Se completarán datos en ' + s.filas_a_actualizar + ' prospecto(s) REAL(ES) existente(s): ' + s.contactos_a_completar + ' contacto(s), ' + s.telefonos_a_completar + ' móvil(es), ' + s.emails_a_completar + ' email(s).\n' +
+    'Solo se llenan campos VACÍOS (no se sobrescribe nada). No se crean prospectos, no se cambia el consentimiento WhatsApp ni el estado de contacto, y no se envía ningún mensaje.\n' +
+    (s.telefonos_duplicados > 0 ? 'ATENCIÓN: hay ' + s.telefonos_duplicados + ' teléfono(s) duplicado(s) (' + s.filas_con_telefono_duplicado + ' fila(s)); ya los revisaste.\n' : '') + '\n¿Confirmar el enriquecimiento?';
+  if (!window.confirm(texto)) return;
+  E.confirmando = true; E.error = null; prospectosEnrPintar();
+  try {
+    var d = await prospectosEnrInvocar(E.file, 'enrich_confirm', s.telefonos_duplicados > 0 ? { dup_ack: 'yes' } : null);
+    if (d.enrichment_performed !== true) throw new Error('Respuesta inesperada del enriquecimiento.');
+    E.resultado = d;
+    prospectosCargado = false; prospectosCargando = false; prospectosCargar();
+  } catch (e) { E.error = (e && e.message) ? e.message : 'No se pudo completar el enriquecimiento. No se actualizó nada.'; }
+  E.confirmando = false; prospectosEnrPintar();
+}
+function prospectosEnrPintar() {
+  var root = document.getElementById('prospectos-enrich-root');
+  if (!root) return;
+  var E = prospectosEnr;
+  if (!E.abierto) { root.innerHTML = ''; return; }
+  var res = E.res, ocupado = E.analizando || E.confirmando;
+  var html = '<div class="pr-imp pr-enr"><div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;">' +
+    '<strong style="font-size:14px;">Enriquecer prospectos</strong><button class="ld-btn" id="pe-cerrar">Cerrar</button></div>' +
+    '<div style="font-size:12px;color:var(--muted);margin:6px 0 8px;">Sube un Excel (.xlsx) o CSV con <strong>Sold-To</strong> y, opcionalmente, Contacto, Teléfono y Email. Solo se <strong>completan campos vacíos</strong> de prospectos REALES que ya existen (match exacto por Sold-To). No crea prospectos, no cambia el consentimiento WhatsApp ni el estado de contacto, y no envía mensajes. El archivo no se guarda.</div>' +
+    '<input type="file" id="pe-archivo" accept=".xlsx,.csv"' + (ocupado ? ' disabled' : '') + '>' +
+    (E.resultado ? '' : '<div class="aviso">' + (res ? 'Este análisis aún NO ha modificado datos. Revisa y confirma abajo.' : 'Primero se analiza el archivo; recién al confirmar se actualiza.') + '</div>');
+  if (E.analizando) html += '<div style="padding:10px;color:var(--muted);font-size:13px;">Analizando archivo…</div>';
+  if (E.confirmando) html += '<div style="padding:10px;color:var(--muted);font-size:13px;">Actualizando… (operación atómica)</div>';
+  if (E.resultado) {
+    var R = E.resultado;
+    html += '<div style="background:#dcfce7;border:1px solid #bbf7d0;border-radius:8px;padding:10px 14px;font-size:14px;font-weight:700;color:#166534;margin:8px 0;">✅ ' +
+      R.updated + ' prospecto' + (R.updated === 1 ? '' : 's') + ' actualizado' + (R.updated === 1 ? '' : 's') + ' · ' +
+      R.full_name + ' contacto(s) · ' + R.phone + ' móvil(es) · ' + R.email + ' email(s)' +
+      (R.skipped_already_filled ? ' · ' + R.skipped_already_filled + ' ya tenían datos (sin cambios)' : '') + '</div>' +
+      '<div style="font-size:11px;color:var(--muted);">Consentimiento WhatsApp y estado de contacto no se modificaron. No se envió ningún mensaje.</div>';
+  }
+  if (E.error) html += '<div style="background:#fee2e2;border:1px solid #fecaca;border-radius:8px;padding:8px 12px;font-size:12px;color:#991b1b;">⚠️ ' + lEsc(E.error) + '</div>';
+  if (res) {
+    var s = res.summary;
+    var card = function (l, v, hl) { return '<div class="dash-card' + (hl ? ' highlight' : '') + '"><div class="dc-label">' + l + '</div><div class="dc-value">' + v + '</div></div>'; };
+    html += '<div style="font-size:12px;margin:8px 0;">Archivo: <strong>' + lEsc(res.file.name) + '</strong> · ' + Math.round(res.file.size / 1024) + ' KB</div>' +
+      '<div class="dash-grid ld-cards">' +
+      card('Filas del archivo', s.filas_archivo) + card('Match exacto', s.match_exacto) + card('Sin match', s.sin_match) +
+      card('Con móvil válido', s.con_movil_valido) + card('Sin móvil', s.sin_movil) + card('Teléfonos duplicados', s.telefonos_duplicados) +
+      card('Contactos a completar', s.contactos_a_completar) + card('Emails a completar', s.emails_a_completar) + card('Móviles a completar', s.telefonos_a_completar) +
+      card('Conflictos (no se pisan)', s.conflictos) + card('Prospectos a actualizar', s.filas_a_actualizar, true) + '</div>' +
+      '<div style="font-size:11px;color:var(--muted);margin:8px 0;">Inválidas: ' + s.invalidas + ' · Repetidas en archivo: ' + s.duplicadas_archivo + ' · Repetidas en base: ' + s.match_multiple + ' · Sin cambios: ' + s.sin_cambios + '. «Conflicto» = el prospecto ya tiene otro dato: se conserva el actual.</div>';
+    if (s.telefonos_duplicados > 0) {
+      html += '<div style="background:#fef3c7;border:1px solid #fde68a;border-radius:8px;padding:8px 12px;font-size:12px;color:#92400e;margin:8px 0;">⚠️ Hay ' + s.telefonos_duplicados + ' teléfono(s) usado(s) por más de un prospecto (' + s.filas_con_telefono_duplicado + ' fila(s) marcadas «Teléfono duplicado»). Revísalos antes de confirmar.' +
+        '<label style="display:block;margin-top:6px;font-weight:700;"><input type="checkbox" id="pe-ack"' + (E.ack ? ' checked' : '') + (ocupado || E.resultado ? ' disabled' : '') + '> Revisé los teléfonos duplicados y acepto continuar</label></div>';
+    }
+    var cnt = {}; res.rows.forEach(function (r) { cnt[r.status] = (cnt[r.status] || 0) + 1; });
+    var nDup = res.rows.filter(function (r) { return r.phone_dup; }).length;
+    html += '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px;">' +
+      '<button class="pr-chip' + (!E.filtro ? ' activa' : '') + '" data-pef="">Todos (' + res.rows.length + ')</button>' +
+      PROSP_ENR_ESTADOS.map(function (e) { return '<button class="pr-chip' + (E.filtro === e ? ' activa' : '') + '" data-pef="' + e + '">' + PROSP_ENR_ETIQUETA[e] + ' (' + (cnt[e] || 0) + ')</button>'; }).join('') +
+      '<button class="pr-chip' + (E.filtro === 'DUP_TEL' ? ' activa' : '') + '" data-pef="DUP_TEL">Teléfono duplicado (' + nDup + ')</button></div>';
+    var lista = res.rows.filter(function (r) { return !E.filtro || (E.filtro === 'DUP_TEL' ? r.phone_dup : r.status === E.filtro); });
+    var LIM = 500;
+    var filas = lista.slice(0, LIM).map(function (r) {
+      return '<tr>' +
+        '<td><span class="pr-badge ' + PROSP_ENR_CLASE[r.status] + '">' + PROSP_ENR_ETIQUETA[r.status] + '</span><div style="font-size:10px;color:var(--muted);">' + lEsc(r.sheet) + ' · fila ' + r.row + '</div></td>' +
+        '<td>' + lEsc(r.external_customer_id || '—') + '</td>' +
+        '<td>' + (r.fills.length ? r.fills.map(function (f) { return lEsc(PROSP_ENR_CAMPO[f] || f); }).join(', ') : '—') + '</td>' +
+        '<td>' + (r.conflicts.length ? r.conflicts.map(function (f) { return lEsc(PROSP_ENR_CAMPO[f] || f); }).join(', ') : '—') + '</td>' +
+        '<td>' + (r.has_mobile ? 'Sí' : 'No') + '</td>' +
+        '<td>' + (r.warnings.length ? r.warnings.map(function (w) { return '<div class="pr-p warning">' + lEsc(PROSP_ENR_AVISO[w] || w) + '</div>'; }).join('') : '—') + '</td>' +
+        '</tr>';
+    }).join('');
+    html += '<div class="ld-wrap"><table class="dash-table"><thead><tr><th>Estado</th><th>Sold-To</th><th>Se completa</th><th>Conflicto (se conserva actual)</th><th>Móvil válido</th><th>Advertencias</th></tr></thead><tbody>' +
+      (filas || '<tr><td colspan="6" style="text-align:center;color:var(--muted);padding:18px;">Sin filas para este filtro.</td></tr>') + '</tbody></table></div>' +
+      '<div style="font-size:11px;color:var(--muted);margin-top:6px;">' + (lista.length > LIM ? 'Mostrando las primeras ' + LIM + ' de ' + lista.length + ' filas; usa los filtros.' : lista.length + ' fila(s).') + ' Por privacidad, la vista previa no muestra nombres, teléfonos ni correos.</div>' +
+      '<div style="margin-top:12px;display:flex;gap:10px;align-items:center;flex-wrap:wrap;">' +
+      '<button class="ld-btn primary" id="pe-confirmar"' + ((E.resultado || E.confirmando || !E.file || !s.filas_a_actualizar || (s.telefonos_duplicados > 0 && !E.ack)) ? ' disabled' : '') + '>' + (E.confirmando ? 'Actualizando…' : 'Confirmar enriquecimiento') + '</button>' +
+      '<button class="ld-btn" id="pe-descartar"' + (E.confirmando ? ' disabled' : '') + '>' + (E.resultado ? 'Cerrar resultado' : 'Descartar análisis') + '</button>' +
+      '<span style="font-size:11px;color:var(--muted);">' + (E.resultado ? 'Este archivo ya fue aplicado.' : (s.filas_a_actualizar ? 'Se actualizan ' + s.filas_a_actualizar + ' prospecto(s) existente(s); solo campos vacíos.' : 'No hay datos para completar.')) + '</span></div>';
+  }
+  html += '</div>';
+  root.innerHTML = html;
+  document.getElementById('pe-cerrar').addEventListener('click', function () { prospectosEnr.abierto = false; prospectosEnrPintar(); });
+  document.getElementById('pe-archivo').addEventListener('change', function (e) { var f = e.target.files && e.target.files[0]; if (f) prospectosEnrAnalizar(f); });
+  var d = document.getElementById('pe-descartar');
+  if (d) d.addEventListener('click', function () { if (prospectosEnr.confirmando) return; prospectosEnr = Object.assign(prospectosEnrNuevo(), { abierto: true }); prospectosEnrPintar(); });
+  var ak = document.getElementById('pe-ack');
+  if (ak) ak.addEventListener('change', function () { prospectosEnr.ack = ak.checked; prospectosEnrPintar(); });
+  var cf = document.getElementById('pe-confirmar');
+  if (cf) cf.addEventListener('click', function () { prospectosEnrConfirmar(); });
+  root.querySelectorAll('[data-pef]').forEach(function (b) {
+    b.addEventListener('click', function () { prospectosEnr.filtro = b.getAttribute('data-pef'); prospectosEnrPintar(); });
+  });
+}
+
 // ---- Datos ----
 // Describe con precisión QUÉ consulta falló (tabla/RPC, código, HTTP, mensaje) para poder diagnosticar.
 function leadsDetalleError(operacion, r) {
@@ -5234,7 +5371,7 @@ function renderLeadsDigital() {
     '<h2 style="margin:0 0 4px;font-size:18px;">Leads Digital</h2>' +
     '<p style="margin:0 0 12px;font-size:12px;color:var(--muted);">Leads SIRIOS (RM). Todos llegan primero a ti; la derivación es manual. Vista privada.</p>' +
     prospectosSubtabsHtml() +
-    (leadsSubvista === 'prospectos' ? prospectosBarraHtml() + '<div id="prospectos-import-root"></div><div id="prospectos-resultados"></div>' : barra + '<div id="leads-resultados"></div>') +
+    (leadsSubvista === 'prospectos' ? prospectosBarraHtml() + '<div id="prospectos-import-root"></div><div id="prospectos-enrich-root"></div><div id="prospectos-resultados"></div>' : barra + '<div id="leads-resultados"></div>') +
     '</main>' +
     '<div id="leads-drawer-root"></div>';
 

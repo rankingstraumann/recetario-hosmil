@@ -52,4 +52,31 @@ const csv = '﻿' + [
   '2000000006;Clínica Csv Seis;;;;"Línea 1\nLínea 2"',
 ].join('\r\n');
 writeFileSync(join(dir, 'telefonos_ficticio.csv'), csv, 'utf8');
+
+// --- OUTBOUND 5: archivo de ENRIQUECIMIENTO ficticio (Sold-To + contacto + telefono + correo). Los "targets" de la base viven en enrich.test.mjs.
+const HE = ['Sold-To', 'Contacto', 'Teléfono', 'Email'];
+const enr = [
+  ['Enriquecimiento ficticio (PRUEBA)'],
+  HE,
+  [1000000001, 'Persona Uno', '9 1111 1111', 'Uno@Ejemplo.test'],       // ACTUALIZA: nombre + movil + email (email en minusculas)
+  [1000000002, 'Otro Nombre', '9 2222 3333', 'dos@ejemplo.test'],       // base ya tiene nombre y movil distintos -> conflictos; solo email se completa
+  [1000000003, '', '22 2345 678', 'malcorreo'],                          // fijo y correo invalido -> SIN_CAMBIOS con advertencias
+  [1000000004, 'Persona Cuatro', '9 1111 1111', ''],                      // movil repetido con la fila 1 (duplicado dentro del archivo)
+  [1000000005, 'Persona Cinco', '+56 9 7777 7777', ''],                   // movil ya existente en OTRO prospecto de la base (duplicado vs base)
+  [9999999999, 'Sin Match', '9 4444 4444', 'sm@ejemplo.test'],           // Sold-To inexistente -> SIN_MATCH (no se crea)
+  [1234567, 'Cero Inicial', '9 5555 5555', ''],                           // numero 1234567 != texto 0001234567 -> SIN_MATCH (match EXACTO)
+  ['0001234567', 'Persona Cero', '9 6666 6666', ''],                      // texto con ceros iniciales -> ACTUALIZA
+  [null, 'Sin Sold-To', '9 8888 8888', ''],                               // INVALIDO
+  [47505090.666666664, 'Decimal', '', ''],                                // Sold-To decimal -> INVALIDO
+  [1000000008, 'Repetido Uno', '', 'rep@ejemplo.test'],                   // Sold-To repetido en archivo -> DUPLICADO_ARCHIVO (x2)
+  [1000000008, 'Repetido Dos', '', 'rep2@ejemplo.test'],
+  [1000000010, 'Doble En Base', '', 'db@ejemplo.test'],                   // la base tiene 2 prospectos con ese Sold-To -> MATCH_MULTIPLE
+  HE,                                                                     // encabezado repetido
+  [1000000009, '', '', ''],                                               // match sin datos -> SIN_CAMBIOS
+  [null, null, null, null],                                               // fila vacia
+];
+const wbe = XLSX.utils.book_new();
+XLSX.utils.book_append_sheet(wbe, XLSX.utils.aoa_to_sheet(enr), 'Enriquecimiento');
+XLSX.utils.book_append_sheet(wbe, XLSX.utils.aoa_to_sheet([['cosa', 'otra'], ['x', 'y']]), 'Sin encabezados');
+XLSX.writeFile(wbe, join(dir, 'enriquecimiento_ficticio.xlsx'));
 console.log('fixtures generados en', dir);

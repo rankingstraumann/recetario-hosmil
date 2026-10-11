@@ -15,6 +15,8 @@ import { XLSX } from './vendor/xlsx.mini.mjs';
 import { analyze, decodeCsv, ImportError, LIMITS, parseCsv, type Existing, type RawSheet } from './parse.ts';
 import { readWorkbook } from './xlsx_read.ts';
 import { buildConfirmArgs, mapRpcError, ModeError, resolveBatchMode, sha256Hex } from './confirm.ts';
+import { analyzeEnrich, type Target } from './enrich.ts';
+import { buildEnrichArgs, dupAckOk, mapEnrichRpcError } from './enrich_confirm.ts';
 
 const CORS = {
   'Access-Control-Allow-Origin': '*',
@@ -46,10 +48,11 @@ Deno.serve(async (req: Request) => {
     if (!(file instanceof File)) return fail(400, 'sin_archivo', 'Adjunta un archivo en el campo "file".');
     if (file.size > LIMITS.maxBytes) return fail(413, 'archivo_grande', 'El archivo supera 5 MB.');
     const mode = String(form.get('mode') ?? 'preview');
-    if (mode !== 'preview' && mode !== 'confirm') return fail(400, 'modo_invalido', 'Modo no válido.');
+    const isEnrich = mode === 'enrich_preview' || mode === 'enrich_confirm';
+    if (mode !== 'preview' && mode !== 'confirm' && !isEnrich) return fail(400, 'modo_invalido', 'Modo no válido.');
     // Modo del lote (PRUEBA por defecto). Lo valida el SERVIDOR; REAL exige real_confirmed='yes' solo al confirmar.
     let batch: { isTest: boolean; realConfirmed: boolean };
-    try { batch = resolveBatchMode(form.get('batch_mode'), mode === 'confirm' ? form.get('real_confirmed') : 'yes'); }
+    try { batch = isEnrich ? { isTest: false, realConfirmed: true } : resolveBatchMode(form.get('batch_mode'), mode === 'confirm' ? form.get('real_confirmed') : 'yes'); }
     catch (e) { if (e instanceof ModeError) return fail(400, e.code, e.msg); throw e; }
     const name = String(file.name || 'archivo');
     const ext = name.toLowerCase().endsWith('.xlsx') ? 'xlsx' : name.toLowerCase().endsWith('.csv') ? 'csv' : null;
@@ -64,6 +67,34 @@ Deno.serve(async (req: Request) => {
     const sheets: RawSheet[] = ext === 'xlsx'
       ? readWorkbook(XLSX, bytes)
       : [{ name: 'CSV', rows: parseCsv(decodeCsv(bytes)) }];
+
+    // 3b) ENRIQUECIMIENTO (Outbound 5): solo prospectos REALES existentes; nunca crea; match por Sold-To exacto
+    if (isEnrich) {
+      const targets: Target[] = [];
+      for (let from = 0; from < 100000; from += 1000) {
+        const r = await sb.from('digital_prospects').select('id,external_customer_id,full_name,phone_raw,phone_e164,email')
+          .eq('is_test', false).order('created_at', { ascending: true }).order('id', { ascending: true }).range(from, from + 999);
+        if (r.error) return fail(500, 'error_base', 'No se pudo consultar la base.');
+        targets.push(...(r.data as Target[]));
+        if ((r.data ?? []).length < 1000) break;
+      }
+      const e = analyzeEnrich(sheets, targets);
+      if (mode === 'enrich_confirm') {
+        if (!dupAckOk(e, form.get('dup_ack'))) return fail(400, 'telefonos_duplicados_sin_reconocer', 'Hay teléfonos duplicados: confirma que los revisaste.');
+        if (e.updates.length === 0) return fail(422, 'nada_que_actualizar', 'No hay datos para completar.');
+        const args = buildEnrichArgs(e, { name, size: bytes.length, sha256: await sha256Hex(bytes) });
+        const r = await sb.rpc('confirm_prospect_enrichment', args);
+        if (r.error) {
+          const m = mapEnrichRpcError(r.error.code, r.error.message);
+          console.log(JSON.stringify({ evt: 'prospect_enrich_error', code: m.code, pg: r.error.code ?? null })); // sin detalle
+          return fail(m.status, m.code, m.message);
+        }
+        console.log(JSON.stringify({ evt: 'prospect_enrich', ...(r.data as Record<string, unknown>) })); // solo contadores
+        return json(200, { ok: true, enrichment_performed: true, ...(r.data as Record<string, unknown>) });
+      }
+      console.log(JSON.stringify({ evt: 'prospect_enrich_preview', ext, bytes: bytes.length, ...e.summary })); // solo contadores
+      return json(200, { ok: true, enrichment_performed: false, file: { name, ext, size: bytes.length }, summary: e.summary, sheets: e.sheets, rows: e.rows });
+    }
 
     // 4) Prospectos existentes (solo 4 columnas) para duplicados; con RLS del usuario
     const existing: Existing[] = [];

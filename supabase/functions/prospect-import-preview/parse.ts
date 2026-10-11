@@ -37,7 +37,7 @@ export function cleanStr(v: unknown): string {
 }
 
 // ---------------- Encabezados reconocidos ----------------
-type Field = 'external' | 'clinic' | 'contact' | 'owner' | 'priority' | 'year' | 'trade' | 'notes' | 'phone' | 'email';
+export type Field = 'external' | 'clinic' | 'contact' | 'owner' | 'priority' | 'year' | 'trade' | 'notes' | 'phone' | 'email';
 const ALIASES: Record<string, Field> = {
   'sold to': 'external', 'soldto': 'external', 'sold to party': 'external',
   'cliente': 'clinic', 'clinica': 'clinic', 'razon social': 'clinic', 'nombre cliente': 'clinic',
@@ -51,7 +51,7 @@ const ALIASES: Record<string, Field> = {
   'telefono contacto': 'phone', 'celular contacto': 'phone',
   'email': 'email', 'correo': 'email', 'e mail': 'email', 'correo electronico': 'email',
 };
-function fieldOf(cell: unknown): Field | null {
+export function fieldOf(cell: unknown): Field | null {
   const k = normKey(cleanStr(cell));
   return k && Object.prototype.hasOwnProperty.call(ALIASES, k) ? ALIASES[k] : null;
 }
