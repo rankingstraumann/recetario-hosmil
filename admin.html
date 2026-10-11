@@ -293,6 +293,7 @@ function construirTabsPrincipales(activo) {
   if (esSuperAdmin()) tabs.push({ id: 'dashboard', icono: '📊', label: 'Dashboard Recetario', onclick: "vistaActiva='dashboard';renderDashboardPiloto()" });
   tabs.push({ id: 'matriz', icono: '🏛️', label: 'Matriz Institucional', onclick: "vistaActiva='matriz';cargarMatrizResumen()" });
   if (puedeVerDashboardCotizador()) tabs.push({ id: 'dashboardCotizador', icono: '📈', label: 'Dashboard Cotizador', onclick: "vistaActiva='dashboardCotizador';renderDashboardCotizador()" });
+  if (typeof leadsAcceso !== 'undefined' && leadsAcceso) tabs.push({ id: 'leads', icono: '🎯', label: 'Leads Digital', onclick: "vistaActiva='leads';renderLeadsDigital()" }); // COMPLEMENTO Leads Digital
 
   var html = '<div class="view-tabs">';
   tabs.forEach(function (t) {
@@ -572,6 +573,10 @@ function renderVistaActiva() {
     renderDashboardPiloto();
   } else if (vistaActiva === 'matriz') {
     renderMatrizInstitucional();
+  } else if (vistaActiva === 'leads') {
+    // COMPLEMENTO Leads Digital: no sacar al usuario de su vista por un refresh de cotizaciones,
+    // y no reconstruir los controles (se perderia el foco del buscador) si la vista ya esta pintada.
+    if (document.getElementById('leads-resultados')) { leadsPintar(); } else { renderLeadsDigital(); }
   } else {
     renderDashboard();
   }
@@ -4601,12 +4606,428 @@ function segImpPintar() {
   });
 }
 
+// ============================================================
+// COMPLEMENTO — Leads Digital (V1, aislado)
+// Pestaña privada para el lead admin (Daniel). El acceso se decide con la RPC
+// is_lead_admin() y se refuerza con RLS en Supabase: ocultar la pestaña es solo
+// comodidad, no seguridad. Las escrituras van SOLO por RPC (assign_digital_lead,
+// update_digital_lead_notes). No toca cotizaciones ni ninguna otra vista.
+// ============================================================
+var leadsAcceso = false;
+var leadsDatos = [];
+var leadsAsignados = [];
+var leadsCargado = false;
+var leadsCargando = false;
+var leadsError = null;
+var leadsStale = false;
+var leadsChannel = null;
+var leadsTimer = null;
+var leadsFiltro = { q: '', temp: '', estado: '', asig: '', prueba: null };
+var leadsDetalleId = null;
+var leadsActividades = [];
+
+var LEADS_NEED = { renew: 'Renovar', trade_up: 'Trade Up', first_scanner: 'Primer scanner', digital_flow: 'Mejorar flujo digital', know_sirios: 'Conocer SIRIOS', information_only: 'Solo información', other: 'Otro' };
+var LEADS_PLAZO = { now: 'Ahora', '1_3_months': '1–3 meses', '3_6_months': '3–6 meses', later: 'Más adelante', evaluating: 'Evaluando' };
+var LEADS_TEMP = { hot: 'HOT', warm: 'Tibio', cold: 'Frío' };
+var LEADS_ESTADO = { nuevo: 'Nuevo', assigned: 'Asignado', contacted: 'Contactado', demo: 'Demo', quote: 'Cotización', won: 'Ganado', lost: 'Perdido' };
+
+function lEsc(s) {
+  if (s === undefined || s === null) return '';
+  return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+// Estados previos a la derivación se muestran como "Nuevo".
+function leadsEstadoClave(s) {
+  return ['new', 'qualifying', 'cold', 'warm', 'hot'].indexOf(s) >= 0 ? 'nuevo' : s;
+}
+function leadsFechaCorta(iso) {
+  if (!iso) return '—';
+  return new Date(iso).toLocaleString('es-CL', { timeZone: 'America/Santiago', day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' });
+}
+function leadsDiaSantiago(iso) {
+  return new Date(iso).toLocaleDateString('en-CA', { timeZone: 'America/Santiago' });
+}
+function leadsScannerTxt(l) {
+  if (l.uses_intraoral_scanner === true) return l.current_scanner || 'Sí (sin modelo)';
+  if (l.uses_intraoral_scanner === false) return 'Sin scanner';
+  return '—';
+}
+function leadsSiNo(v) { return v === true ? 'Sí' : (v === false ? 'No' : '—'); }
+
+function leadsInyectarEstilos() {
+  if (document.getElementById('leads-estilos')) return;
+  var st = document.createElement('style');
+  st.id = 'leads-estilos';
+  st.textContent =
+    '.ld-temp{display:inline-block;font-size:11px;font-weight:800;border-radius:6px;padding:2px 8px;letter-spacing:.03em}' +
+    '.ld-temp.hot{background:#fee2e2;color:#991b1b}.ld-temp.warm{background:#fef3c7;color:#92400e}.ld-temp.cold{background:#e0f2fe;color:#075985}' +
+    '.ld-test{display:inline-block;font-size:9px;font-weight:800;background:#f4f4f5;color:#71717a;border:1px solid #e4e4e7;border-radius:4px;padding:1px 5px;margin-left:6px;vertical-align:middle}' +
+    '.ld-bar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;background:#fff;border:1px solid var(--border);border-radius:12px;padding:10px 12px;margin-bottom:14px}' +
+    '.ld-bar input[type=search]{flex:1 1 220px;min-width:180px;border:1px solid #d4d4d8;border-radius:8px;padding:8px 10px;font-size:13px}' +
+    '.ld-bar label.ld-chk{font-size:12px;color:var(--muted);display:flex;align-items:center;gap:5px;cursor:pointer}' +
+    '.ld-wrap{overflow-x:auto;border:1px solid var(--border);border-radius:12px;background:#fff}' +
+    '.ld-wrap table{border:none;border-radius:0;min-width:980px}' +
+    '.ld-wrap tbody tr{cursor:default}' +
+    '.dash-grid.ld-cards{grid-template-columns:repeat(6,1fr);gap:10px}.ld-cards .dash-card{padding:14px 14px}' +
+    '@media(max-width:900px){.dash-grid.ld-cards{grid-template-columns:repeat(3,1fr)}}@media(max-width:520px){.dash-grid.ld-cards{grid-template-columns:repeat(2,1fr)}}' +
+    '.ld-btn{white-space:nowrap}' +
+    '.ld-btn{border:1px solid var(--border);background:#fff;border-radius:8px;padding:6px 12px;font-size:12px;font-weight:600;cursor:pointer;color:var(--ink)}' +
+    '.ld-btn.primary{background:var(--red);color:#fff;border-color:var(--red)}.ld-btn.primary:hover{background:var(--red-dark)}' +
+    '.ld-btn:disabled{opacity:.55;cursor:not-allowed}' +
+    '.ld-overlay{position:fixed;inset:0;background:rgba(24,24,27,.35);z-index:900}' +
+    '.ld-drawer{position:fixed;top:0;right:0;bottom:0;width:min(460px,100vw);background:#fff;z-index:901;box-shadow:-12px 0 32px rgba(0,0,0,.12);overflow-y:auto;padding:20px 20px 40px}' +
+    '.ld-drawer h2{margin:0 0 2px;font-size:18px}.ld-drawer h4{margin:18px 0 8px;font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted)}' +
+    '.ld-kv{display:grid;grid-template-columns:130px 1fr;gap:6px 10px;font-size:13px}.ld-kv .k{color:var(--muted)}' +
+    '.ld-box{background:#fafafa;border:1px solid var(--border);border-radius:10px;padding:10px 12px;font-size:13px;line-height:1.45}' +
+    '.ld-drawer textarea,.ld-drawer select,.ld-drawer input[type=text]{width:100%;border:1px solid #d4d4d8;border-radius:8px;padding:8px 10px;font-size:13px;font-family:inherit}' +
+    '.ld-msg{font-size:12px;margin-top:8px;min-height:16px}.ld-msg.ok{color:#047857}.ld-msg.err{color:#b91c1c}' +
+    '.ld-hist{list-style:none;margin:0;padding:0}.ld-hist li{font-size:12px;padding:7px 0;border-bottom:1px solid #f4f4f5}.ld-hist .t{color:var(--muted);font-size:11px}';
+  document.head.appendChild(st);
+}
+
+// ---- Acceso (decide la RPC; RLS lo refuerza) ----
+async function leadsCargarAcceso() {
+  var ok = false;
+  try {
+    var r = await sb.rpc('is_lead_admin');
+    ok = !r.error && r.data === true;
+  } catch (e) { ok = false; }
+  leadsAcceso = ok;
+  if (ok) { leadsSuscribir(); } else { leadsDesuscribir(); }
+}
+function leadsLimpiar() {
+  leadsAcceso = false; leadsDatos = []; leadsAsignados = []; leadsCargado = false; leadsCargando = false;
+  leadsError = null; leadsStale = false; leadsDetalleId = null; leadsActividades = [];
+  leadsFiltro = { q: '', temp: '', estado: '', asig: '', prueba: null };
+  leadsDesuscribir();
+}
+
+// ---- Realtime (solo digital_leads) ----
+function leadsSuscribir() {
+  if (leadsChannel) return;
+  try {
+    leadsChannel = sb.channel('digital-leads-cambios')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'digital_leads' }, function () {
+        if (leadsTimer) clearTimeout(leadsTimer);
+        leadsTimer = setTimeout(function () {
+          if (vistaActiva === 'leads') { leadsCargar(true); } else { leadsStale = true; }
+        }, 300);
+      })
+      .subscribe(function (status) {
+        if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') { leadsChannel = null; }
+      });
+  } catch (e) { leadsChannel = null; }
+}
+function leadsDesuscribir() {
+  if (leadsTimer) { clearTimeout(leadsTimer); leadsTimer = null; }
+  if (leadsChannel) { try { sb.removeChannel(leadsChannel); } catch (e) {} leadsChannel = null; }
+}
+
+// ---- Datos ----
+async function leadsCargar(silencioso) {
+  if (leadsCargando) return;
+  leadsCargando = true;
+  if (!silencioso) { leadsError = null; if (vistaActiva === 'leads') renderLeadsDigital(); }
+  try {
+    var res = await Promise.all([
+      sb.from('digital_leads').select('*').order('created_at', { ascending: false }).limit(2000),
+      sb.from('digital_lead_assignees').select('id,nombre,email').eq('activo', true).order('nombre', { ascending: true })
+    ]);
+    if (res[0].error) throw res[0].error;
+    leadsDatos = res[0].data || [];
+    leadsAsignados = res[1].error ? [] : (res[1].data || []);
+    leadsError = null;
+    leadsCargado = true;
+    leadsStale = false;
+    if (leadsFiltro.prueba === null) {
+      // Si todavía no hay leads reales, mostramos los de prueba para poder validar la pantalla.
+      leadsFiltro.prueba = !leadsDatos.some(function (l) { return !l.is_test; });
+    }
+  } catch (e) {
+    leadsError = (e && e.message) ? e.message : 'No se pudieron cargar los leads.';
+  }
+  leadsCargando = false;
+  if (vistaActiva === 'leads') {
+    if (!document.getElementById('leads-resultados')) { renderLeadsDigital(); } else { leadsPintar(); leadsRefrescarDrawer(); }
+  }
+}
+
+function leadsBase() {
+  return leadsDatos.filter(function (l) { return leadsFiltro.prueba === true || !l.is_test; });
+}
+function leadsFiltrados() {
+  var q = (leadsFiltro.q || '').trim().toLowerCase();
+  var lista = leadsBase().filter(function (l) {
+    if (leadsFiltro.temp && l.temperature !== leadsFiltro.temp) return false;
+    if (leadsFiltro.estado && leadsEstadoClave(l.status) !== leadsFiltro.estado) return false;
+    if (leadsFiltro.asig === 'si' && !l.assigned_to_name) return false;
+    if (leadsFiltro.asig === 'no' && l.assigned_to_name) return false;
+    if (q) {
+      var hay = [l.contact_name, l.clinic_name, l.commune, l.phone_e164].join(' ').toLowerCase();
+      if (hay.indexOf(q) < 0) return false;
+    }
+    return true;
+  });
+  // Orden: 1) HOT sin asignar, 2) nuevos (sin derivar) más recientes, 3) resto por fecha desc.
+  function grupo(l) {
+    var sinAsignar = !l.assigned_to_name;
+    if (sinAsignar && l.temperature === 'hot' && leadsEstadoClave(l.status) === 'nuevo') return 0;
+    if (sinAsignar && leadsEstadoClave(l.status) === 'nuevo') return 1;
+    return 2;
+  }
+  lista.sort(function (a, b) {
+    var ga = grupo(a), gb = grupo(b);
+    if (ga !== gb) return ga - gb;
+    return new Date(b.created_at) - new Date(a.created_at);
+  });
+  return lista;
+}
+
+// ---- Vista ----
+function renderLeadsDigital() {
+  if (!leadsAcceso) { vistaActiva = 'cotizaciones'; renderDashboard(); return; }
+  leadsInyectarEstilos();
+  document.getElementById('login-view').style.display = 'none';
+  var v = document.getElementById('dashboard-view');
+  v.style.display = 'block';
+  if (!leadsCargado && !leadsCargando && !leadsError) { leadsCargar(true); }
+  if (leadsCargado && leadsStale && !leadsCargando) { leadsCargar(true); }
+
+  var sel = function (valor, actual) { return valor === actual ? ' selected' : ''; };
+  var barra =
+    '<div class="ld-bar">' +
+    '<input type="search" id="ld-q" placeholder="Buscar nombre, clínica, comuna o teléfono" value="' + lEsc(leadsFiltro.q) + '">' +
+    '<select id="ld-temp"><option value="">Temperatura: todas</option>' +
+      '<option value="hot"' + sel('hot', leadsFiltro.temp) + '>HOT</option><option value="warm"' + sel('warm', leadsFiltro.temp) + '>Tibio</option><option value="cold"' + sel('cold', leadsFiltro.temp) + '>Frío</option></select>' +
+    '<select id="ld-estado"><option value="">Estado: todos</option>' +
+      Object.keys(LEADS_ESTADO).map(function (k) { return '<option value="' + k + '"' + sel(k, leadsFiltro.estado) + '>' + LEADS_ESTADO[k] + '</option>'; }).join('') + '</select>' +
+    '<select id="ld-asig"><option value="">Asignación: todos</option>' +
+      '<option value="no"' + sel('no', leadsFiltro.asig) + '>Sin asignar</option><option value="si"' + sel('si', leadsFiltro.asig) + '>Asignados</option></select>' +
+    '<label class="ld-chk"><input type="checkbox" id="ld-prueba"' + (leadsFiltro.prueba ? ' checked' : '') + '> Incluir leads de prueba</label>' +
+    '<button class="ld-btn" id="ld-excel" title="Exporta lo que ves en la tabla">⬇ Excel</button>' +
+    '</div>';
+
+  v.innerHTML =
+    '<header class="topbar"><div><div class="brand-name">STRAUMANN</div><div class="brand-sub">GROUP CHILE · NEODENT</div></div>' +
+    '<div style="display:flex;align-items:center;gap:12px;"><span style="font-size:10px;color:#a1a1aa;">Herramienta interna desarrollada por Daniel Jordán para Straumann Group Chile. · Admin v' + ADMIN_VERSION + '</span><button class="btn-logout" id="btn-logout">Cerrar sesión</button></div></header>' +
+    '<main>' +
+    construirTabsPrincipales('leads') +
+    '<h2 style="margin:0 0 4px;font-size:18px;">Leads Digital</h2>' +
+    '<p style="margin:0 0 16px;font-size:12px;color:var(--muted);">Leads SIRIOS (RM). Todos llegan primero a ti; la derivación es manual. Vista privada.</p>' +
+    barra +
+    '<div id="leads-resultados"></div>' +
+    '</main>' +
+    '<div id="leads-drawer-root"></div>';
+
+  document.getElementById('btn-logout').addEventListener('click', doLogout);
+  document.getElementById('ld-q').addEventListener('input', function (e) { leadsFiltro.q = e.target.value; leadsPintar(); });
+  document.getElementById('ld-temp').addEventListener('change', function (e) { leadsFiltro.temp = e.target.value; leadsPintar(); });
+  document.getElementById('ld-estado').addEventListener('change', function (e) { leadsFiltro.estado = e.target.value; leadsPintar(); });
+  document.getElementById('ld-asig').addEventListener('change', function (e) { leadsFiltro.asig = e.target.value; leadsPintar(); });
+  document.getElementById('ld-prueba').addEventListener('change', function (e) { leadsFiltro.prueba = e.target.checked; leadsPintar(); });
+  document.getElementById('ld-excel').addEventListener('click', leadsExportar);
+  leadsPintar();
+  if (leadsDetalleId) leadsAbrir(leadsDetalleId, true);
+}
+
+function leadsPintar() {
+  var box = document.getElementById('leads-resultados');
+  if (!box) return;
+  var cbPrueba = document.getElementById('ld-prueba'); // el default se decide al llegar los datos
+  if (cbPrueba) cbPrueba.checked = leadsFiltro.prueba === true;
+  if (leadsCargando && !leadsCargado) { box.innerHTML = '<div style="padding:24px;text-align:center;color:var(--muted);">Cargando…</div>'; return; }
+  if (leadsError) {
+    box.innerHTML = '<div style="background:#fff3cd;border:1px solid #fde68a;border-radius:10px;padding:14px 18px;text-align:center;font-size:13px;">⚠️ ' + lEsc(leadsError) +
+      ' <button class="ld-btn" onclick="leadsError=null;leadsCargar(false)">Reintentar</button></div>';
+    return;
+  }
+  var base = leadsBase();
+  var hoy = leadsDiaSantiago(new Date().toISOString());
+  var c = {
+    hoy: base.filter(function (l) { return leadsDiaSantiago(l.created_at) === hoy; }).length,
+    hot: base.filter(function (l) { return l.temperature === 'hot'; }).length,
+    warm: base.filter(function (l) { return l.temperature === 'warm'; }).length,
+    cold: base.filter(function (l) { return l.temperature === 'cold'; }).length,
+    sin: base.filter(function (l) { return !l.assigned_to_name; }).length,
+    asig: base.filter(function (l) { return !!l.assigned_to_name; }).length
+  };
+  var card = function (label, val, hl) { return '<div class="dash-card' + (hl ? ' highlight' : '') + '"><div class="dc-label">' + label + '</div><div class="dc-value">' + val + '</div></div>'; };
+  var cards = '<div class="dash-grid ld-cards">' + card('Nuevos hoy', c.hoy) + card('HOT', c.hot, true) + card('Tibios', c.warm) + card('Fríos', c.cold) + card('Sin asignar', c.sin) + card('Asignados', c.asig) + '</div>';
+
+  var lista = leadsFiltrados();
+  var filas = lista.map(function (l) {
+    var accion = l.assigned_to_name ? 'Ver' : 'Ver / Derivar';
+    return '<tr>' +
+      '<td><span class="ld-temp ' + lEsc(l.temperature) + '">' + lEsc(LEADS_TEMP[l.temperature] || l.temperature) + '</span></td>' +
+      '<td><strong>' + lEsc(l.contact_name || '—') + '</strong>' + (l.is_test ? '<span class="ld-test">PRUEBA</span>' : '') + '<div style="font-size:11px;color:var(--muted);">' + lEsc(leadsFechaCorta(l.created_at)) + '</div></td>' +
+      '<td>' + lEsc(l.clinic_name || '—') + '</td>' +
+      '<td>' + lEsc(l.commune || '—') + '</td>' +
+      '<td>' + lEsc(leadsScannerTxt(l)) + '</td>' +
+      '<td>' + lEsc(LEADS_NEED[l.need] || '—') + '</td>' +
+      '<td>' + lEsc(LEADS_PLAZO[l.purchase_timeline] || '—') + '</td>' +
+      '<td class="num" style="font-weight:800;">' + lEsc(l.score) + '</td>' +
+      '<td>' + lEsc(LEADS_ESTADO[leadsEstadoClave(l.status)] || l.status) + '</td>' +
+      '<td>' + (l.assigned_to_name ? lEsc(l.assigned_to_name) : '<span style="color:var(--muted);">Sin asignar</span>') + '</td>' +
+      '<td><button class="ld-btn' + (l.assigned_to_name ? '' : ' primary') + '" data-lead="' + lEsc(l.id) + '">' + accion + '</button></td>' +
+      '</tr>';
+  }).join('');
+  var tabla =
+    '<div class="ld-wrap"><table class="dash-table"><thead><tr>' +
+    '<th>Temp.</th><th>Nombre</th><th>Clínica</th><th>Comuna</th><th>Scanner actual</th><th>Necesidad</th><th>Plazo</th><th class="num">Score</th><th>Estado</th><th>Asignado a</th><th>Acción</th>' +
+    '</tr></thead><tbody>' +
+    (filas || '<tr><td colspan="11" style="text-align:center;color:var(--muted);padding:24px;">No hay leads con estos filtros.</td></tr>') +
+    '</tbody></table></div>' +
+    '<div style="font-size:11px;color:var(--muted);margin-top:8px;">' + lista.length + ' lead(s) · orden: HOT sin asignar, nuevos recientes, resto por fecha.</div>';
+  box.innerHTML = cards + tabla;
+  box.querySelectorAll('button[data-lead]').forEach(function (b) {
+    b.addEventListener('click', function () { leadsAbrir(b.getAttribute('data-lead')); });
+  });
+}
+
+function leadsExportar() {
+  var lista = leadsFiltrados();
+  exportarMatrizExcel(lista, [
+    { label: 'Fecha', value: function (l) { return leadsFechaCorta(l.created_at); } },
+    { label: 'Temperatura', value: function (l) { return LEADS_TEMP[l.temperature] || l.temperature; } },
+    { label: 'Nombre', key: 'contact_name' },
+    { label: 'Clínica', key: 'clinic_name' },
+    { label: 'Comuna', key: 'commune' },
+    { label: 'Teléfono', key: 'phone_e164' },
+    { label: 'Scanner actual', value: leadsScannerTxt },
+    { label: 'Necesidad', value: function (l) { return LEADS_NEED[l.need] || ''; } },
+    { label: 'Plazo', value: function (l) { return LEADS_PLAZO[l.purchase_timeline] || ''; } },
+    { label: 'Demo', value: function (l) { return leadsSiNo(l.wants_demo); } },
+    { label: 'Cotización', value: function (l) { return leadsSiNo(l.wants_quote); } },
+    { label: 'Score', key: 'score' },
+    { label: 'Estado', value: function (l) { return LEADS_ESTADO[leadsEstadoClave(l.status)] || l.status; } },
+    { label: 'Asignado a', key: 'assigned_to_name' },
+    { label: 'Prueba', value: function (l) { return l.is_test ? 'Sí' : 'No'; } }
+  ], 'Leads', 'Leads_Digital');
+}
+
+// ---- Detalle / derivación ----
+function leadsActual() {
+  return leadsDatos.find(function (x) { return x.id === leadsDetalleId; }) || null;
+}
+async function leadsAbrir(id, conservar) {
+  leadsDetalleId = id;
+  var l = leadsActual();
+  var root = document.getElementById('leads-drawer-root');
+  if (!l || !root) return;
+  var opciones = leadsAsignados.map(function (a) { return '<option value="' + lEsc(a.nombre) + '">' + lEsc(a.nombre) + '</option>'; }).join('');
+  root.innerHTML =
+    '<div class="ld-overlay" id="ld-overlay"></div>' +
+    '<aside class="ld-drawer" role="dialog" aria-label="Detalle del lead">' +
+    '<button class="ld-btn" style="float:right" id="ld-cerrar">Cerrar</button>' +
+    '<h2>' + lEsc(l.contact_name || 'Lead') + (l.is_test ? '<span class="ld-test">PRUEBA</span>' : '') + '</h2>' +
+    '<div style="margin:6px 0 14px;"><span class="ld-temp ' + lEsc(l.temperature) + '">' + lEsc(LEADS_TEMP[l.temperature]) + '</span> <span style="font-size:13px;margin-left:6px;">Score <strong>' + lEsc(l.score) + '</strong></span></div>' +
+    '<div class="ld-kv">' +
+      '<div class="k">Clínica</div><div>' + lEsc(l.clinic_name || '—') + '</div>' +
+      '<div class="k">Teléfono</div><div>' + (l.phone_e164 ? '<a href="tel:' + lEsc(l.phone_e164) + '">' + lEsc(l.phone_e164) + '</a>' : '—') + '</div>' +
+      '<div class="k">Comuna</div><div>' + lEsc(l.commune || '—') + '</div>' +
+      '<div class="k">Scanner actual</div><div>' + lEsc(leadsScannerTxt(l)) + '</div>' +
+      '<div class="k">Necesidad</div><div>' + lEsc(LEADS_NEED[l.need] || '—') + '</div>' +
+      '<div class="k">Plazo</div><div>' + lEsc(LEADS_PLAZO[l.purchase_timeline] || '—') + '</div>' +
+      '<div class="k">Demo</div><div>' + leadsSiNo(l.wants_demo) + '</div>' +
+      '<div class="k">Cotización</div><div>' + leadsSiNo(l.wants_quote) + '</div>' +
+      '<div class="k">Ingreso</div><div>' + lEsc(leadsFechaCorta(l.created_at)) + '</div>' +
+    '</div>' +
+    '<h4>Resumen IA</h4><div class="ld-box">' + lEsc(l.ai_summary || 'Sin resumen todavía.') + '</div>' +
+    '<h4>Derivación</h4><div id="ld-asignacion"></div>' +
+    '<div style="display:grid;gap:8px;margin-top:8px;">' +
+      '<select id="ld-dest"><option value="">Seleccionar persona…</option>' + opciones + '<option value="__otro__">Otro…</option></select>' +
+      '<input type="text" id="ld-otro" placeholder="Nombre de la persona" maxlength="120" style="display:none;">' +
+      '<button class="ld-btn primary" id="ld-derivar">Derivar lead</button>' +
+    '</div>' +
+    '<h4>Nota de Daniel</h4>' +
+    '<textarea id="ld-nota" rows="4" maxlength="4000" placeholder="Ej.: priorizar llamada hoy; revisar Trade Up…"></textarea>' +
+    '<button class="ld-btn" id="ld-guardar-nota" style="margin-top:8px;">Guardar nota</button>' +
+    '<div class="ld-msg" id="ld-msg"></div>' +
+    '<h4>Historial</h4><ul class="ld-hist" id="ld-historial"><li class="t">Cargando…</li></ul>' +
+    '</aside>';
+  document.getElementById('ld-nota').value = l.daniel_notes || '';
+  document.getElementById('ld-overlay').addEventListener('click', leadsCerrar);
+  document.getElementById('ld-cerrar').addEventListener('click', leadsCerrar);
+  document.getElementById('ld-dest').addEventListener('change', function (e) {
+    var o = document.getElementById('ld-otro');
+    o.style.display = e.target.value === '__otro__' ? 'block' : 'none';
+    if (e.target.value === '__otro__') o.focus();
+  });
+  document.getElementById('ld-derivar').addEventListener('click', leadsDerivar);
+  document.getElementById('ld-guardar-nota').addEventListener('click', leadsGuardarNota);
+  leadsPintarAsignacion();
+  leadsCargarHistorial();
+}
+function leadsCerrar() {
+  leadsDetalleId = null;
+  var root = document.getElementById('leads-drawer-root');
+  if (root) root.innerHTML = '';
+}
+// Refresco por Realtime sin pisar lo que Daniel está escribiendo.
+function leadsRefrescarDrawer() {
+  if (!leadsDetalleId || !document.getElementById('ld-asignacion')) return;
+  leadsPintarAsignacion();
+  leadsCargarHistorial();
+}
+function leadsPintarAsignacion() {
+  var l = leadsActual(); var box = document.getElementById('ld-asignacion');
+  if (!l || !box) return;
+  box.innerHTML = l.assigned_to_name
+    ? '<div class="ld-box">Asignado a <strong>' + lEsc(l.assigned_to_name) + '</strong><br><span style="color:var(--muted);font-size:12px;">' + lEsc(leadsFechaCorta(l.assigned_at)) + ' · Estado: ' + lEsc(LEADS_ESTADO[leadsEstadoClave(l.status)] || l.status) + '</span></div>'
+    : '<div class="ld-box" style="color:var(--muted);">Sin asignar todavía.</div>';
+}
+async function leadsCargarHistorial() {
+  var id = leadsDetalleId; var ul = document.getElementById('ld-historial');
+  if (!id || !ul) return;
+  var r = await sb.from('digital_lead_activities').select('id,created_at,event_type,detail').eq('lead_id', id).order('created_at', { ascending: false }).order('id', { ascending: false });
+  ul = document.getElementById('ld-historial');
+  if (!ul || id !== leadsDetalleId) return;
+  if (r.error) { ul.innerHTML = '<li class="t">No se pudo cargar el historial.</li>'; return; }
+  leadsActividades = r.data || [];
+  var txt = function (a) {
+    var d = a.detail || {};
+    if (a.event_type === 'assigned') return 'Derivado a ' + lEsc(d.assigned_to_name || '—') + (d.previous_assignee ? ' (antes: ' + lEsc(d.previous_assignee) + ')' : '');
+    if (a.event_type === 'note_updated') return 'Nota actualizada';
+    return lEsc(a.event_type);
+  };
+  ul.innerHTML = leadsActividades.length
+    ? leadsActividades.map(function (a) { return '<li>' + txt(a) + '<div class="t">' + lEsc(leadsFechaCorta(a.created_at)) + '</div></li>'; }).join('')
+    : '<li class="t">Sin actividad registrada.</li>';
+}
+function leadsMsg(texto, ok) {
+  var m = document.getElementById('ld-msg');
+  if (m) { m.textContent = texto || ''; m.className = 'ld-msg ' + (ok ? 'ok' : 'err'); }
+}
+async function leadsDerivar() {
+  var l = leadsActual(); if (!l) return;
+  var sel = document.getElementById('ld-dest').value;
+  var nombre = sel === '__otro__' ? (document.getElementById('ld-otro').value || '').trim() : sel;
+  if (!nombre) { leadsMsg('Selecciona a quién derivar (o escribe el nombre en "Otro").', false); return; }
+  var btn = document.getElementById('ld-derivar'); btn.disabled = true; leadsMsg('Derivando…', true);
+  var r = await sb.rpc('assign_digital_lead', { p_lead_id: l.id, p_assigned_to_name: nombre, p_assigned_to_email: null });
+  btn.disabled = false;
+  if (r.error) { leadsMsg('No se pudo derivar: ' + r.error.message, false); return; }
+  leadsMsg('Lead derivado a ' + nombre + '.', true);
+  leadsCargando = false;
+  await leadsCargar(true);
+}
+async function leadsGuardarNota() {
+  var l = leadsActual(); if (!l) return;
+  var btn = document.getElementById('ld-guardar-nota'); btn.disabled = true; leadsMsg('Guardando…', true);
+  var r = await sb.rpc('update_digital_lead_notes', { p_lead_id: l.id, p_notes: document.getElementById('ld-nota').value });
+  btn.disabled = false;
+  if (r.error) { leadsMsg('No se pudo guardar: ' + r.error.message, false); return; }
+  leadsMsg('Nota guardada.', true);
+  leadsCargando = false;
+  await leadsCargar(true);
+}
+
 sb.auth.onAuthStateChange(function (event, session) {
   if (session) {
     suscribirRealtime();
     cargarMiPerfil().then(cargarCotizaciones);
   } else {
     miPerfil = null;
+    leadsLimpiar(); // COMPLEMENTO Leads Digital
     if (channel) { sb.removeChannel(channel); channel = null; }
     renderLogin();
   }
@@ -4624,6 +5045,7 @@ async function cargarMiPerfil() {
   } catch (e) {
     miPerfil = null;
   }
+  await leadsCargarAcceso(); // COMPLEMENTO Leads Digital: decide la RPC is_lead_admin(); RLS lo refuerza
 }
 
 (async function init() {

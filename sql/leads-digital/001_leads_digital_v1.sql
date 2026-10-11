@@ -8,7 +8,7 @@ CREATE TABLE IF NOT EXISTS public.lead_admin_users (
   created_at timestamptz NOT NULL DEFAULT now()
 );
 
-CREATE OR REPLACE FUNCTION public.is_lead_admin()
+CREATE FUNCTION public.is_lead_admin()
 RETURNS boolean
 LANGUAGE sql STABLE SECURITY DEFINER SET search_path TO 'pg_catalog'
 AS $f$
@@ -84,7 +84,7 @@ CREATE TABLE IF NOT EXISTS public.digital_lead_messages (
 );
 
 -- ---------------- Scoring (solo columnas de scoring; NO status) ----------------
-CREATE OR REPLACE FUNCTION public.score_digital_lead()
+CREATE FUNCTION public.score_digital_lead()
 RETURNS trigger
 LANGUAGE plpgsql SET search_path TO 'pg_catalog'
 AS $f$
@@ -126,22 +126,20 @@ BEGIN
   RETURN NEW;
 END $f$;
 
-DROP TRIGGER IF EXISTS trg_score_digital_lead ON public.digital_leads;
 CREATE TRIGGER trg_score_digital_lead
 BEFORE INSERT OR UPDATE OF uses_intraoral_scanner, current_scanner, need, purchase_timeline,
   wants_demo, wants_quote, high_intent_override
 ON public.digital_leads FOR EACH ROW EXECUTE FUNCTION public.score_digital_lead();
 
-CREATE OR REPLACE FUNCTION public.touch_digital_lead()
+CREATE FUNCTION public.touch_digital_lead()
 RETURNS trigger LANGUAGE plpgsql SET search_path TO 'pg_catalog'
 AS $f$ BEGIN NEW.updated_at := now(); RETURN NEW; END $f$;
 
-DROP TRIGGER IF EXISTS trg_touch_digital_lead ON public.digital_leads;
 CREATE TRIGGER trg_touch_digital_lead
 BEFORE UPDATE ON public.digital_leads FOR EACH ROW EXECUTE FUNCTION public.touch_digital_lead();
 
 -- ---------------- RPC ----------------
-CREATE OR REPLACE FUNCTION public.assign_digital_lead(
+CREATE FUNCTION public.assign_digital_lead(
   p_lead_id uuid, p_assigned_to_name text, p_assigned_to_email text DEFAULT NULL)
 RETURNS void
 LANGUAGE plpgsql SECURITY DEFINER SET search_path TO 'pg_catalog'
@@ -168,7 +166,7 @@ BEGIN
                        'previous_assignee', v_lead.assigned_to_name));
 END $f$;
 
-CREATE OR REPLACE FUNCTION public.update_digital_lead_notes(p_lead_id uuid, p_notes text)
+CREATE FUNCTION public.update_digital_lead_notes(p_lead_id uuid, p_notes text)
 RETURNS void
 LANGUAGE plpgsql SECURITY DEFINER SET search_path TO 'pg_catalog'
 AS $f$
