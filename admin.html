@@ -4704,25 +4704,65 @@ function leadsLimpiar() {
 }
 
 // ---- Realtime (solo digital_leads) ----
+var leadsRtReintento = null;   // temporizador de re-suscripcion
+var leadsRtIntentos = 0;
+var leadsRtYaConectado = false; // true tras el primer SUBSCRIBED (para recarga de recuperacion al reconectar)
+var leadsPendiente = false;    // llego un evento mientras habia una carga en curso
+function leadsRtLog(msg) { try { console.log('[Leads RT] ' + msg); } catch (x) {} }
 function leadsSuscribir() {
-  if (leadsChannel) return;
+  if (leadsChannel) return; // un solo canal por sesion
   try {
-    leadsChannel = sb.channel('digital-leads-cambios')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'digital_leads' }, function () {
+    var ch = sb.channel('digital-leads-cambios');
+    leadsChannel = ch;
+    leadsRtLog('creando canal');
+    ch.on('postgres_changes', { event: '*', schema: 'public', table: 'digital_leads' }, function (payload) {
+        leadsRtLog('evento ' + (payload && payload.eventType)); // solo el tipo; sin datos del lead
         if (leadsTimer) clearTimeout(leadsTimer);
         leadsTimer = setTimeout(function () {
           if (vistaActiva === 'leads') { leadsCargar(true); } else { leadsStale = true; }
         }, 300);
       })
       .subscribe(function (status) {
-        if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') { leadsChannel = null; }
+        if (leadsChannel !== ch) return; // canal obsoleto
+        leadsRtLog('estado ' + status);
+        if (status === 'SUBSCRIBED') {
+          leadsRtIntentos = 0;
+          // Al reconectar, recupera lo que pudo perderse mientras el canal estuvo caido.
+          if (leadsRtYaConectado) { if (vistaActiva === 'leads') { leadsCargar(true); } else { leadsStale = true; } }
+          leadsRtYaConectado = true;
+        } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
+          leadsRtReprogramar(ch);
+        }
       });
-  } catch (e) { leadsChannel = null; }
+  } catch (e) { leadsRtLog('error al crear canal'); leadsChannel = null; leadsRtReprogramar(null); }
+}
+// Desecha el canal caido y crea UNO nuevo (con espera creciente, max 30 s). La carga manual sigue funcionando.
+function leadsRtReprogramar(ch) {
+  if (!leadsAcceso) return;
+  if (ch && leadsChannel === ch) { try { sb.removeChannel(ch); } catch (e) {} leadsChannel = null; }
+  if (leadsRtReintento) return;
+  leadsRtIntentos++;
+  var espera = Math.min(30000, 1000 * Math.pow(2, Math.min(leadsRtIntentos, 5)));
+  leadsRtLog('reintento en ' + Math.round(espera / 1000) + ' s');
+  leadsRtReintento = setTimeout(function () { leadsRtReintento = null; if (leadsAcceso) leadsSuscribir(); }, espera);
 }
 function leadsDesuscribir() {
   if (leadsTimer) { clearTimeout(leadsTimer); leadsTimer = null; }
-  if (leadsChannel) { try { sb.removeChannel(leadsChannel); } catch (e) {} leadsChannel = null; }
+  if (leadsRtReintento) { clearTimeout(leadsRtReintento); leadsRtReintento = null; }
+  leadsRtIntentos = 0; leadsRtYaConectado = false;
+  if (leadsChannel) { var c = leadsChannel; leadsChannel = null; try { sb.removeChannel(c); } catch (e) {} }
 }
+// Al volver a la pestana (o recuperar red) verifica el canal y refresca: los navegadores suspenden pestanas en segundo plano.
+function leadsRtVerificar() {
+  if (!leadsAcceso) return;
+  if (!leadsChannel || leadsChannel.state !== 'joined') {
+    leadsRtLog('canal no activo al volver (' + (leadsChannel ? leadsChannel.state : 'sin canal') + '), recreando');
+    leadsDesuscribir(); leadsSuscribir();
+  }
+  if (leadsCargado) { if (vistaActiva === 'leads') { leadsCargar(true); } else { leadsStale = true; } }
+}
+document.addEventListener('visibilitychange', function () { if (document.visibilityState === 'visible') leadsRtVerificar(); });
+window.addEventListener('online', leadsRtVerificar);
 
 // ---- Datos ----
 // Describe con precisión QUÉ consulta falló (tabla/RPC, código, HTTP, mensaje) para poder diagnosticar.
@@ -4753,7 +4793,7 @@ async function leadsConsultar() {
   return { leads: res[0], asignados: res[1], incluirPrueba: incluirPrueba };
 }
 async function leadsCargar(silencioso) {
-  if (leadsCargando) return;
+  if (leadsCargando) { leadsPendiente = true; return; }
   leadsCargando = true;
   if (!silencioso) { leadsError = null; leadsAviso = null; if (vistaActiva === 'leads') renderLeadsDigital(); }
   try {
@@ -4779,6 +4819,7 @@ async function leadsCargar(silencioso) {
     if (leadsCargado) { leadsAviso = msg; } else { leadsError = msg; }
   }
   leadsCargando = false;
+  if (leadsPendiente) { leadsPendiente = false; setTimeout(function () { leadsCargar(true); }, 0); }
   if (vistaActiva === 'leads') {
     if (!document.getElementById('leads-resultados')) { renderLeadsDigital(); } else { leadsPintar(); leadsRefrescarDrawer(); }
   }
