@@ -1,4 +1,5 @@
-// prospect-import-preview -- OUTBOUND 2: analiza un Excel/CSV y devuelve un PREVIEW. NO inserta nada.
+// prospect-import-preview -- OUTBOUND 2/3: analiza un Excel/CSV. mode=preview (defecto): devuelve el PREVIEW y NO inserta nada.
+//   mode=confirm (Outbound 3): RE-ANALIZA el mismo archivo en servidor y llama a la RPC atomica confirm_prospect_import (V1: solo datos de prueba).
 //
 // Garantias:
 //  - Solo Lead Admin (is_lead_admin() con el JWT del propio usuario). Sin service_role: la lectura de
@@ -13,6 +14,7 @@ import { createClient } from 'npm:@supabase/supabase-js@2.45.4';
 import { XLSX } from './vendor/xlsx.mini.mjs';
 import { analyze, decodeCsv, ImportError, LIMITS, parseCsv, type Existing, type RawSheet } from './parse.ts';
 import { readWorkbook } from './xlsx_read.ts';
+import { buildConfirmArgs, mapRpcError, sha256Hex } from './confirm.ts';
 
 const CORS = {
   'Access-Control-Allow-Origin': '*',
@@ -43,6 +45,8 @@ Deno.serve(async (req: Request) => {
     const file = form.get('file');
     if (!(file instanceof File)) return fail(400, 'sin_archivo', 'Adjunta un archivo en el campo "file".');
     if (file.size > LIMITS.maxBytes) return fail(413, 'archivo_grande', 'El archivo supera 5 MB.');
+    const mode = String(form.get('mode') ?? 'preview');
+    if (mode !== 'preview' && mode !== 'confirm') return fail(400, 'modo_invalido', 'Modo no válido.');
     const name = String(file.name || 'archivo');
     const ext = name.toLowerCase().endsWith('.xlsx') ? 'xlsx' : name.toLowerCase().endsWith('.csv') ? 'csv' : null;
     if (!ext) return fail(400, 'extension_no_permitida', 'Solo se aceptan archivos .xlsx o .csv.');
@@ -68,6 +72,20 @@ Deno.serve(async (req: Request) => {
     }
 
     const a = analyze(sheets, existing);
+
+    // 5) CONFIRMAR: se usa el analisis recalculado AQUI (nunca el del frontend). RPC atomica con el JWT del usuario.
+    if (mode === 'confirm') {
+      const args = buildConfirmArgs(a, { name, size: bytes.length, sha256: await sha256Hex(bytes) });
+      const r = await sb.rpc('confirm_prospect_import', args);
+      if (r.error) {
+        const m = mapRpcError(r.error.code, r.error.message);
+        console.log(JSON.stringify({ evt: 'prospect_confirm_error', code: m.code, pg: r.error.code ?? null })); // sin detalle
+        return fail(m.status, m.code, m.message);
+      }
+      const out = r.data as { import_id: string; total: number; imported: number; duplicates_omitted: number; invalid: number };
+      console.log(JSON.stringify({ evt: 'prospect_confirm', total: out.total, imported: out.imported, duplicates_omitted: out.duplicates_omitted, invalid: out.invalid }));
+      return json(200, { ok: true, import_performed: true, ...out });
+    }
     console.log(JSON.stringify({ evt: 'prospect_preview', ext, bytes: bytes.length, sheets: a.sheets.length, ...a.summary })); // solo contadores
     return json(200, {
       ok: true, import_performed: false,
