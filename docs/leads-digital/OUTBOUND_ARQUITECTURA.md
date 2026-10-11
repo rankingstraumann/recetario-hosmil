@@ -17,6 +17,15 @@ No hay un segundo bot ni un segundo scoring. Los prospectos **no** son leads: no
 - `digital_prospects`: datos de contacto, `phone_raw` + `phone_e164` (formato `+[1-9]\d{6,14}` o NULL = inválido), `whatsapp_consent` (yes/no/unknown) + `consent_source/at`, `outreach_status` (pending/eligible/contacted/replied/opted_out/failed/converted), `last_outreach_at`, `linked_lead_id → digital_leads` (SET NULL), `is_test`, `raw_payload`, timestamps (trigger `updated_at`).
 - Índices no únicos (teléfono, lote, estado, fecha, lead). La política de duplicados se define en la fase del parser.
 
+## Campos comerciales (migración `007`)
+`external_customer_id` (Sold-To SAP), `source_owner` (cartera histórica; **no** asigna), `priority_source`, `last_billed_year`, `trade_up_financial`. Lo no mapeado se conserva en `raw_payload`.
+
+## Duplicados (regla para el parser; sin unique sobre teléfono)
+1. `external_customer_id` exacto → mismo prospecto (duplicado fuerte). 2. `phone_e164` exacto → posible duplicado, se reporta para revisión. 3. nombre normalizado → solo advertencia, nunca se fusiona automáticamente.
+
+## Elegibilidad (derivada, no manual)
+Elegible = `whatsapp_consent='yes'` ∧ `phone_e164` válido ∧ `outreach_status` ∉ {`opted_out`,`converted`}. `unknown` y `no` → no contactar. La UI la calcula; no depende de que alguien marque `eligible`.
+
 ## Seguridad
 - RLS activo en ambas tablas. Única policy: `SELECT` para `authenticated` con `is_lead_admin()` (solo Daniel).
 - `authenticated`: solo `SELECT` (sin INSERT/UPDATE/DELETE). `anon`: sin acceso. `service_role`: acceso total (procesos backend futuros).
@@ -29,4 +38,4 @@ Leads Digital → sub-pestañas **[ Leads ] [ Prospectos ]**. Prospectos: contad
 Parser Excel/CSV (normalización E.164, duplicados, consentimiento), RPC/Edge Function de importación, plantilla WhatsApp aprobada y envío con control de consentimiento/baja, vínculo prospecto→lead en el webhook (match por teléfono), opt-out.
 
 ## Rollback
-`sql/leads-digital/999c_rollback_outbound_prospectos.sql` (solo elimina `digital_prospects`, `digital_prospect_imports`, `touch_digital_prospect()`). Revertir UI: `git revert` del commit o volver a `49192dd`.
+`sql/leads-digital/999d_rollback_outbound_campos_comerciales.sql` (revierte 007) y `999c_rollback_outbound_prospectos.sql` (solo elimina `digital_prospects`, `digital_prospect_imports`, `touch_digital_prospect()`). Revertir UI: `git revert` del commit o volver a `49192dd`.

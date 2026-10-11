@@ -4815,16 +4815,18 @@ function prospectosEnlazarSubtabs() {
     });
   });
 }
-// Elegibilidad VISUAL (no dispara nada): consentimiento SI + telefono valido + aun no contactado/baja/convertido.
+// Elegibilidad DERIVADA por reglas (no depende de outreach_status='eligible'):
+// consentimiento = yes + telefono E.164 valido + estado distinto de opted_out y converted. No dispara nada.
+function prospectoElegible(p) {
+  return p.whatsapp_consent === 'yes' && !!p.phone_e164 && p.outreach_status !== 'opted_out' && p.outreach_status !== 'converted';
+}
 function prospectoElegibilidad(p) {
   if (!p.phone_e164) return { ok: false, cls: 'no', txt: 'Teléfono inválido: no elegible' };
   if (p.outreach_status === 'opted_out') return { ok: false, cls: 'no', txt: 'Se dio de baja: no contactar' };
   if (p.whatsapp_consent === 'no') return { ok: false, cls: 'no', txt: 'Sin consentimiento: no contactar' };
   if (p.whatsapp_consent !== 'yes') return { ok: false, cls: 'unk', txt: 'Consentimiento por resolver: no contactar' };
   if (p.outreach_status === 'converted') return { ok: false, cls: 'neu', txt: 'Ya convertido a lead' };
-  if (p.outreach_status === 'contacted' || p.outreach_status === 'replied') return { ok: false, cls: 'neu', txt: 'Ya contactado' };
-  if (p.outreach_status === 'failed') return { ok: false, cls: 'unk', txt: 'Último envío falló' };
-  return { ok: true, cls: 'ok', txt: 'Elegible para WhatsApp' };
+  return { ok: true, cls: 'ok', txt: 'Elegible para WhatsApp' + ((p.outreach_status === 'contacted' || p.outreach_status === 'replied') ? ' (ya contactado)' : '') };
 }
 function prospectosBase() {
   return prospectosDatos.filter(function (p) { return prospectosFiltro.prueba === true || !p.is_test; });
@@ -4905,7 +4907,7 @@ function prospectosPintar() {
   var card = function (label, val, hl) { return '<div class="dash-card' + (hl ? ' highlight' : '') + '"><div class="dc-label">' + label + '</div><div class="dc-value">' + val + '</div></div>'; };
   var cards = '<div class="dash-grid ld-cards">' +
     card('Total prospectos', base.length) +
-    card('Elegibles WhatsApp', n(function (p) { return prospectoElegibilidad(p).ok; }), true) +
+    card('Elegibles WhatsApp', n(prospectoElegible), true) +
     card('Pendientes', n(function (p) { return p.outreach_status === 'pending'; })) +
     card('Contactados', n(function (p) { return p.outreach_status === 'contacted'; })) +
     card('Respondieron', n(function (p) { return p.outreach_status === 'replied'; })) +
