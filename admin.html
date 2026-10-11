@@ -4618,7 +4618,9 @@ var leadsDatos = [];
 var leadsAsignados = [];
 var leadsCargado = false;
 var leadsCargando = false;
-var leadsError = null;
+var leadsError = null;   // bloqueante: solo si NUNCA se pudo cargar
+var leadsAviso = null;   // no bloqueante: una recarga fallo, se conserva lo ultimo bueno
+var leadsModoCarga = null; // true=incluye pruebas, false=solo reales (lo que representan leadsDatos)
 var leadsStale = false;
 var leadsChannel = null;
 var leadsTimer = null;
@@ -4696,7 +4698,7 @@ async function leadsCargarAcceso() {
 }
 function leadsLimpiar() {
   leadsAcceso = false; leadsDatos = []; leadsAsignados = []; leadsCargado = false; leadsCargando = false;
-  leadsError = null; leadsStale = false; leadsDetalleId = null; leadsActividades = [];
+  leadsError = null; leadsAviso = null; leadsModoCarga = null; leadsStale = false; leadsDetalleId = null; leadsActividades = [];
   leadsFiltro = { q: '', temp: '', estado: '', asig: '', prueba: null };
   leadsDesuscribir();
 }
@@ -4723,27 +4725,58 @@ function leadsDesuscribir() {
 }
 
 // ---- Datos ----
+// Describe con precisión QUÉ consulta falló (tabla/RPC, código, HTTP, mensaje) para poder diagnosticar.
+function leadsDetalleError(operacion, r) {
+  var e = (r && r.error) ? r.error : r;
+  var partes = [operacion];
+  if (e && e.code) partes.push('código ' + e.code);
+  if (r && r.status) partes.push('HTTP ' + r.status);
+  partes.push((e && e.message) ? e.message : 'error desconocido');
+  var d = { operacion: operacion, codigo: e && e.code, http: r && r.status, mensaje: e && e.message, detalle: e && e.details, pista: e && e.hint };
+  try { console.error('[Leads Digital] falló la carga', d); } catch (x) {}
+  return partes.join(' · ');
+}
+function leadsErrorDeSesion(r) {
+  var e = (r && r.error) ? r.error : r;
+  var c = e && e.code ? String(e.code) : '';
+  var m = (e && e.message ? String(e.message) : '').toLowerCase();
+  return c === '42501' || c.indexOf('PGRST30') === 0 || (r && (r.status === 401 || r.status === 403)) || m.indexOf('jwt') >= 0 || m.indexOf('permission denied') >= 0;
+}
+async function leadsConsultar() {
+  var incluirPrueba = leadsFiltro.prueba === null ? true : leadsFiltro.prueba;
+  var qLeads = sb.from('digital_leads').select('*');
+  if (!incluirPrueba) qLeads = qLeads.eq('is_test', false); // servidor: solo reales
+  var res = await Promise.all([
+    qLeads.order('created_at', { ascending: false }).limit(2000),
+    sb.from('digital_lead_assignees').select('id,nombre,email').eq('activo', true).order('nombre', { ascending: true })
+  ]);
+  return { leads: res[0], asignados: res[1], incluirPrueba: incluirPrueba };
+}
 async function leadsCargar(silencioso) {
   if (leadsCargando) return;
   leadsCargando = true;
-  if (!silencioso) { leadsError = null; if (vistaActiva === 'leads') renderLeadsDigital(); }
+  if (!silencioso) { leadsError = null; leadsAviso = null; if (vistaActiva === 'leads') renderLeadsDigital(); }
   try {
-    var res = await Promise.all([
-      sb.from('digital_leads').select('*').order('created_at', { ascending: false }).limit(2000),
-      sb.from('digital_lead_assignees').select('id,nombre,email').eq('activo', true).order('nombre', { ascending: true })
-    ]);
-    if (res[0].error) throw res[0].error;
-    leadsDatos = res[0].data || [];
-    leadsAsignados = res[1].error ? [] : (res[1].data || []);
-    leadsError = null;
-    leadsCargado = true;
-    leadsStale = false;
+    var r = await leadsConsultar();
+    // Si falla por sesion/permiso (p.ej. token vencido: la peticion sale como anon), se refresca la sesion UNA vez y se reintenta.
+    if (r.leads.error && leadsErrorDeSesion(r.leads)) {
+      try { await sb.auth.refreshSession(); } catch (x) {}
+      r = await leadsConsultar();
+    }
+    if (r.leads.error) throw { detalle: leadsDetalleError('digital_leads (select)', r.leads) };
+    leadsDatos = r.leads.data || [];
+    leadsAsignados = r.asignados.error ? [] : (r.asignados.data || []);
+    leadsModoCarga = r.incluirPrueba;
+    leadsError = null; leadsAviso = null;
+    leadsCargado = true; leadsStale = false;
     if (leadsFiltro.prueba === null) {
-      // Si todavía no hay leads reales, mostramos los de prueba para poder validar la pantalla.
+      // Sin leads reales todavia: se muestran los de prueba para poder validar la pantalla.
       leadsFiltro.prueba = !leadsDatos.some(function (l) { return !l.is_test; });
     }
   } catch (e) {
-    leadsError = (e && e.message) ? e.message : 'No se pudieron cargar los leads.';
+    var msg = (e && e.detalle) ? e.detalle : leadsDetalleError('digital_leads (carga)', e);
+    // Una recarga fallida NUNCA tapa datos validos: solo avisa. El error bloqueante es solo para la primera carga.
+    if (leadsCargado) { leadsAviso = msg; } else { leadsError = msg; }
   }
   leadsCargando = false;
   if (vistaActiva === 'leads') {
@@ -4823,7 +4856,7 @@ function renderLeadsDigital() {
   document.getElementById('ld-temp').addEventListener('change', function (e) { leadsFiltro.temp = e.target.value; leadsPintar(); });
   document.getElementById('ld-estado').addEventListener('change', function (e) { leadsFiltro.estado = e.target.value; leadsPintar(); });
   document.getElementById('ld-asig').addEventListener('change', function (e) { leadsFiltro.asig = e.target.value; leadsPintar(); });
-  document.getElementById('ld-prueba').addEventListener('change', function (e) { leadsFiltro.prueba = e.target.checked; leadsPintar(); });
+  document.getElementById('ld-prueba').addEventListener('change', function (e) { leadsFiltro.prueba = e.target.checked; leadsPintar(); leadsCargar(true); });
   document.getElementById('ld-excel').addEventListener('click', leadsExportar);
   leadsPintar();
   if (leadsDetalleId) leadsAbrir(leadsDetalleId, true);
@@ -4835,11 +4868,12 @@ function leadsPintar() {
   var cbPrueba = document.getElementById('ld-prueba'); // el default se decide al llegar los datos
   if (cbPrueba) cbPrueba.checked = leadsFiltro.prueba === true;
   if (leadsCargando && !leadsCargado) { box.innerHTML = '<div style="padding:24px;text-align:center;color:var(--muted);">Cargando…</div>'; return; }
-  if (leadsError) {
-    box.innerHTML = '<div style="background:#fff3cd;border:1px solid #fde68a;border-radius:10px;padding:14px 18px;text-align:center;font-size:13px;">⚠️ ' + lEsc(leadsError) +
-      ' <button class="ld-btn" onclick="leadsError=null;leadsCargar(false)">Reintentar</button></div>';
+  if (leadsError && !leadsCargado) {
+    box.innerHTML = '<div style="background:#fff3cd;border:1px solid #fde68a;border-radius:10px;padding:14px 18px;text-align:center;font-size:13px;">⚠️ No se pudieron cargar los leads.<div style="font-size:11px;color:#71717a;margin-top:4px;">' + lEsc(leadsError) + '</div> ' +
+      '<button class="ld-btn" style="margin-top:8px" onclick="leadsError=null;leadsCargar(false)">Reintentar</button></div>';
     return;
   }
+  var aviso = leadsAviso ? '<div style="background:#fff3cd;border:1px solid #fde68a;border-radius:10px;padding:8px 12px;margin-bottom:12px;font-size:12px;">⚠️ No se pudo actualizar; se muestra la última información cargada.<div style="font-size:11px;color:#71717a;margin-top:2px;">' + lEsc(leadsAviso) + '</div> <button class="ld-btn" style="margin-top:6px" onclick="leadsAviso=null;leadsCargar(false)">Reintentar</button></div>' : '';
   var base = leadsBase();
   var hoy = leadsDiaSantiago(new Date().toISOString());
   var c = {
@@ -4874,10 +4908,10 @@ function leadsPintar() {
     '<div class="ld-wrap"><table class="dash-table"><thead><tr>' +
     '<th>Temp.</th><th>Nombre</th><th>Clínica</th><th>Comuna</th><th>Scanner actual</th><th>Necesidad</th><th>Plazo</th><th class="num">Score</th><th>Estado</th><th>Asignado a</th><th>Acción</th>' +
     '</tr></thead><tbody>' +
-    (filas || '<tr><td colspan="11" style="text-align:center;color:var(--muted);padding:24px;">No hay leads con estos filtros.</td></tr>') +
+    (filas || '<tr><td colspan="11" style="text-align:center;color:var(--muted);padding:24px;">' + (base.length ? 'No hay leads con estos filtros.' : 'No hay leads para mostrar.') + '</td></tr>') +
     '</tbody></table></div>' +
     '<div style="font-size:11px;color:var(--muted);margin-top:8px;">' + lista.length + ' lead(s) · orden: HOT sin asignar, nuevos recientes, resto por fecha.</div>';
-  box.innerHTML = cards + tabla;
+  box.innerHTML = aviso + cards + tabla;
   box.querySelectorAll('button[data-lead]').forEach(function (b) {
     b.addEventListener('click', function () { leadsAbrir(b.getAttribute('data-lead')); });
   });
