@@ -4669,13 +4669,15 @@ function leadsInyectarEstilos() {
     '.ld-wrap{overflow-x:auto;border:1px solid var(--border);border-radius:12px;background:#fff}' +
     '.ld-wrap table{border:none;border-radius:0;min-width:980px}' +
     '.ld-wrap tbody tr{cursor:default}' +
-    '.pr-tabla{min-width:0!important}' +
-    '.pr-tabla th,.pr-tabla td{padding:7px 8px;vertical-align:top}' +
+    'main.leads-main{max-width:1380px}' +
+    '.ld-wrap .pr-tabla{min-width:1180px}' +
+    '.pr-tabla th,.pr-tabla td{padding:8px 10px;vertical-align:top}' +
     '.pr-tabla td{font-size:12px}' +
-    '.pr-tabla .pr-c-ori{max-width:110px;word-break:break-word}' +
-    '.pr-tabla .pr-c-est{max-width:100px}' +
-    '.pr-tabla .pr-c-imp{max-width:84px}' +
-    '.pr-tabla .pr-acc{position:sticky;right:0;z-index:2;background:#fff;box-shadow:-6px 0 8px -6px rgba(0,0,0,.25);min-width:150px;white-space:normal}' +
+    '.pr-tabla .pr-c-ori{min-width:130px;overflow-wrap:break-word}' +
+    '.pr-tabla .pr-c-est{min-width:105px}' +
+    '.pr-tabla .pr-c-imp{min-width:100px}' +
+    '.pr-tabla .pr-c-tel{min-width:112px;white-space:nowrap}' +
+    '.pr-tabla .pr-acc{position:sticky;right:0;z-index:2;background:#fff;box-shadow:-6px 0 8px -6px rgba(0,0,0,.25);min-width:180px;white-space:normal}' +
     '.pr-tabla thead .pr-acc{z-index:3;background:#f4f4f5}' +
     '.pr-tabla .pr-acc .ld-btn{display:block;width:100%;margin:0 0 4px 0}' +
     '.dash-grid.ld-cards{grid-template-columns:repeat(6,1fr);gap:10px}.ld-cards .dash-card{padding:14px 14px}' +
@@ -4956,7 +4958,7 @@ function prospectosPintar() {
       '<td><strong>' + lEsc(p.full_name || '—') + '</strong>' + (p.is_test ? '<span class="ld-test">PRUEBA</span>' : '') + (p.email ? '<div style="font-size:11px;color:var(--muted);">' + lEsc(p.email) + '</div>' : '') + '</td>' +
       '<td>' + lEsc(p.clinic_name || '—') + '</td>' +
       '<td>' + lEsc(p.commune || '—') + '</td>' +
-      '<td>' + (p.phone_e164 ? lEsc(p.phone_e164) : '<span class="pr-badge no">Inválido</span><div style="font-size:11px;color:var(--muted);">' + lEsc(p.phone_raw || 'sin teléfono') + '</div>') + '</td>' +
+      '<td class="pr-c-tel">' + (p.phone_e164 ? lEsc(p.phone_e164) : '<span class="pr-badge no">Inválido</span><div style="font-size:11px;color:var(--muted);">' + lEsc(p.phone_raw || 'sin teléfono') + '</div>') + '</td>' +
       '<td class="pr-c-ori">' + lEsc(p.source || '—') + (p.source_detail ? '<div style="font-size:11px;color:var(--muted);">' + lEsc(p.source_detail) + '</div>' : '') + '</td>' +
       '<td><span class="pr-badge ' + cb + '">' + lEsc(PROSP_CONSENT[p.whatsapp_consent] || p.whatsapp_consent) + '</span><div class="pr-elig ' + el.cls + '">' + lEsc(el.txt) + '</div>' + prospectoConsDetalle(p) + '</td>' +
       '<td class="pr-c-est">' + lEsc(PROSP_ESTADO[p.outreach_status] || p.outreach_status) + (p.last_outreach_at ? '<div style="font-size:11px;color:var(--muted);">' + lEsc(leadsFechaCorta(p.last_outreach_at)) + '</div>' : '') + '</td>' +
@@ -4966,7 +4968,7 @@ function prospectosPintar() {
   }).join('');
   box.innerHTML = cards + nCons + nota +
     '<div class="ld-wrap"><table class="dash-table pr-tabla"><thead><tr>' +
-    '<th>Nombre</th><th>Clínica</th><th>Comuna</th><th>Teléfono</th><th class="pr-c-ori">Origen</th><th>Consentimiento WhatsApp</th><th class="pr-c-est">Estado de contacto</th><th class="pr-c-imp">Importación</th><th class="pr-acc">Acción</th>' +
+    '<th>Nombre</th><th>Clínica</th><th>Comuna</th><th class="pr-c-tel">Teléfono</th><th class="pr-c-ori">Origen</th><th>Consentimiento WhatsApp</th><th class="pr-c-est">Estado de contacto</th><th class="pr-c-imp">Importación</th><th class="pr-acc">Acción</th>' +
     '</tr></thead><tbody>' +
     (filas || '<tr><td colspan="9" style="text-align:center;color:var(--muted);padding:24px;">' + (base.length ? 'No hay prospectos con estos filtros.' : 'Aún no hay prospectos. Las bases se importarán en una fase posterior.') + '</td></tr>') +
     '</tbody></table></div>' +
@@ -5568,7 +5570,7 @@ function renderLeadsDigital() {
   v.innerHTML =
     '<header class="topbar"><div><div class="brand-name">STRAUMANN</div><div class="brand-sub">GROUP CHILE · NEODENT</div></div>' +
     '<div style="display:flex;align-items:center;gap:12px;"><span style="font-size:10px;color:#a1a1aa;">Herramienta interna desarrollada por Daniel Jordán para Straumann Group Chile. · Admin v' + ADMIN_VERSION + '</span><button class="btn-logout" id="btn-logout">Cerrar sesión</button></div></header>' +
-    '<main>' +
+    '<main class="leads-main">' +
     construirTabsPrincipales('leads') +
     '<h2 style="margin:0 0 4px;font-size:18px;">Leads Digital</h2>' +
     '<p style="margin:0 0 12px;font-size:12px;color:var(--muted);">Leads SIRIOS (RM). Todos llegan primero a ti; la derivación es manual. Vista privada.</p>' +
