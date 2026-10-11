@@ -4705,21 +4705,30 @@ function leadsLimpiar() {
 
 // ---- Realtime (solo digital_leads) ----
 function leadsSuscribir() {
-  if (leadsChannel) return;
+  if (leadsChannel) { try { console.log('[LeadsRT] suscribir ignorado: canal ya existe'); } catch (x) {} return; }
   try {
+    // DIAGNOSTICO TEMPORAL (LeadsRT): logs seguros, sin datos personales (solo tipo de evento e id).
+    sb.auth.getSession().then(function (g) {
+      var s = g && g.data && g.data.session;
+      console.log('[LeadsRT] crear canal. sesion=' + (s ? 'valida' : 'NULA') + (s ? ' exp=' + new Date(s.expires_at * 1000).toISOString() : ''));
+    });
     leadsChannel = sb.channel('digital-leads-cambios')
-      .on('postgres_changes', { event: '*', schema: 'public', table: 'digital_leads' }, function () {
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'digital_leads' }, function (payload) {
+        try { console.log('Leads realtime event: ' + payload.eventType + ' id=' + ((payload.new && payload.new.id) || (payload.old && payload.old.id)) + ' vistaActiva=' + vistaActiva + ' cargando=' + leadsCargando); } catch (x) {}
         if (leadsTimer) clearTimeout(leadsTimer);
         leadsTimer = setTimeout(function () {
           if (vistaActiva === 'leads') { leadsCargar(true); } else { leadsStale = true; }
         }, 300);
       })
-      .subscribe(function (status) {
+      .subscribe(function (status, err) {
+        try { console.log('Leads realtime status: ' + status + (err ? ' err=' + (err.message || err) : '')); } catch (x) {}
         if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT') { leadsChannel = null; }
       });
-  } catch (e) { leadsChannel = null; }
+    window.__leadsRt = leadsChannel;
+  } catch (e) { try { console.log('[LeadsRT] excepcion al crear canal', e); } catch (x) {} leadsChannel = null; }
 }
 function leadsDesuscribir() {
+  try { console.log('[LeadsRT] desuscribir (leadsChannel=' + (leadsChannel ? 'activo' : 'null') + ')'); } catch (x) {}
   if (leadsTimer) { clearTimeout(leadsTimer); leadsTimer = null; }
   if (leadsChannel) { try { sb.removeChannel(leadsChannel); } catch (e) {} leadsChannel = null; }
 }
