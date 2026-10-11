@@ -7,7 +7,7 @@ import { fileURLToPath } from 'node:url';
 import { XLSX } from '../vendor/xlsx.mini.mjs';
 import { analyze } from '../parse.ts';
 import { readWorkbook } from '../xlsx_read.ts';
-import { buildConfirmArgs, mapRpcError, sha256Hex } from '../confirm.ts';
+import { buildConfirmArgs, mapRpcError, resolveBatchMode, ModeError, sha256Hex } from '../confirm.ts';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const bytes = new Uint8Array(readFileSync(join(here, 'fixtures/trade_up_ficticio.xlsx')));
@@ -56,5 +56,34 @@ test('mapRpcError: ya importado 409, no autorizado 403, rechazado 422, resto 500
   assert.equal(mapRpcError('P0001', 'CONTEOS_INCONSISTENTES').status, 422);
   const o = mapRpcError('XX000', 'duplicate key value violates unique constraint (Sold-To 123)');
   assert.equal(o.status, 500); assert.ok(!o.message.includes('123'));
+});
+test('modo por defecto = PRUEBA (is_test=true) y nunca viaja confirmacion real', () => {
+  assert.equal(ARGS.p_is_test, true); assert.equal(ARGS.p_real_confirmed, false);
+  assert.deepEqual(resolveBatchMode(undefined, undefined), { isTest: true, realConfirmed: false });
+  assert.deepEqual(resolveBatchMode(null, 'yes'), { isTest: true, realConfirmed: false }, 'real_confirmed no convierte un lote PRUEBA en REAL');
+  assert.deepEqual(resolveBatchMode('test', 'yes'), { isTest: true, realConfirmed: false });
+});
+test('modo REAL -> is_test=false SOLO con segunda confirmacion explicita (yes)', () => {
+  assert.deepEqual(resolveBatchMode('real', 'yes'), { isTest: false, realConfirmed: true });
+  for (const bad of [undefined, null, '', 'no', 'true', '1', 'YES']) {
+    assert.throws(() => resolveBatchMode('real', bad), (e) => e instanceof ModeError && e.code === 'confirmacion_real_requerida', String(bad));
+  }
+  const real = buildConfirmArgs(A, { name: 'x.xlsx', size: bytes.length, sha256: sha }, resolveBatchMode('real', 'yes'));
+  assert.equal(real.p_is_test, false); assert.equal(real.p_real_confirmed, true);
+  assert.equal(real.p_rows.length, 6, 'mismo contenido: solo cambia el modo');
+  assert.deepEqual(real.p_rows, ARGS.p_rows);
+});
+test('modo de lote invalido se rechaza (no cae a REAL)', () => {
+  for (const bad of ['REAL', 'Real', 'prod', 'false', '0', 'test ']) assert.throws(() => resolveBatchMode(bad, 'yes'), (e) => e instanceof ModeError && e.code === 'modo_lote_invalido', bad);
+});
+test('mapRpcError: CONFIRMACION_REAL_REQUERIDA -> 400', () => { assert.equal(mapRpcError('P0001', 'CONFIRMACION_REAL_REQUERIDA').status, 400); });
+test('el PREVIEW no inserta: la RPC solo se invoca dentro de mode===confirm', () => {
+  const src = readFileSync(join(here, '../index.ts'), 'utf8');
+  const calls = [...src.matchAll(/\.rpc\('confirm_prospect_import'/g)];
+  assert.equal(calls.length, 1, 'una sola invocacion de la RPC');
+  const iConfirm = src.indexOf("if (mode === 'confirm')"), iRpc = src.indexOf("sb.rpc('confirm_prospect_import'"), iPreviewReturn = src.indexOf('import_performed: false');
+  assert.ok(iConfirm > 0 && iRpc > iConfirm && iRpc < iPreviewReturn, 'la RPC queda dentro del bloque confirm, antes del retorno de preview');
+  assert.ok(!/\.insert\(|\.upsert\(|\.update\(|\.delete\(/.test(src), 'la funcion no escribe tablas directamente');
+  assert.ok(src.includes(".eq('is_test', batch.isTest)"), 'duplicados contra BD solo dentro del mismo modo');
 });
 if (process.env.DUMP_ARGS) { (await import('node:fs')).writeFileSync(process.env.DUMP_ARGS, JSON.stringify(ARGS)); }

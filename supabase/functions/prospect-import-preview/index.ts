@@ -14,7 +14,7 @@ import { createClient } from 'npm:@supabase/supabase-js@2.45.4';
 import { XLSX } from './vendor/xlsx.mini.mjs';
 import { analyze, decodeCsv, ImportError, LIMITS, parseCsv, type Existing, type RawSheet } from './parse.ts';
 import { readWorkbook } from './xlsx_read.ts';
-import { buildConfirmArgs, mapRpcError, sha256Hex } from './confirm.ts';
+import { buildConfirmArgs, mapRpcError, ModeError, resolveBatchMode, sha256Hex } from './confirm.ts';
 
 const CORS = {
   'Access-Control-Allow-Origin': '*',
@@ -47,6 +47,10 @@ Deno.serve(async (req: Request) => {
     if (file.size > LIMITS.maxBytes) return fail(413, 'archivo_grande', 'El archivo supera 5 MB.');
     const mode = String(form.get('mode') ?? 'preview');
     if (mode !== 'preview' && mode !== 'confirm') return fail(400, 'modo_invalido', 'Modo no válido.');
+    // Modo del lote (PRUEBA por defecto). Lo valida el SERVIDOR; REAL exige real_confirmed='yes' solo al confirmar.
+    let batch: { isTest: boolean; realConfirmed: boolean };
+    try { batch = resolveBatchMode(form.get('batch_mode'), mode === 'confirm' ? form.get('real_confirmed') : 'yes'); }
+    catch (e) { if (e instanceof ModeError) return fail(400, e.code, e.msg); throw e; }
     const name = String(file.name || 'archivo');
     const ext = name.toLowerCase().endsWith('.xlsx') ? 'xlsx' : name.toLowerCase().endsWith('.csv') ? 'csv' : null;
     if (!ext) return fail(400, 'extension_no_permitida', 'Solo se aceptan archivos .xlsx o .csv.');
@@ -64,8 +68,9 @@ Deno.serve(async (req: Request) => {
     // 4) Prospectos existentes (solo 4 columnas) para duplicados; con RLS del usuario
     const existing: Existing[] = [];
     for (let from = 0; from < 100000; from += 1000) {
+      // Duplicados SOLO dentro del mismo modo: los prospectos de prueba no bloquean un lote real (ni al reves).
       const r = await sb.from('digital_prospects').select('external_customer_id,phone_e164,full_name,clinic_name')
-        .order('created_at', { ascending: true }).range(from, from + 999);
+        .eq('is_test', batch.isTest).order('created_at', { ascending: true }).range(from, from + 999);
       if (r.error) return fail(500, 'error_base', 'No se pudo consultar la base para detectar duplicados.');
       existing.push(...(r.data as Existing[]));
       if ((r.data ?? []).length < 1000) break;
@@ -75,7 +80,7 @@ Deno.serve(async (req: Request) => {
 
     // 5) CONFIRMAR: se usa el analisis recalculado AQUI (nunca el del frontend). RPC atomica con el JWT del usuario.
     if (mode === 'confirm') {
-      const args = buildConfirmArgs(a, { name, size: bytes.length, sha256: await sha256Hex(bytes) });
+      const args = buildConfirmArgs(a, { name, size: bytes.length, sha256: await sha256Hex(bytes) }, batch);
       const r = await sb.rpc('confirm_prospect_import', args);
       if (r.error) {
         const m = mapRpcError(r.error.code, r.error.message);
@@ -83,12 +88,12 @@ Deno.serve(async (req: Request) => {
         return fail(m.status, m.code, m.message);
       }
       const out = r.data as { import_id: string; total: number; imported: number; duplicates_omitted: number; invalid: number };
-      console.log(JSON.stringify({ evt: 'prospect_confirm', total: out.total, imported: out.imported, duplicates_omitted: out.duplicates_omitted, invalid: out.invalid }));
-      return json(200, { ok: true, import_performed: true, ...out });
+      console.log(JSON.stringify({ evt: 'prospect_confirm', mode: batch.isTest ? 'test' : 'real', total: out.total, imported: out.imported, duplicates_omitted: out.duplicates_omitted, invalid: out.invalid }));
+      return json(200, { ok: true, import_performed: true, batch_mode: batch.isTest ? 'test' : 'real', ...out });
     }
     console.log(JSON.stringify({ evt: 'prospect_preview', ext, bytes: bytes.length, sheets: a.sheets.length, ...a.summary })); // solo contadores
     return json(200, {
-      ok: true, import_performed: false,
+      ok: true, import_performed: false, batch_mode: batch.isTest ? 'test' : 'real',
       file: { name, ext, size: bytes.length },
       limits: { max_bytes: LIMITS.maxBytes, max_rows: LIMITS.maxRows, max_sheets: LIMITS.maxSheets },
       summary: a.summary, sheets: a.sheets,

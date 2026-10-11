@@ -60,8 +60,18 @@ Flujo: preview válido → **Confirmar importación** (se habilita solo si hay f
 - **Migración:** `sql/leads-digital/009_outbound_confirmar_importacion.sql` (rollback `999f_…`; no borra datos importados).
 - **Despliegue:** requiere publicar la versión nueva de la Edge Function (ver estado de despliegue arriba); hasta entonces la UI mostrará error al confirmar.
 
+## Outbound 4 — Importación REAL controlada (migración 010)
+El mismo flujo (archivo → preview → confirmar) con un selector **Modo del lote: PRUEBA / REAL** (solo Lead Admin; **PRUEBA por defecto**, se restablece al abrir/cerrar el panel o descartar). Al elegir REAL: aviso rojo «Este lote se incorporará como prospectos comerciales reales.», el preview se recalcula en ese modo y confirmar exige **doble confirmación**: diálogo + escribir exactamente `IMPORTAR REAL`.
+- **El servidor decide `is_test`:** la Edge Function valida `batch_mode` (`test`|`real`; cualquier otro valor se rechaza, nunca cae a REAL) y REAL exige `real_confirmed='yes'` al confirmar; la RPC `confirm_prospect_import` recibe `p_is_test` + `p_real_confirmed` y rechaza REAL sin confirmación (`CONFIRMACION_REAL_REQUERIDA`). `PRUEBA → is_test=true`, `REAL → is_test=false`, tanto en el lote como en cada prospecto.
+- **Sin cambios para lotes reales:** `whatsapp_consent='unknown'`, `outreach_status='pending'`, sin contacto automático ni WhatsApp outbound, duplicados fuertes omitidos, inválidos no insertados, operación atómica.
+- **Columna nueva:** `digital_prospect_imports.is_test` (modo del lote; backfill desde `metadata.is_test`, lotes previos = PRUEBA). Filtro «Importación»: `[PRUEBA] archivo` / `[REAL] archivo`.
+- **Regla de doble importación (decisión):** unicidad por **(`file_sha256`, `is_test`)**. El mismo archivo no se puede importar dos veces *en el mismo modo*, pero una importación de PRUEBA **no bloquea** la importación REAL del mismo archivo (ni al revés). Alternativa descartada: unicidad solo por hash, que dejaría a un ensayo con el archivo real bloqueando para siempre su importación real.
+- **Regla de duplicados contra la base (decisión):** el Sold-To duplicado se busca **solo dentro del mismo modo** (`is_test` igual), tanto en el preview como dentro de la RPC. Así los prospectos de prueba no convierten en «duplicado» a un prospecto real, y un lote real no queda contaminado por ensayos. Duplicados dentro del propio archivo se tratan igual que antes.
+- **Se elimina la firma anterior de la RPC** (7 args) para que no exista una vía de escritura sin modo explícito. Rollback: `999g_rollback_outbound_importacion_real.sql`.
+- **Despliegue:** la migración 010 y la Edge Function deben publicarse juntas (la función antigua llama a la firma eliminada).
+
 ## Pendiente (fases siguientes)
 Parser Excel/CSV (normalización E.164, duplicados, consentimiento), RPC/Edge Function de importación, plantilla WhatsApp aprobada y envío con control de consentimiento/baja, vínculo prospecto→lead en el webhook (match por teléfono), opt-out.
 
 ## Rollback
-`sql/leads-digital/999f_rollback_outbound_confirmar_importacion.sql` (revierte 009), `999d_rollback_outbound_campos_comerciales.sql` (revierte 007) y `999c_rollback_outbound_prospectos.sql` (solo elimina `digital_prospects`, `digital_prospect_imports`, `touch_digital_prospect()`). Revertir UI: `git revert` del commit o volver a `49192dd`.
+`999g_rollback_outbound_importacion_real.sql` (revierte 010), `999f_rollback_outbound_confirmar_importacion.sql` (revierte 009), `999d_rollback_outbound_campos_comerciales.sql` (revierte 007) y `999c_rollback_outbound_prospectos.sql` (solo elimina `digital_prospects`, `digital_prospect_imports`, `touch_digital_prospect()`). Revertir UI: `git revert` del commit o volver a `49192dd`.

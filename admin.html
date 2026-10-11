@@ -4783,7 +4783,7 @@ var PROSP_CONSENT = { yes: 'Sí', no: 'No', unknown: 'Sin definir' };
 function prospectosLimpiar() {
   leadsSubvista = 'leads'; prospectosDatos = []; prospectosImports = []; prospectosCargado = false; prospectosCargando = false;
   prospectosError = null; prospectosFiltro = { q: '', origen: '', consent: '', estado: '', lote: '', prueba: null };
-  prospectosImp = { abierto: false, analizando: false, error: null, res: null, filtro: '', file: null, confirmando: false, resultado: null };
+  prospectosImp = { abierto: false, analizando: false, error: null, res: null, filtro: '', file: null, confirmando: false, resultado: null, modo: 'test' };
 }
 function prospectosInyectarEstilos() {
   if (document.getElementById('prospectos-estilos')) return;
@@ -4838,17 +4838,19 @@ function prospectoElegibilidad(p) {
 function prospectosBase() {
   return prospectosDatos.filter(function (p) { return prospectosFiltro.prueba === true || !p.is_test; });
 }
+// Modo del lote: columna is_test (la fuente de verdad); metadata.is_test solo como respaldo de lotes antiguos.
+function prospectosImpEsPrueba(i) { return i.is_test === false ? false : (i.is_test === true ? true : !!(i.metadata && i.metadata.is_test)); }
 function prospectosBarraHtml() {
   var base = prospectosBase();
   var orig = {}; base.forEach(function (p) { if (p.source) orig[p.source] = 1; });
   var sel = function (v, a) { return v === a ? ' selected' : ''; };
-  var imps = prospectosImports.filter(function (i) { return prospectosFiltro.prueba === true || !(i.metadata && i.metadata.is_test); });
+  var imps = prospectosImports.filter(function (i) { return prospectosFiltro.prueba === true || !prospectosImpEsPrueba(i); });
   return '<div class="ld-bar">' +
     '<input type="search" id="pr-q" placeholder="Buscar nombre, clínica, comuna, teléfono o correo" value="' + lEsc(prospectosFiltro.q) + '">' +
     '<select id="pr-origen"><option value="">Origen: todos</option>' + Object.keys(orig).sort().map(function (o) { return '<option value="' + lEsc(o) + '"' + sel(o, prospectosFiltro.origen) + '>' + lEsc(o) + '</option>'; }).join('') + '</select>' +
     '<select id="pr-consent"><option value="">Consentimiento: todos</option>' + Object.keys(PROSP_CONSENT).map(function (k) { return '<option value="' + k + '"' + sel(k, prospectosFiltro.consent) + '>' + PROSP_CONSENT[k] + '</option>'; }).join('') + '</select>' +
     '<select id="pr-estado"><option value="">Contacto: todos</option>' + Object.keys(PROSP_ESTADO).map(function (k) { return '<option value="' + k + '"' + sel(k, prospectosFiltro.estado) + '>' + PROSP_ESTADO[k] + '</option>'; }).join('') + '</select>' +
-    '<select id="pr-lote"><option value="">Importación: todas</option>' + imps.map(function (i) { return '<option value="' + lEsc(i.id) + '"' + sel(i.id, prospectosFiltro.lote) + '>' + lEsc((i.source_name || i.filename || 'Importación') + ' · ' + leadsFechaCorta(i.created_at)) + '</option>'; }).join('') + '</select>' +
+    '<select id="pr-lote"><option value="">Importación: todas</option>' + imps.map(function (i) { return '<option value="' + lEsc(i.id) + '"' + sel(i.id, prospectosFiltro.lote) + '>' + lEsc('[' + (prospectosImpEsPrueba(i) ? 'PRUEBA' : 'REAL') + '] ' + (i.source_name || i.filename || 'Importación') + ' · ' + leadsFechaCorta(i.created_at)) + '</option>'; }).join('') + '</select>' +
     '<label class="ld-chk"><input type="checkbox" id="pr-prueba"' + (prospectosFiltro.prueba ? ' checked' : '') + '> Incluir prospectos de prueba</label>' +
     '<button class="ld-btn" id="pr-refrescar">↻ Actualizar</button>' +
     '<button class="ld-btn primary" id="pr-importar">⬆ Importar prospectos</button>' +
@@ -4863,7 +4865,7 @@ function prospectosEnlazarBarra() {
   });
   document.getElementById('pr-prueba').addEventListener('change', function (e) { prospectosFiltro.prueba = e.target.checked; renderLeadsDigital(); });
   document.getElementById('pr-refrescar').addEventListener('click', function () { prospectosCargar(); });
-  document.getElementById('pr-importar').addEventListener('click', function () { prospectosImp.abierto = !prospectosImp.abierto; prospectosImportPintar(); });
+  document.getElementById('pr-importar').addEventListener('click', function () { prospectosImp.abierto = !prospectosImp.abierto; prospectosImp.modo = 'test'; prospectosImportPintar(); });
   prospectosImportPintar();
 }
 async function prospectosCargar() {
@@ -4873,7 +4875,7 @@ async function prospectosCargar() {
   try {
     var res = await Promise.all([
       sb.from('digital_prospects').select('*').order('created_at', { ascending: false }).limit(5000),
-      sb.from('digital_prospect_imports').select('id,filename,source_name,created_at,metadata').order('created_at', { ascending: false }).limit(500)
+      sb.from('digital_prospect_imports').select('id,filename,source_name,created_at,is_test,metadata').order('created_at', { ascending: false }).limit(500)
     ]);
     if (res[0].error) throw res[0].error;
     prospectosDatos = res[0].data || [];
@@ -4952,7 +4954,7 @@ function prospectosPintar() {
 
 
 // ---- Importador (Outbound 2): solo PREVIEW. NO inserta nada; "Confirmar importacion" queda deshabilitado. ----
-var prospectosImp = { abierto: false, analizando: false, error: null, res: null, filtro: '', file: null, confirmando: false, resultado: null };
+var prospectosImp = { abierto: false, analizando: false, error: null, res: null, filtro: '', file: null, confirmando: false, resultado: null, modo: 'test' };
 var PROSP_IMP_MAX_BYTES = 5 * 1024 * 1024;
 var PROSP_IMP_ESTADOS = ['VALIDO', 'INVALIDO', 'DUPLICADO', 'ADVERTENCIA'];
 var PROSP_IMP_ETIQUETA = { VALIDO: 'VÁLIDO', INVALIDO: 'INVÁLIDO', DUPLICADO: 'DUPLICADO', ADVERTENCIA: 'ADVERTENCIA' };
@@ -4966,7 +4968,7 @@ async function prospectosImportAnalizar(file) {
   if (file.size > PROSP_IMP_MAX_BYTES) { prospectosImp.error = 'El archivo supera 5 MB.'; prospectosImportPintar(); return; }
   prospectosImp.analizando = true; prospectosImportPintar();
   try {
-    var fd = new FormData(); fd.append('file', file, file.name);
+    var fd = new FormData(); fd.append('file', file, file.name); fd.append('batch_mode', prospectosImp.modo);
     var r = await sb.functions.invoke('prospect-import-preview', { body: fd });
     if (r.error) {
       var msg = 'No se pudo analizar el archivo.';
@@ -4986,12 +4988,19 @@ async function prospectosImportConfirmar() {
   if (!I.res || !I.file || I.confirmando || I.resultado) return;
   var s = I.res.summary;
   if (!s.listas_para_importar) return;
-  var texto = 'Se importarán ' + s.listas_para_importar + ' prospecto(s) como DATOS DE PRUEBA (consentimiento WhatsApp: sin definir).\n' +
-    'Se omiten ' + s.duplicado_fuerte + ' duplicado(s) y ' + s.invalidas + ' inválido(s). No se enviará ningún mensaje.\n\n¿Confirmar importación?';
+  var real = I.modo === 'real';
+  var texto = real
+    ? 'MODO REAL: se incorporarán ' + s.listas_para_importar + ' prospecto(s) como PROSPECTOS COMERCIALES REALES (consentimiento WhatsApp: sin definir).\nSe omiten ' + s.duplicado_fuerte + ' duplicado(s) y ' + s.invalidas + ' inválido(s). No se enviará ningún mensaje.\n\n¿Continuar con la importación REAL?'
+    : 'Se importarán ' + s.listas_para_importar + ' prospecto(s) como DATOS DE PRUEBA (consentimiento WhatsApp: sin definir).\nSe omiten ' + s.duplicado_fuerte + ' duplicado(s) y ' + s.invalidas + ' inválido(s). No se enviará ningún mensaje.\n\n¿Confirmar importación?';
   if (!window.confirm(texto)) return;
+  if (real) {
+    // Segunda confirmacion explicita: hay que escribir la frase exacta.
+    var frase = window.prompt('SEGUNDA CONFIRMACIÓN (lote REAL). Escribe exactamente IMPORTAR REAL para continuar:');
+    if (frase !== 'IMPORTAR REAL') { I.error = 'Importación REAL cancelada: la segunda confirmación no coincidió. No se importó nada.'; prospectosImportPintar(); return; }
+  }
   I.confirmando = true; I.error = null; prospectosImportPintar();
   try {
-    var fd = new FormData(); fd.append('file', I.file, I.file.name); fd.append('mode', 'confirm');
+    var fd = new FormData(); fd.append('file', I.file, I.file.name); fd.append('mode', 'confirm'); fd.append('batch_mode', I.modo); if (I.modo === 'real') fd.append('real_confirmed', 'yes');
     var r = await sb.functions.invoke('prospect-import-preview', { body: fd });
     if (r.error) {
       var msg = 'No se pudo completar la importación. No se importó nada.';
@@ -5001,7 +5010,7 @@ async function prospectosImportConfirmar() {
     if (!r.data || r.data.ok !== true || r.data.import_performed !== true) throw new Error((r.data && r.data.message) || 'Respuesta inesperada de la importación.');
     I.resultado = r.data;
     // El lote queda identificable: filtro Importación = este lote, incluyendo datos de prueba
-    prospectosFiltro.lote = r.data.import_id; prospectosFiltro.prueba = true;
+    prospectosFiltro.lote = r.data.import_id; prospectosFiltro.prueba = (I.modo !== 'real');
     prospectosCargado = false; prospectosCargando = false;
     prospectosCargar();
   } catch (e) {
@@ -5019,6 +5028,11 @@ function prospectosImportPintar() {
     '<strong style="font-size:14px;">Importar prospectos</strong>' +
     '<button class="ld-btn" id="pi-cerrar">Cerrar</button></div>' +
     '<div style="font-size:12px;color:var(--muted);margin:6px 0 8px;">Sube un Excel (.xlsx, puede tener varias hojas) o CSV. Máx. 5 MB y 5.000 filas. El archivo se analiza en el servidor, <strong>no se guarda</strong>, y no se usa IA.</div>' +
+    '<div id="pi-modo" style="display:flex;gap:16px;align-items:center;flex-wrap:wrap;margin:6px 0;font-size:13px;">' +
+      '<strong>Modo del lote:</strong>' +
+      '<label><input type="radio" name="pi-modo" value="test"' + (I.modo === 'test' ? ' checked' : '') + ((I.analizando || I.confirmando || I.resultado) ? ' disabled' : '') + '> PRUEBA</label>' +
+      '<label><input type="radio" name="pi-modo" value="real"' + (I.modo === 'real' ? ' checked' : '') + ((I.analizando || I.confirmando || I.resultado) ? ' disabled' : '') + '> REAL</label></div>' +
+    (I.modo === 'real' ? '<div style="background:#fee2e2;border:1px solid #fecaca;border-radius:8px;padding:8px 12px;font-size:13px;font-weight:700;color:#991b1b;margin:6px 0;">Este lote se incorporará como prospectos comerciales reales.</div>' : '') +
     '<input type="file" id="pi-archivo" accept=".xlsx,.csv"' + ((I.analizando || I.confirmando) ? ' disabled' : '') + '>' +
     (I.resultado ? '' : '<div class="aviso">' + (res ? 'Este análisis aún NO ha importado datos. Revisa y confirma abajo.' : 'Primero se analiza el archivo; recién al confirmar se importa.') + '</div>');
   if (I.analizando) html += '<div style="padding:10px;color:var(--muted);font-size:13px;">Analizando archivo…</div>';
@@ -5029,7 +5043,7 @@ function prospectosImportPintar() {
       R.imported + ' prospecto' + (R.imported === 1 ? '' : 's') + ' importado' + (R.imported === 1 ? '' : 's') + ' / ' +
       R.duplicates_omitted + ' duplicado' + (R.duplicates_omitted === 1 ? '' : 's') + ' omitido' + (R.duplicates_omitted === 1 ? '' : 's') + ' / ' +
       R.invalid + ' inválido' + (R.invalid === 1 ? '' : 's') + '</div>' +
-      '<div style="font-size:11px;color:var(--muted);">Quedaron como datos de prueba, con consentimiento WhatsApp «sin definir». El lote está seleccionado en el filtro «Importación».</div>';
+      '<div style="font-size:11px;color:var(--muted);">Lote <strong>' + (R.batch_mode === 'real' ? '[REAL]' : '[PRUEBA]') + '</strong>: consentimiento WhatsApp «sin definir», sin contacto automático. El lote está seleccionado en el filtro «Importación».</div>';
   }
   if (I.error) html += '<div style="background:#fee2e2;border:1px solid #fecaca;border-radius:8px;padding:8px 12px;font-size:12px;color:#991b1b;">⚠️ ' + lEsc(I.error) + '</div>';
   if (res) {
@@ -5069,16 +5083,25 @@ function prospectosImportPintar() {
       (filas || '<tr><td colspan="10" style="text-align:center;color:var(--muted);padding:18px;">Sin filas para este filtro.</td></tr>') + '</tbody></table></div>' +
       '<div style="font-size:11px;color:var(--muted);margin-top:6px;">' + (lista.length > LIM ? 'Mostrando las primeras ' + LIM + ' de ' + lista.length + ' filas; usa los filtros. ' : lista.length + ' fila(s). ') + 'Nada se fusiona automáticamente: los duplicados y advertencias son solo informativos.</div>' +
       '<div style="margin-top:12px;display:flex;gap:10px;align-items:center;flex-wrap:wrap;">' +
-      '<button class="ld-btn primary" id="pi-confirmar"' + ((I.resultado || I.confirmando || !I.file || !s.listas_para_importar) ? ' disabled' : '') + '>' + (I.confirmando ? 'Importando…' : 'Confirmar importación') + '</button>' +
+      '<button class="ld-btn primary" id="pi-confirmar"' + ((I.resultado || I.confirmando || !I.file || !s.listas_para_importar) ? ' disabled' : '') + '>' + (I.confirmando ? 'Importando…' : (I.modo === 'real' ? 'Confirmar importación REAL' : 'Confirmar importación')) + '</button>' +
       '<button class="ld-btn" id="pi-descartar"' + (I.confirmando ? ' disabled' : '') + '>' + (I.resultado ? 'Cerrar resultado' : 'Descartar análisis') + '</button>' +
-      '<span style="font-size:11px;color:var(--muted);">' + (I.resultado ? 'Este archivo ya fue importado.' : (s.listas_para_importar ? 'Se importan solo las ' + s.listas_para_importar + ' filas «listas». Duplicados e inválidas se omiten. Sin envíos por WhatsApp.' : 'No hay filas listas para importar.')) + '</span></div>';
+      '<span style="font-size:11px;color:var(--muted);">' + (I.resultado ? 'Este archivo ya fue importado.' : (s.listas_para_importar ? 'Modo ' + (I.modo === 'real' ? 'REAL' : 'PRUEBA') + ': se importan solo las ' + s.listas_para_importar + ' filas «listas». Duplicados e inválidas se omiten. Sin envíos por WhatsApp.' : 'No hay filas listas para importar.')) + '</span></div>';
   }
   html += '</div>';
   root.innerHTML = html;
-  document.getElementById('pi-cerrar').addEventListener('click', function () { prospectosImp.abierto = false; prospectosImportPintar(); });
+  document.getElementById('pi-cerrar').addEventListener('click', function () { prospectosImp.abierto = false; prospectosImp.modo = 'test'; prospectosImportPintar(); });
   document.getElementById('pi-archivo').addEventListener('change', function (e) { var f = e.target.files && e.target.files[0]; if (f) prospectosImportAnalizar(f); });
   var d = document.getElementById('pi-descartar');
-  if (d) d.addEventListener('click', function () { if (prospectosImp.confirmando) return; prospectosImp.res = null; prospectosImp.error = null; prospectosImp.filtro = ''; prospectosImp.file = null; prospectosImp.resultado = null; prospectosImportPintar(); });
+  if (d) d.addEventListener('click', function () { if (prospectosImp.confirmando) return; prospectosImp.res = null; prospectosImp.error = null; prospectosImp.filtro = ''; prospectosImp.file = null; prospectosImp.resultado = null; prospectosImp.modo = 'test'; prospectosImportPintar(); });
+  root.querySelectorAll('input[name=pi-modo]').forEach(function (rd) {
+    rd.addEventListener('change', function () {
+      if (!rd.checked || prospectosImp.analizando || prospectosImp.confirmando) return;
+      prospectosImp.modo = rd.value; prospectosImp.resultado = null; prospectosImp.error = null; prospectosImp.filtro = '';
+      // Cambiar de modo cambia contra que se comparan los duplicados: se vuelve a analizar el mismo archivo.
+      var f = prospectosImp.file; prospectosImp.res = null;
+      if (f) prospectosImportAnalizar(f); else prospectosImportPintar();
+    });
+  });
   var cf = document.getElementById('pi-confirmar');
   if (cf) cf.addEventListener('click', function () { prospectosImportConfirmar(); });
   root.querySelectorAll('[data-pif]').forEach(function (b) {
