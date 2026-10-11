@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow, noarchive">
+<meta name="referrer" content="no-referrer">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src https://gzimllusbxjorbsbtsse.supabase.co; img-src 'self' data:; base-uri 'none'; form-action 'none'">
+<title>Consentimiento WhatsApp · Straumann Group Chile</title>
+<style>
+  :root{--bg:#f4f5f7;--card:#fff;--ink:#18181b;--muted:#52525b;--line:#e4e4e7;--brand:#0b6e99;--brand-d:#085273;--ok:#166534;--okbg:#dcfce7;--warn:#92400e;--warnbg:#fef3c7}
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,Arial,sans-serif}
+  main{max-width:560px;margin:0 auto;padding:20px 16px 40px}
+  header{padding:8px 0 16px;font-weight:700;letter-spacing:.2px;color:var(--brand-d)}
+  .card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:22px 20px}
+  h1{font-size:20px;line-height:1.3;margin:0 0 10px}
+  p{margin:0 0 12px}
+  .texto{background:#f8fafc;border:1px solid var(--line);border-left:4px solid var(--brand);border-radius:8px;padding:14px 14px;margin:14px 0;font-size:16px}
+  label.chk{display:flex;gap:12px;align-items:flex-start;margin:16px 0;padding:12px;border:1px solid var(--line);border-radius:10px;cursor:pointer}
+  label.chk input{width:22px;height:22px;margin-top:2px;flex:0 0 auto}
+  .acciones{display:flex;flex-direction:column;gap:10px;margin-top:14px}
+  button{font:inherit;font-weight:700;border-radius:10px;padding:14px 16px;border:2px solid var(--brand);cursor:pointer;min-height:48px}
+  button.primario{background:var(--brand);color:#fff}
+  button.primario:disabled{background:#a1a1aa;border-color:#a1a1aa;cursor:not-allowed}
+  button.secundario{background:#fff;color:var(--brand-d)}
+  button:focus-visible,input:focus-visible{outline:3px solid #f59e0b;outline-offset:2px}
+  .nota{font-size:13px;color:var(--muted)}
+  .msg{border-radius:10px;padding:12px 14px;font-weight:600;margin-top:12px}
+  .msg.ok{background:var(--okbg);color:var(--ok)}
+  .msg.neutro{background:var(--warnbg);color:var(--warn)}
+  [hidden]{display:none!important}
+  @media (min-width:520px){.acciones{flex-direction:row}.acciones button{flex:1}}
+</style>
+</head>
+<body>
+<main>
+  <header>Straumann Group Chile</header>
+  <div class="card" id="cargando" role="status"><p>Verificando enlace…</p></div>
+
+  <div class="card" id="no-disponible" hidden>
+    <h1>Enlace no disponible</h1>
+    <p>Este enlace no está disponible o ya fue utilizado. No se realizó ningún cambio.</p>
+    <p class="nota">Si necesitas ayuda, contacta a tu ejecutivo de Straumann Group Chile.</p>
+  </div>
+
+  <div class="card" id="formulario" hidden>
+    <h1>Autorización para mensajes por WhatsApp</h1>
+    <p>Puedes elegir si quieres o no recibir mensajes de WhatsApp de Straumann Group Chile. Tu decisión es voluntaria.</p>
+    <div class="texto" id="texto-consentimiento">Autorizo a Straumann Group Chile a enviarme mensajes por WhatsApp relacionados con soluciones digitales Straumann, incluyendo SIRIOS/SIRIOS X3, oportunidades Trade Up y coordinación de demostraciones. Puedo retirar esta autorización en cualquier momento.</div>
+    <label class="chk" for="acepto"><input type="checkbox" id="acepto"><span>He leído el texto anterior y autorizo de forma expresa recibir mensajes por WhatsApp.</span></label>
+    <div class="acciones">
+      <button type="button" class="primario" id="btn-autorizar" disabled>Autorizar WhatsApp</button>
+      <button type="button" class="secundario" id="btn-rechazar">No deseo recibir mensajes por WhatsApp</button>
+    </div>
+    <div class="msg neutro" id="error" role="alert" hidden></div>
+    <p class="nota" style="margin-top:14px">Este enlace es personal y de un solo uso. No necesitas ingresar ningún dato.</p>
+  </div>
+
+  <div class="card" id="gracias-si" hidden>
+    <h1>Gracias</h1>
+    <div class="msg ok">Registramos tu autorización para recibir mensajes por WhatsApp.</div>
+    <p class="nota" style="margin-top:12px">Puedes retirar esta autorización en cualquier momento. Ya puedes cerrar esta página.</p>
+  </div>
+
+  <div class="card" id="gracias-no" hidden>
+    <h1>Gracias</h1>
+    <div class="msg ok">Registramos que no deseas recibir mensajes por WhatsApp. No te enviaremos mensajes por este medio.</div>
+    <p class="nota" style="margin-top:12px">Ya puedes cerrar esta página.</p>
+  </div>
+</main>
+
+<script>
+(function () {
+  'use strict';
+  var SUPABASE_URL = 'https://gzimllusbxjorbsbtsse.supabase.co';
+  var ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imd6aW1sbHVzYnhqb3Jic2J0c3NlIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE5NDQ4NDcsImV4cCI6MjA5NzUyMDg0N30.DFq-_PY10hyr2QmMUXk-v8VW2LKYz3bAW37VCutwmzY'; // clave publica (anon): no da acceso a tablas; solo a 2 RPC que exigen un token valido
+  var token = '';
+  try { token = (new URLSearchParams(window.location.search).get('t') || '').trim(); } catch (e) {}
+  var $ = function (id) { return document.getElementById(id); };
+  function show(id) { ['cargando', 'no-disponible', 'formulario', 'gracias-si', 'gracias-no'].forEach(function (x) { $(x).hidden = (x !== id); }); }
+  function rpc(name, body) {
+    return fetch(SUPABASE_URL + '/rest/v1/rpc/' + name, {
+      method: 'POST', cache: 'no-store', referrerPolicy: 'no-referrer',
+      headers: { 'Content-Type': 'application/json', 'apikey': ANON_KEY, 'Authorization': 'Bearer ' + ANON_KEY },
+      body: JSON.stringify(body)
+    }).then(function (r) { if (!r.ok) throw new Error('http'); return r.json(); });
+  }
+  if (!/^[A-Za-z0-9_-]{43}$/.test(token)) { show('no-disponible'); return; }
+  rpc('get_consent_invitation', { p_token: token }).then(function (d) {
+    show(d && d.valid === true ? 'formulario' : 'no-disponible');
+  }).catch(function () { show('no-disponible'); });
+
+  var chk = $('acepto'), bA = $('btn-autorizar'), bR = $('btn-rechazar'), err = $('error'), enviando = false;
+  chk.checked = false; // nunca premarcado
+  chk.addEventListener('change', function () { bA.disabled = !chk.checked || enviando; });
+  function enviar(decision) {
+    if (enviando) return;
+    if (decision === 'granted' && !chk.checked) return;
+    enviando = true; bA.disabled = true; bR.disabled = true; err.hidden = true;
+    rpc('submit_consent_invitation', { p_token: token, p_decision: decision, p_checkbox: decision === 'granted' ? chk.checked : false }).then(function (d) {
+      if (d && d.ok === true) { show(decision === 'granted' ? 'gracias-si' : 'gracias-no'); }
+      else { show('no-disponible'); }
+    }).catch(function () {
+      enviando = false; bR.disabled = false; bA.disabled = !chk.checked;
+      err.textContent = 'No pudimos registrar tu respuesta. Revisa tu conexión e inténtalo nuevamente.'; err.hidden = false;
+    });
+  }
+  bA.addEventListener('click', function () { enviar('granted'); });
+  bR.addEventListener('click', function () { enviar('denied'); });
+})();
+</script>
+</body>
+</html>

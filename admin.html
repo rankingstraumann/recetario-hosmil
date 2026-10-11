@@ -4773,6 +4773,7 @@ window.addEventListener('online', leadsRtVerificar);
 var leadsSubvista = 'leads'; // 'leads' | 'prospectos'
 var prospectosDatos = [];
 var prospectosImports = [];
+var prospectosInvit = [];   // invitaciones de consentimiento (estado/fechas; sin token)
 var prospectosCargado = false;
 var prospectosCargando = false;
 var prospectosError = null;
@@ -4783,7 +4784,7 @@ var PROSP_CONSENT = { yes: 'Autorizado', no: 'No autorizado', unknown: 'Sin defi
 var PROSP_CONS_FUENTE = { formulario_web: 'Formulario web', correo_electronico: 'Correo electrónico', whatsapp_optin: 'Opt-in por WhatsApp', telefono_registrado: 'Llamada telefónica registrada', presencial: 'Presencial / firmado', evento: 'Evento o capacitación', otro: 'Otro (detallar en la nota)' };
 
 function prospectosLimpiar() {
-  leadsSubvista = 'leads'; prospectosDatos = []; prospectosImports = []; prospectosCargado = false; prospectosCargando = false;
+  leadsSubvista = 'leads'; prospectosDatos = []; prospectosImports = []; prospectosInvit = []; prospectosCargado = false; prospectosCargando = false;
   prospectosError = null; prospectosFiltro = { q: '', origen: '', consent: '', estado: '', lote: '', prueba: null };
   prospectosImp = { abierto: false, analizando: false, error: null, res: null, filtro: '', file: null, confirmando: false, resultado: null, modo: 'test' };
   prospectosEnr = prospectosEnrNuevo();
@@ -4883,11 +4884,13 @@ async function prospectosCargar() {
   try {
     var res = await Promise.all([
       sb.from('digital_prospects').select('*').order('created_at', { ascending: false }).limit(5000),
-      sb.from('digital_prospect_imports').select('id,filename,source_name,created_at,is_test,metadata').order('created_at', { ascending: false }).limit(500)
+      sb.from('digital_prospect_imports').select('id,filename,source_name,created_at,is_test,metadata').order('created_at', { ascending: false }).limit(500),
+      sb.from('digital_prospect_consent_invitations').select('id,prospect_id,status,created_at,expires_at,used_at,decision').order('created_at', { ascending: false }).limit(5000)
     ]);
     if (res[0].error) throw res[0].error;
     prospectosDatos = res[0].data || [];
     prospectosImports = res[1].error ? [] : (res[1].data || []);
+    prospectosInvit = res[2] && !res[2].error ? (res[2].data || []) : [];
     prospectosCargado = true;
     if (prospectosFiltro.prueba === null) {
       prospectosFiltro.prueba = !prospectosDatos.some(function (p) { return !p.is_test; });
@@ -5254,22 +5257,34 @@ function prospectosEnrPintar() {
 
 // ---- Consentimiento WhatsApp (Outbound 6): registro INDIVIDUAL, con evidencia y auditoria. Solo Lead Admin (la RPC lo exige). ----
 // No hay accion masiva. No cambia outreach_status. No envia WhatsApp. Sin service_role: sb.rpc con la sesion del usuario.
-function prospectosConsNuevo() { return { id: null, estado: 'granted', fuente: '', fecha: '', nota: '', enviando: false, error: null, ok: null, historial: [], cargandoHist: false }; }
+function prospectosConsNuevo() { return { id: null, estado: 'granted', fuente: '', fecha: '', nota: '', enviando: false, error: null, ok: null, historial: [], cargandoHist: false, link: null, generando: false, errorInv: null, copiado: false }; }
 var prospectosCons = prospectosConsNuevo();
 var PROSP_CONS_ESTADO = { granted: 'Autorizado', denied: 'No autorizado', unknown: 'Sin definir' };
 var PROSP_CONS_ERR = {
   FUENTE_REQUERIDA: 'Indica la fuente del consentimiento.', FUENTE_INVALIDA: 'Fuente no válida.', FECHA_REQUERIDA: 'Indica la fecha del consentimiento.',
   FECHA_INVALIDA: 'La fecha no es válida (no puede ser futura ni anterior a 2015).', NOTA_REQUERIDA: 'La nota o referencia es obligatoria (mínimo 5 caracteres).',
-  SIN_CAMBIO: 'El prospecto ya tiene ese estado de consentimiento.', PROSPECTO_DADO_DE_BAJA: 'El prospecto se dio de baja (opted_out): no se puede autorizar.',
+  SIN_CAMBIO: 'El prospecto ya tiene ese estado de consentimiento.', CONSENTIMIENTO_YA_DEFINIDO: 'El consentimiento ya está definido: solo se puede invitar a prospectos «Sin definir».', INVITACION_NO_PENDIENTE: 'La invitación ya no está pendiente.', PROSPECTO_DADO_DE_BAJA: 'El prospecto se dio de baja (opted_out): no se puede autorizar.',
   PROSPECTO_NO_ENCONTRADO: 'Prospecto no encontrado.', NO_AUTORIZADO: 'No tienes permiso para modificar consentimientos.', PARAMETROS_INVALIDOS: 'Datos no válidos.'
 };
 function prospectoConsEstadoDe(p) { return p.whatsapp_consent === 'yes' ? 'granted' : (p.whatsapp_consent === 'no' ? 'denied' : 'unknown'); }
+var PROSP_INV_ESTADO = { pendiente: 'pendiente', aceptada: 'aceptada', rechazada: 'rechazada', vencida: 'vencida', revocada: 'revocada' };
+function prospectoInvEstado(i) {
+  if (i.status === 'accepted') return 'aceptada';
+  if (i.status === 'rejected') return 'rechazada';
+  if (i.status === 'revoked') return 'revocada';
+  return (new Date(i.expires_at).getTime() <= Date.now()) ? 'vencida' : 'pendiente';
+}
+function prospectoInvDe(pid) { return prospectosInvit.filter(function (i) { return i.prospect_id === pid; }); }
+function prospectoInvResumen(p) {
+  var l = prospectoInvDe(p.id); if (!l.length) return '';
+  return '<div style="font-size:11px;color:var(--muted);">Link de consentimiento: ' + PROSP_INV_ESTADO[prospectoInvEstado(l[0])] + '</div>';
+}
 function prospectoConsDetalle(p) {
-  if (p.whatsapp_consent === 'unknown' && !p.consent_source && !p.consent_at) return '';
+  if (p.whatsapp_consent === 'unknown' && !p.consent_source && !p.consent_at) return prospectoInvResumen(p);
   var t = [];
   if (p.consent_source) t.push('Fuente: ' + (PROSP_CONS_FUENTE[p.consent_source] || p.consent_source));
   if (p.consent_at) t.push('Fecha: ' + String(p.consent_at).slice(0, 10).split('-').reverse().join('-'));
-  return t.length ? '<div style="font-size:11px;color:var(--muted);">' + lEsc(t.join(' · ')) + '</div>' : '';
+  return (t.length ? '<div style="font-size:11px;color:var(--muted);">' + lEsc(t.join(' · ')) + '</div>' : '') + prospectoInvResumen(p);
 }
 function prospectosConsHoy() { var d = new Date(); return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); }
 async function prospectosConsAbrir(id) {
@@ -5283,6 +5298,7 @@ async function prospectosConsAbrir(id) {
 async function prospectosConsHistorial() {
   var C = prospectosCons, id = C.id; if (!id) return;
   C.cargandoHist = true; prospectosConsPintar();
+  await prospectosInvRecargar();
   try {
     var r = await sb.from('digital_prospect_consent_log').select('previous_state,new_state,source,consent_date,note,changed_by_email,changed_at').eq('prospect_id', id).order('changed_at', { ascending: false });
     if (prospectosCons.id === id) prospectosCons.historial = r.error ? [] : (r.data || []);
@@ -5317,6 +5333,51 @@ async function prospectosConsGuardar() {
   } catch (e) { C.error = (e && e.message) ? e.message : 'No se pudo registrar el consentimiento. No se cambió nada.'; }
   C.enviando = false; prospectosConsPintar();
 }
+
+// ---- Invitacion de consentimiento por link individual (Outbound 6B). El token existe SOLO en la respuesta de create_consent_invitation (memoria); la base guarda su hash. ----
+async function prospectosInvRecargar() {
+  var id = prospectosCons.id; if (!id) return;
+  try {
+    var r = await sb.from('digital_prospect_consent_invitations').select('id,prospect_id,status,created_at,expires_at,used_at,decision').eq('prospect_id', id).order('created_at', { ascending: false });
+    if (!r.error) { prospectosInvit = prospectosInvit.filter(function (i) { return i.prospect_id !== id; }).concat(r.data || []); }
+  } catch (e) {}
+}
+function prospectosInvError(e) {
+  var m = String((e && e.message) || ''), k = Object.keys(PROSP_CONS_ERR).filter(function (c) { return m.indexOf(c) >= 0; })[0];
+  return k ? PROSP_CONS_ERR[k] : 'No se pudo completar la operación. No se cambió nada.';
+}
+async function prospectosInvGenerar() {
+  var C = prospectosCons; if (!C.id || C.generando) return;
+  var p = prospectosDatos.filter(function (x) { return x.id === C.id; })[0]; if (!p) return;
+  var hay = prospectoInvDe(p.id).some(function (i) { return prospectoInvEstado(i) === 'pendiente'; });
+  var txt = 'Generar un link personal de consentimiento WhatsApp para:\n' + (p.full_name || p.clinic_name || p.external_customer_id || 'este prospecto') + '\n\nEl link es de un solo uso y vence en 14 días' + (hay ? '. El link vigente anterior quedará revocado' : '') + '.\nSe mostrará UNA sola vez (no queda guardado). No se envía automáticamente por ningún canal ni se enviará ningún WhatsApp.\n\n¿Generar link?';
+  if (!window.confirm(txt)) return;
+  C.generando = true; C.errorInv = null; C.link = null; C.copiado = false; prospectosConsPintar();
+  try {
+    var r = await sb.rpc('create_consent_invitation', { p_prospect_id: C.id, p_ttl_days: 14 });
+    if (r.error) throw r.error;
+    C.link = { url: window.location.origin + '/consentimiento-whatsapp.html?t=' + encodeURIComponent(r.data.token), vence: r.data.expires_at };
+    await prospectosInvRecargar();
+  } catch (e) { C.errorInv = prospectosInvError(e); }
+  C.generando = false; prospectosConsPintar();
+}
+async function prospectosInvRevocar(invId) {
+  var C = prospectosCons; if (!C.id || C.generando) return;
+  if (!window.confirm('¿Revocar este link de consentimiento? Dejará de funcionar.')) return;
+  C.generando = true; C.errorInv = null; prospectosConsPintar();
+  try {
+    var r = await sb.rpc('revoke_consent_invitation', { p_invitation_id: invId });
+    if (r.error) throw r.error;
+    C.link = null; await prospectosInvRecargar();
+  } catch (e) { C.errorInv = prospectosInvError(e); }
+  C.generando = false; prospectosConsPintar();
+}
+async function prospectosInvCopiar() {
+  var C = prospectosCons; if (!C.link) return;
+  try { await navigator.clipboard.writeText(C.link.url); C.copiado = true; }
+  catch (e) { var inp = document.getElementById('pc-link'); if (inp) { inp.focus(); inp.select(); try { C.copiado = document.execCommand('copy'); } catch (x) { C.copiado = false; } } }
+  prospectosConsPintar();
+}
 function prospectosConsPintar() {
   var root = document.getElementById('prospectos-consent-root'); if (!root) return;
   var C = prospectosCons;
@@ -5343,6 +5404,24 @@ function prospectosConsPintar() {
   if (C.error) html += '<div style="background:#fee2e2;border:1px solid #fecaca;border-radius:8px;padding:8px 12px;font-size:12px;color:#991b1b;margin-top:8px;">⚠️ ' + lEsc(C.error) + '</div>';
   if (C.ok) html += '<div style="background:#dcfce7;border:1px solid #bbf7d0;border-radius:8px;padding:8px 12px;font-size:13px;font-weight:700;color:#166534;margin-top:8px;">✅ ' + lEsc(C.ok) + '</div>';
   html += '<div style="margin-top:10px;"><button class="ld-btn primary" id="pc-guardar"' + dis + '>' + (C.enviando ? 'Guardando…' : 'Guardar consentimiento') + '</button></div>';
+  // Invitacion por link (solo si el prospecto esta Sin definir)
+  var invs = prospectoInvDe(p.id), fmtF = function (t) { return t ? leadsFechaCorta(t) : '—'; };
+  html += '<div style="margin-top:14px;border-top:1px solid var(--border);padding-top:10px;"><div style="font-size:12px;font-weight:700;">Link de consentimiento (que el propio cliente autorice o rechace)</div>';
+  if (actual === 'unknown') {
+    html += '<div style="margin:6px 0;"><button class="ld-btn" id="pc-gen-link"' + ((C.generando || C.enviando) ? ' disabled' : '') + '>' + (C.generando ? 'Generando…' : 'Generar link de consentimiento') + '</button></div>';
+  } else {
+    html += '<div style="font-size:12px;color:var(--muted);margin:6px 0;">Solo se puede invitar a prospectos «Sin definir».</div>';
+  }
+  if (C.errorInv) html += '<div style="background:#fee2e2;border:1px solid #fecaca;border-radius:8px;padding:8px 12px;font-size:12px;color:#991b1b;margin:6px 0;">⚠️ ' + lEsc(C.errorInv) + '</div>';
+  if (C.link) {
+    html += '<div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;padding:10px 12px;margin:6px 0;"><div style="font-size:12px;font-weight:700;margin-bottom:4px;">Link generado — se muestra una sola vez. Cópialo ahora y envíalo tú por el canal que corresponda (no se envía automáticamente).</div>' +
+      '<div style="display:flex;gap:8px;flex-wrap:wrap;"><input type="text" id="pc-link" readonly value="' + lEsc(C.link.url) + '" style="flex:1;min-width:220px;"><button class="ld-btn primary" id="pc-copiar">' + (C.copiado ? '✓ Copiado' : 'Copiar link') + '</button></div>' +
+      '<div style="font-size:11px;color:var(--muted);margin-top:4px;">Vence: ' + lEsc(fmtF(C.link.vence)) + ' · de un solo uso.</div></div>';
+  }
+  html += invs.length ? '<div class="ld-wrap"><table class="dash-table"><thead><tr><th>Estado</th><th>Creada</th><th>Vence</th><th>Respondida</th><th></th></tr></thead><tbody>' +
+    invs.map(function (i) { var e = prospectoInvEstado(i); return '<tr><td><span class="pr-badge ' + (e === 'aceptada' ? 'ok' : (e === 'rechazada' ? 'no' : (e === 'pendiente' ? 'unk' : 'dup'))) + '">' + PROSP_INV_ESTADO[e] + '</span></td><td>' + lEsc(fmtF(i.created_at)) + '</td><td>' + lEsc(fmtF(i.expires_at)) + '</td><td>' + lEsc(fmtF(i.used_at)) + '</td><td>' + (e === 'pendiente' ? '<button class="ld-btn" data-pcrev="' + lEsc(i.id) + '"' + (C.generando ? ' disabled' : '') + '>Revocar</button>' : '') + '</td></tr>'; }).join('') + '</tbody></table></div>'
+    : '<div style="font-size:12px;color:var(--muted);">Sin invitaciones.</div>';
+  html += '</div>';
   html += '<div style="margin-top:12px;font-size:12px;font-weight:700;">Historial</div>' + (C.cargandoHist ? '<div style="font-size:12px;color:var(--muted);">Cargando…</div>' :
     (C.historial.length ? '<div class="ld-wrap"><table class="dash-table"><thead><tr><th>Fecha del cambio</th><th>Cambio</th><th>Fuente</th><th>Fecha consent.</th><th>Nota</th><th>Por</th></tr></thead><tbody>' +
       C.historial.map(function (h) { return '<tr><td>' + lEsc(leadsFechaCorta(h.changed_at)) + '</td><td>' + lEsc((PROSP_CONS_ESTADO[h.previous_state] || h.previous_state) + ' → ' + (PROSP_CONS_ESTADO[h.new_state] || h.new_state)) + '</td><td>' + lEsc(PROSP_CONS_FUENTE[h.source] || h.source || '—') + '</td><td>' + lEsc(h.consent_date || '—') + '</td><td>' + lEsc(h.note || '—') + '</td><td>' + lEsc(h.changed_by_email || '—') + '</td></tr>'; }).join('') + '</tbody></table></div>'
@@ -5355,6 +5434,9 @@ function prospectosConsPintar() {
   var d = document.getElementById('pc-fecha'); if (d) d.addEventListener('change', function () { prospectosCons.fecha = d.value; });
   var n = document.getElementById('pc-nota'); if (n) n.addEventListener('input', function () { prospectosCons.nota = n.value; });
   document.getElementById('pc-guardar').addEventListener('click', function () { prospectosConsGuardar(); });
+  var gl = document.getElementById('pc-gen-link'); if (gl) gl.addEventListener('click', function () { prospectosInvGenerar(); });
+  var cp = document.getElementById('pc-copiar'); if (cp) cp.addEventListener('click', function () { prospectosInvCopiar(); });
+  root.querySelectorAll('[data-pcrev]').forEach(function (b) { b.addEventListener('click', function () { prospectosInvRevocar(b.getAttribute('data-pcrev')); }); });
 }
 
 // ---- Datos ----
