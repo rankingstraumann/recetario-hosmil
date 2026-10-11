@@ -2,7 +2,7 @@
 // la seguridad es X-Hub-Signature-256 (HMAC con App Secret) + verify token en el GET.
 import {
   ACK, GREETING, OFFFLOW, RESUME, UNSUPPORTED, applyTurn, commercialQuestion, finalMessage, fromInteractiveId, keywordExtract,
-  leadReady, plainFallback, questionFor, strongIntent, type Ctx, type Fields, type Out, type Step,
+  leadReady, plainFallback, questionFor, strongIntent, trivialMessage, type Ctx, type Fields, type Out, type Step,
 } from './engine.ts';
 import { extractWithLlm } from './extract.ts';
 import { buildSummary } from './summary.ts';
@@ -187,7 +187,9 @@ async function handleMessage(db: Db, wa: WaCfg, sim: Sim, m: any): Promise<strin
   const pending: Step = ctx.pending ?? 'q1';
   let parsed: Fields = {};
   const fromId = inb.interactiveId ? fromInteractiveId(inb.interactiveId) : {};
+  const trivial = inb.type === 'text' && trivialMessage(text);
   if (Object.keys(fromId).length) parsed = fromId;
+  else if (trivial) parsed = {}; // saludo sin contenido: no se interpreta
   else {
     const det = keywordExtract(text, pending, ctx.fields);
     let llm: Fields | null = null;
@@ -204,7 +206,7 @@ async function handleMessage(db: Db, wa: WaCfg, sim: Sim, m: any): Promise<strin
 
   const res = applyTurn(ctx, parsed);
   ctx = res.ctx;
-  const offflow = (!wasFirst && !res.changed) || (inb.type === 'text' && commercialQuestion(text));
+  const offflow = (!wasFirst && !res.changed && !trivial) || (inb.type === 'text' && commercialQuestion(text));
   let after: Step = res.after;
   const nowIso = new Date(nowMs).toISOString();
   const isTest = env('WHATSAPP_LEADS_IS_TEST') !== 'false';

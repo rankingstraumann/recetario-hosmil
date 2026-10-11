@@ -223,6 +223,13 @@ export function strongIntent(text: string): string | undefined {
   return undefined;
 }
 
+/** Saludos/cortesías sin contenido: no se interpretan (evita que la IA "adivine" una respuesta). */
+export function trivialMessage(text: string): boolean {
+  const n = norm(text);
+  return n.length > 0 && n.length <= 40 &&
+    /^((hola|holi|holis|buenas|buen dia|buenos dias|buenas tardes|buenas noches|hey|ok|okey|gracias|saludos|alo|que tal|como estas|doctor|doctora|dr|dra|equipo|straumann)\s*)+$/.test(n);
+}
+
 /** Consultas de precio/descuento/condiciones: el bot no responde; deriva a un especialista y sigue el flujo. */
 export function commercialQuestion(text: string): boolean {
   return /precio|cuesta|cuanto (sale|vale|cuesta)|valor|descuento|financ|cuotas|oferta|promo|stock|garantia/.test(norm(text));

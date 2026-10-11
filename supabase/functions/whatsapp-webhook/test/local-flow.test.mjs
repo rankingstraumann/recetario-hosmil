@@ -101,6 +101,12 @@ await send(I, null, { text: 'hola', headers: {'x-sim-now': new Date(Date.now()+7
 const sI = T.sessions.filter(s=>s.phone_e164===I);
 ok('Caso B >=72h: expira, nueva sesión, mismo lead, precarga', sI.length===2 && sI[0].status==='expired' && sI[1].lead_id===leadI && sI[1].context.fields.need==='know_sirios' && sI[1].context.pending==='q3', JSON.stringify(sI[1].context.pending));
 ok('Caso B: solo pregunta lo faltante (P3)', /plazo/.test(lastOut(I).slice(-1)[0]));
+// Saludo a mitad de flujo no avanza ni dispara fuera-de-flujo
+const K = '+56900001011';
+await send(K, null, { text: 'hola' }); await send(K, null, { type: 'interactive', ...btn('q1:no') }); await send(K, null, { type: 'interactive', ...reply('q2:renew') });
+const pk = T.sessions.find(s=>s.phone_e164===K).context.pending;
+await send(K, null, { text: 'Hola buenas tardes' });
+ok('saludo mid-flow: no avanza, no OFFFLOW', T.sessions.find(s=>s.phone_e164===K).context.pending === pk && !lastOut(K).some(x=>/Con gusto un especialista/.test(x)) && /plazo/.test(lastOut(K).slice(-1)[0]));
 // Fallo al enviar respuesta
 const J = '+56900001010';
 await send(J, null, { text: 'hola' }); await send(J, null, { type: 'interactive', ...btn('q1:no') });
