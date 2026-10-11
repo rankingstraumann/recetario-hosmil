@@ -576,7 +576,7 @@ function renderVistaActiva() {
   } else if (vistaActiva === 'leads') {
     // COMPLEMENTO Leads Digital: no sacar al usuario de su vista por un refresh de cotizaciones,
     // y no reconstruir los controles (se perderia el foco del buscador) si la vista ya esta pintada.
-    if (document.getElementById('leads-resultados')) { leadsPintar(); } else { renderLeadsDigital(); }
+    if (document.getElementById('leads-resultados')) { leadsPintar(); } else if (document.getElementById('prospectos-resultados')) { prospectosPintar(); } else { renderLeadsDigital(); }
   } else {
     renderDashboard();
   }
@@ -4700,6 +4700,7 @@ function leadsLimpiar() {
   leadsAcceso = false; leadsDatos = []; leadsAsignados = []; leadsCargado = false; leadsCargando = false;
   leadsError = null; leadsAviso = null; leadsModoCarga = null; leadsStale = false; leadsDetalleId = null; leadsActividades = [];
   leadsFiltro = { q: '', temp: '', estado: '', asig: '', prueba: null };
+  prospectosLimpiar();
   leadsDesuscribir();
 }
 
@@ -4764,6 +4765,179 @@ function leadsRtVerificar() {
 document.addEventListener('visibilitychange', function () { if (document.visibilityState === 'visible') leadsRtVerificar(); });
 window.addEventListener('online', leadsRtVerificar);
 
+
+// =====================================================================
+// PROSPECTOS (Outbound 1 - fundacion). Solo lectura. NO envia nada por WhatsApp.
+// Los prospectos NO cuentan en ningun contador de Leads: viven en digital_prospects hasta ser convertidos.
+// =====================================================================
+var leadsSubvista = 'leads'; // 'leads' | 'prospectos'
+var prospectosDatos = [];
+var prospectosImports = [];
+var prospectosCargado = false;
+var prospectosCargando = false;
+var prospectosError = null;
+var prospectosFiltro = { q: '', origen: '', consent: '', estado: '', lote: '', prueba: null };
+var PROSP_ESTADO = { pending: 'Pendiente', eligible: 'Elegible', contacted: 'Contactado', replied: 'Respondió', opted_out: 'No contactar (baja)', failed: 'Falló', converted: 'Convertido' };
+var PROSP_CONSENT = { yes: 'Sí', no: 'No', unknown: 'Sin definir' };
+
+function prospectosLimpiar() {
+  leadsSubvista = 'leads'; prospectosDatos = []; prospectosImports = []; prospectosCargado = false; prospectosCargando = false;
+  prospectosError = null; prospectosFiltro = { q: '', origen: '', consent: '', estado: '', lote: '', prueba: null };
+}
+function prospectosInyectarEstilos() {
+  if (document.getElementById('prospectos-estilos')) return;
+  var st = document.createElement('style');
+  st.id = 'prospectos-estilos';
+  st.textContent =
+    '.ld-subtabs{display:flex;gap:6px;margin:0 0 14px}' +
+    '.ld-subtab{border:1px solid var(--border);background:#fff;border-radius:8px;padding:7px 16px;font-size:13px;font-weight:700;cursor:pointer;color:var(--muted)}' +
+    '.ld-subtab.activa{background:var(--red);border-color:var(--red);color:#fff}' +
+    '.pr-badge{display:inline-block;font-size:11px;font-weight:800;border-radius:6px;padding:2px 8px}' +
+    '.pr-badge.ok{background:#dcfce7;color:#166534}.pr-badge.no{background:#fee2e2;color:#991b1b}.pr-badge.unk{background:#fef3c7;color:#92400e}.pr-badge.neu{background:#f4f4f5;color:#52525b}' +
+    '.pr-elig{font-size:11px;margin-top:3px}.pr-elig.ok{color:#166534}.pr-elig.no{color:#991b1b}.pr-elig.unk{color:#92400e}' +
+    '.pr-nota{background:#f0f9ff;border:1px solid #bae6fd;border-radius:10px;padding:8px 12px;margin-bottom:12px;font-size:12px;color:#075985}';
+  document.head.appendChild(st);
+}
+function prospectosSubtabsHtml() {
+  prospectosInyectarEstilos();
+  return '<div class="ld-subtabs">' +
+    '<button class="ld-subtab' + (leadsSubvista === 'leads' ? ' activa' : '') + '" data-subvista="leads">Leads</button>' +
+    '<button class="ld-subtab' + (leadsSubvista === 'prospectos' ? ' activa' : '') + '" data-subvista="prospectos">Prospectos</button>' +
+    '</div>';
+}
+function prospectosEnlazarSubtabs() {
+  document.querySelectorAll('.ld-subtab').forEach(function (b) {
+    b.addEventListener('click', function () {
+      var nueva = b.getAttribute('data-subvista');
+      if (nueva === leadsSubvista) return;
+      leadsSubvista = nueva;
+      renderLeadsDigital();
+    });
+  });
+}
+// Elegibilidad VISUAL (no dispara nada): consentimiento SI + telefono valido + aun no contactado/baja/convertido.
+function prospectoElegibilidad(p) {
+  if (!p.phone_e164) return { ok: false, cls: 'no', txt: 'Teléfono inválido: no elegible' };
+  if (p.outreach_status === 'opted_out') return { ok: false, cls: 'no', txt: 'Se dio de baja: no contactar' };
+  if (p.whatsapp_consent === 'no') return { ok: false, cls: 'no', txt: 'Sin consentimiento: no contactar' };
+  if (p.whatsapp_consent !== 'yes') return { ok: false, cls: 'unk', txt: 'Consentimiento por resolver: no contactar' };
+  if (p.outreach_status === 'converted') return { ok: false, cls: 'neu', txt: 'Ya convertido a lead' };
+  if (p.outreach_status === 'contacted' || p.outreach_status === 'replied') return { ok: false, cls: 'neu', txt: 'Ya contactado' };
+  if (p.outreach_status === 'failed') return { ok: false, cls: 'unk', txt: 'Último envío falló' };
+  return { ok: true, cls: 'ok', txt: 'Elegible para WhatsApp' };
+}
+function prospectosBase() {
+  return prospectosDatos.filter(function (p) { return prospectosFiltro.prueba === true || !p.is_test; });
+}
+function prospectosBarraHtml() {
+  var base = prospectosBase();
+  var orig = {}; base.forEach(function (p) { if (p.source) orig[p.source] = 1; });
+  var sel = function (v, a) { return v === a ? ' selected' : ''; };
+  var imps = prospectosImports.filter(function (i) { return prospectosFiltro.prueba === true || !(i.metadata && i.metadata.is_test); });
+  return '<div class="ld-bar">' +
+    '<input type="search" id="pr-q" placeholder="Buscar nombre, clínica, comuna, teléfono o correo" value="' + lEsc(prospectosFiltro.q) + '">' +
+    '<select id="pr-origen"><option value="">Origen: todos</option>' + Object.keys(orig).sort().map(function (o) { return '<option value="' + lEsc(o) + '"' + sel(o, prospectosFiltro.origen) + '>' + lEsc(o) + '</option>'; }).join('') + '</select>' +
+    '<select id="pr-consent"><option value="">Consentimiento: todos</option>' + Object.keys(PROSP_CONSENT).map(function (k) { return '<option value="' + k + '"' + sel(k, prospectosFiltro.consent) + '>' + PROSP_CONSENT[k] + '</option>'; }).join('') + '</select>' +
+    '<select id="pr-estado"><option value="">Contacto: todos</option>' + Object.keys(PROSP_ESTADO).map(function (k) { return '<option value="' + k + '"' + sel(k, prospectosFiltro.estado) + '>' + PROSP_ESTADO[k] + '</option>'; }).join('') + '</select>' +
+    '<select id="pr-lote"><option value="">Importación: todas</option>' + imps.map(function (i) { return '<option value="' + lEsc(i.id) + '"' + sel(i.id, prospectosFiltro.lote) + '>' + lEsc((i.source_name || i.filename || 'Importación') + ' · ' + leadsFechaCorta(i.created_at)) + '</option>'; }).join('') + '</select>' +
+    '<label class="ld-chk"><input type="checkbox" id="pr-prueba"' + (prospectosFiltro.prueba ? ' checked' : '') + '> Incluir prospectos de prueba</label>' +
+    '<button class="ld-btn" id="pr-refrescar">↻ Actualizar</button>' +
+    '</div>';
+}
+function prospectosEnlazarBarra() {
+  var q = document.getElementById('pr-q');
+  if (!q) return;
+  q.addEventListener('input', function (e) { prospectosFiltro.q = e.target.value; prospectosPintar(); });
+  [['pr-origen', 'origen'], ['pr-consent', 'consent'], ['pr-estado', 'estado'], ['pr-lote', 'lote']].forEach(function (par) {
+    document.getElementById(par[0]).addEventListener('change', function (e) { prospectosFiltro[par[1]] = e.target.value; prospectosPintar(); });
+  });
+  document.getElementById('pr-prueba').addEventListener('change', function (e) { prospectosFiltro.prueba = e.target.checked; renderLeadsDigital(); });
+  document.getElementById('pr-refrescar').addEventListener('click', function () { prospectosCargar(); });
+}
+async function prospectosCargar() {
+  if (prospectosCargando) return;
+  prospectosCargando = true; prospectosError = null;
+  if (document.getElementById('prospectos-resultados')) prospectosPintar();
+  try {
+    var res = await Promise.all([
+      sb.from('digital_prospects').select('*').order('created_at', { ascending: false }).limit(5000),
+      sb.from('digital_prospect_imports').select('id,filename,source_name,created_at,metadata').order('created_at', { ascending: false }).limit(500)
+    ]);
+    if (res[0].error) throw res[0].error;
+    prospectosDatos = res[0].data || [];
+    prospectosImports = res[1].error ? [] : (res[1].data || []);
+    prospectosCargado = true;
+    if (prospectosFiltro.prueba === null) {
+      prospectosFiltro.prueba = !prospectosDatos.some(function (p) { return !p.is_test; });
+    }
+  } catch (e) {
+    prospectosError = (e && e.message) ? e.message : 'error desconocido';
+    try { console.error('[Prospectos] falló la carga', { codigo: e && e.code, mensaje: e && e.message }); } catch (x) {}
+  }
+  prospectosCargando = false;
+  if (leadsSubvista === 'prospectos' && vistaActiva === 'leads') { renderLeadsDigital(); }
+}
+function prospectosFiltrados() {
+  var f = prospectosFiltro, q = (f.q || '').trim().toLowerCase();
+  return prospectosBase().filter(function (p) {
+    if (f.origen && p.source !== f.origen) return false;
+    if (f.consent && p.whatsapp_consent !== f.consent) return false;
+    if (f.estado && p.outreach_status !== f.estado) return false;
+    if (f.lote && p.import_id !== f.lote) return false;
+    if (q) {
+      var hay = [p.full_name, p.clinic_name, p.commune, p.phone_raw, p.phone_e164, p.email].join(' ').toLowerCase();
+      if (hay.indexOf(q) < 0) return false;
+    }
+    return true;
+  });
+}
+function prospectosPintar() {
+  var box = document.getElementById('prospectos-resultados');
+  if (!box) return;
+  if (prospectosCargando && !prospectosCargado) { box.innerHTML = '<div style="padding:24px;text-align:center;color:var(--muted);">Cargando…</div>'; return; }
+  if (prospectosError && !prospectosCargado) {
+    box.innerHTML = '<div style="background:#fff3cd;border:1px solid #fde68a;border-radius:10px;padding:14px 18px;text-align:center;font-size:13px;">⚠️ No se pudieron cargar los prospectos.<div style="font-size:11px;color:#71717a;margin-top:4px;">' + lEsc(prospectosError) + '</div> ' +
+      '<button class="ld-btn" style="margin-top:8px" onclick="prospectosCargar()">Reintentar</button></div>';
+    return;
+  }
+  var base = prospectosBase();
+  var n = function (fn) { return base.filter(fn).length; };
+  var card = function (label, val, hl) { return '<div class="dash-card' + (hl ? ' highlight' : '') + '"><div class="dc-label">' + label + '</div><div class="dc-value">' + val + '</div></div>'; };
+  var cards = '<div class="dash-grid ld-cards">' +
+    card('Total prospectos', base.length) +
+    card('Elegibles WhatsApp', n(function (p) { return prospectoElegibilidad(p).ok; }), true) +
+    card('Pendientes', n(function (p) { return p.outreach_status === 'pending'; })) +
+    card('Contactados', n(function (p) { return p.outreach_status === 'contacted'; })) +
+    card('Respondieron', n(function (p) { return p.outreach_status === 'replied'; })) +
+    card('Convertidos', n(function (p) { return p.outreach_status === 'converted'; })) + '</div>';
+  var nota = '<div class="pr-nota">Los prospectos no cuentan como leads (ni en Nuevos hoy, HOT, Tibios, Fríos ni asignaciones) hasta que respondan y se conviertan. El envío por WhatsApp aún no está habilitado.</div>';
+  var impPorId = {}; prospectosImports.forEach(function (i) { impPorId[i.id] = i; });
+  var lista = prospectosFiltrados();
+  var filas = lista.map(function (p) {
+    var el = prospectoElegibilidad(p);
+    var cb = p.whatsapp_consent === 'yes' ? 'ok' : (p.whatsapp_consent === 'no' ? 'no' : 'unk');
+    var imp = impPorId[p.import_id];
+    return '<tr>' +
+      '<td><strong>' + lEsc(p.full_name || '—') + '</strong>' + (p.is_test ? '<span class="ld-test">PRUEBA</span>' : '') + (p.email ? '<div style="font-size:11px;color:var(--muted);">' + lEsc(p.email) + '</div>' : '') + '</td>' +
+      '<td>' + lEsc(p.clinic_name || '—') + '</td>' +
+      '<td>' + lEsc(p.commune || '—') + '</td>' +
+      '<td>' + (p.phone_e164 ? lEsc(p.phone_e164) : '<span class="pr-badge no">Inválido</span><div style="font-size:11px;color:var(--muted);">' + lEsc(p.phone_raw || 'sin teléfono') + '</div>') + '</td>' +
+      '<td>' + lEsc(p.source || '—') + (p.source_detail ? '<div style="font-size:11px;color:var(--muted);">' + lEsc(p.source_detail) + '</div>' : '') + '</td>' +
+      '<td><span class="pr-badge ' + cb + '">' + lEsc(PROSP_CONSENT[p.whatsapp_consent] || p.whatsapp_consent) + '</span><div class="pr-elig ' + el.cls + '">' + lEsc(el.txt) + '</div></td>' +
+      '<td>' + lEsc(PROSP_ESTADO[p.outreach_status] || p.outreach_status) + (p.last_outreach_at ? '<div style="font-size:11px;color:var(--muted);">' + lEsc(leadsFechaCorta(p.last_outreach_at)) + '</div>' : '') + '</td>' +
+      '<td>' + lEsc(leadsFechaCorta(imp ? imp.created_at : p.created_at)) + '</td>' +
+      '<td><button class="ld-btn" disabled title="Disponible en una fase futura (plantilla WhatsApp). No envía nada.">Contactar por WhatsApp</button></td>' +
+      '</tr>';
+  }).join('');
+  box.innerHTML = cards + nota +
+    '<div class="ld-wrap"><table class="dash-table"><thead><tr>' +
+    '<th>Nombre</th><th>Clínica</th><th>Comuna</th><th>Teléfono</th><th>Origen</th><th>Consentimiento WhatsApp</th><th>Estado de contacto</th><th>Importación</th><th>Acción</th>' +
+    '</tr></thead><tbody>' +
+    (filas || '<tr><td colspan="9" style="text-align:center;color:var(--muted);padding:24px;">' + (base.length ? 'No hay prospectos con estos filtros.' : 'Aún no hay prospectos. Las bases se importarán en una fase posterior.') + '</td></tr>') +
+    '</tbody></table></div>' +
+    '<div style="font-size:11px;color:var(--muted);margin-top:8px;">' + lista.length + ' prospecto(s)</div>';
+}
+
 // ---- Datos ----
 // Describe con precisión QUÉ consulta falló (tabla/RPC, código, HTTP, mensaje) para poder diagnosticar.
 function leadsDetalleError(operacion, r) {
@@ -4821,7 +4995,8 @@ async function leadsCargar(silencioso) {
   leadsCargando = false;
   if (leadsPendiente) { leadsPendiente = false; setTimeout(function () { leadsCargar(true); }, 0); }
   if (vistaActiva === 'leads') {
-    if (!document.getElementById('leads-resultados')) { renderLeadsDigital(); } else { leadsPintar(); leadsRefrescarDrawer(); }
+    if (document.getElementById('prospectos-resultados')) { /* subvista Prospectos activa: no se toca */ }
+    else if (!document.getElementById('leads-resultados')) { renderLeadsDigital(); } else { leadsPintar(); leadsRefrescarDrawer(); }
   }
 }
 
@@ -4886,13 +5061,20 @@ function renderLeadsDigital() {
     '<main>' +
     construirTabsPrincipales('leads') +
     '<h2 style="margin:0 0 4px;font-size:18px;">Leads Digital</h2>' +
-    '<p style="margin:0 0 16px;font-size:12px;color:var(--muted);">Leads SIRIOS (RM). Todos llegan primero a ti; la derivación es manual. Vista privada.</p>' +
-    barra +
-    '<div id="leads-resultados"></div>' +
+    '<p style="margin:0 0 12px;font-size:12px;color:var(--muted);">Leads SIRIOS (RM). Todos llegan primero a ti; la derivación es manual. Vista privada.</p>' +
+    prospectosSubtabsHtml() +
+    (leadsSubvista === 'prospectos' ? prospectosBarraHtml() + '<div id="prospectos-resultados"></div>' : barra + '<div id="leads-resultados"></div>') +
     '</main>' +
     '<div id="leads-drawer-root"></div>';
 
   document.getElementById('btn-logout').addEventListener('click', doLogout);
+  prospectosEnlazarSubtabs();
+  if (leadsSubvista === 'prospectos') {
+    prospectosEnlazarBarra();
+    if (!prospectosCargado && !prospectosCargando) { prospectosCargar(); }
+    prospectosPintar();
+    return;
+  }
   document.getElementById('ld-q').addEventListener('input', function (e) { leadsFiltro.q = e.target.value; leadsPintar(); });
   document.getElementById('ld-temp').addEventListener('change', function (e) { leadsFiltro.temp = e.target.value; leadsPintar(); });
   document.getElementById('ld-estado').addEventListener('change', function (e) { leadsFiltro.estado = e.target.value; leadsPintar(); });
