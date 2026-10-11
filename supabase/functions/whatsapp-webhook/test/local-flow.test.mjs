@@ -1,0 +1,110 @@
+import { send, reply, btn, setLlm, handler, T, lastOut } from './harness.mjs';
+const results = []; const ok = (name, cond, extra='') => { results.push(cond); console.log((cond?'PASS':'FAIL'), name, extra); };
+const A = '+56900001001', B = '+56900001002', C = '+56900001003', D = '+56900001004', E = '+56900001005';
+const lead = (p) => T.leads.find(l => l.phone_e164 === p);
+// A HOT
+await send(A, null, { text: 'Hola' });
+await send(A, null, { type: 'interactive', ...btn('q1:yes') });
+await send(A, null, { text: 'Medit i700' });
+ok('A lead no existe antes de P2', !lead(A));
+await send(A, null, { type: 'interactive', ...reply('q2:trade_up') });
+ok('A lead creado tras P2', !!lead(A) && lead(A).need === 'trade_up' && lead(A).is_test === true, `score=${lead(A)?.score}`);
+await send(A, null, { type: 'interactive', ...reply('q3:now') });
+await send(A, null, { type: 'interactive', ...reply('q4:both') });
+const rA = await send(A, null, { text: 'Juan Pérez, Clínica ABC, Providencia' });
+ok('A HOT completado', lead(A).temperature === 'hot' && /Juan Pérez, Clínica ABC en Providencia\. Actualmente utiliza Medit i700 y está evaluando Trade Up de forma inmediata\. Solicita demo y propuesta comercial\./.test(lead(A).ai_summary), lead(A).ai_summary);
+ok('A mensaje final HOT', /especialistas revise|uno de nuestros especialistas/.test(lastOut(A).slice(-1)[0]) && /Gracias, Juan/.test(lastOut(A).slice(-1)[0]));
+ok('A mensajes enlazados al lead', T.messages.filter(m => m.session_id && T.sessions.find(s=>s.id===m.session_id).phone_e164===A).every(m => m.lead_id === lead(A).id));
+ok('A sesión completada', T.sessions.find(s=>s.phone_e164===A).status === 'completed');
+// B Tibio
+await send(B, null, { text: 'hola' }); await send(B, null, { type: 'interactive', ...btn('q1:yes') }); await send(B, null, { text: 'Trios' });
+await send(B, null, { type: 'interactive', ...reply('q2:digital_flow') }); await send(B, null, { type: 'interactive', ...reply('q3:3_6_months') }); await send(B, null, { type: 'interactive', ...reply('q4:demo') });
+await send(B, null, { text: 'Dra Soto' }); // falta clínica y comuna
+ok('B pregunta solo lo faltante', /Solo me falta el nombre de tu clínica y tu comuna/.test(lastOut(B).slice(-1)[0]), lastOut(B).slice(-1)[0]);
+await send(B, null, { text: 'Clinica Sur, Maipú' });
+ok('B Tibio', lead(B).temperature === 'warm', `score=${lead(B).score}`);
+ok('B texto TIBIO', /Dejé registrada tu consulta y tus antecedentes/.test(lastOut(B).slice(-1)[0]));
+// C Frío
+await send(C, null, { text: 'hola' }); await send(C, null, { type: 'interactive', ...btn('q1:no') }); await send(C, null, { type: 'interactive', ...reply('q2:information_only') });
+await send(C, null, { type: 'interactive', ...reply('q3:later') }); await send(C, null, { type: 'interactive', ...reply('q4:info') });
+await send(C, null, { text: 'Pedro, Dental X, Ñuñoa' });
+ok('C Frío', lead(C).temperature === 'cold' && /Gracias por contactarnos/.test(lastOut(C).slice(-1)[0]));
+// D intención fuerte
+await send(D, null, { text: 'Hola, quiero cotizar un SIRIOS y agendar una demo.' });
+ok('D no crea lead antes de P2 pese a intención', !lead(D) && /Actualmente utilizas|scanner intraoral/.test(lastOut(D).slice(-1)[0]));
+await send(D, null, { type: 'interactive', ...btn('q1:no') });
+ok('D lead creado con override', lead(D)?.high_intent_override === true && lead(D).need === 'know_sirios', `score=${lead(D)?.score} temp=${lead(D)?.temperature}`);
+ok('D al menos HOT', lead(D)?.temperature === 'hot');
+// E libre
+await send(E, null, { text: 'Tengo un Medit i700 y lo quiero cambiar dentro de un par de meses.' });
+const sE = T.sessions.find(s=>s.phone_e164===E);
+ok('E interpreta sin repreguntar', sE.context.fields.current_scanner === 'Medit i700' && sE.context.fields.need === 'renew' && sE.context.fields.purchase_timeline === '1_3_months' && sE.context.pending === 'q4', JSON.stringify(sE.context.fields)+' pending='+sE.context.pending);
+ok('E lead creado ya (P1+P2 cubiertas)', !!lead(E));
+// Seguridad
+const nm = T.messages.length;
+ok('firma inválida 401', (await send(A, null, { text: 'x', sigOverride: 'sha256=' + '0'.repeat(64) })).status === 401);
+ok('sin firma 401', (await send(A, null, { text: 'x', sigOverride: '' })).status === 401);
+ok('firma inválida no escribe', T.messages.length === nm);
+const gv = async (tok) => (await handler(new Request('http://x/?hub.mode=subscribe&hub.verify_token='+tok+'&hub.challenge=abc123'))).status;
+ok('verify token correcto 200', await gv('vt') === 200); ok('verify token incorrecto 403', await gv('mal') === 403);
+const bodyBig = JSON.stringify({ object: 'whatsapp_business_account', pad: 'x'.repeat(300*1024) });
+ok('payload grande 413', (await send(A, null, { raw: bodyBig })).status === 413);
+const nm2 = T.messages.length;
+const rp = await send(A, null, { text: 'hola', pn: 'OTRO' });
+ok('phone_number_id distinto ignorado', rp.status === 200 && rp.body.ignored_phone_number === 1 && T.messages.length === nm2);
+// Duplicado
+const F = '+56900001006';
+await send(F, null, { text: 'hola', id: 'wamid.DUP' }); const nmd = T.messages.length; const stp = JSON.stringify(T.sessions.find(s=>s.phone_e164===F).context);
+const rd = await send(F, null, { text: 'hola', id: 'wamid.DUP' });
+ok('duplicado: sin respuesta ni avance', rd.body.results[0] === 'duplicate' && T.messages.length === nmd && JSON.stringify(T.sessions.find(s=>s.phone_e164===F).context) === stp);
+// audio / imagen
+const G = '+56900001007';
+const ra = await send(G, null, { type: 'audio', id: 'wamid.AUD' });
+ok('audio: respuesta fija, sin romper', ra.body.results[0] === 'unsupported' && /solo mensajes de texto/.test(lastOut(G).slice(-1)[0]));
+ok('imagen idem', (await send(G, null, { type: 'image' })).body.results[0] === 'unsupported');
+// Fallo Anthropic
+const H = '+56900001008';
+setLlm(true);
+await send(H, null, { text: 'hola' }); await send(H, null, { text: 'No' });
+const sH = T.sessions.find(s=>s.phone_e164===H);
+ok('fallo Anthropic: respaldo determinístico', sH.context.fields.uses_intraoral_scanner === false && sH.context.pending === 'q2', JSON.stringify(sH.context.fields));
+setLlm(false);
+// Fuera de flujo
+await send(H, null, { text: '¿tienen despacho a regiones?' });
+const lo = lastOut(H);
+ok('fuera de flujo: respuesta breve + repregunta', lo.some(x=>/Con gusto un especialista/.test(x)) && /buscando principalmente/.test(lo.slice(-1)[0]), JSON.stringify(lo));
+await send(H, null, { text: 'cuál es el precio y el descuento' });
+ok('consulta de precio: no responde precio, deriva y repregunta', lastOut(H).some(x=>/Con gusto un especialista/.test(x)) && !/\$|\d{3}\.\d{3}/.test(lastOut(H).join(' ')));
+// misma persona vuelve (ack, caso C)
+const na = T.acts.length;
+await send(A, null, { text: 'quiero cotizar ahora mismo' });
+ok('Caso C: ack + actividad + sin nuevo lead', /Ya tenemos registrada/.test(lastOut(A).slice(-1)[0]) && T.leads.filter(l=>l.phone_e164===A).length === 1 && T.acts.slice(na).some(a=>a.event_type==='whatsapp_new_message'));
+await send(A, null, { text: 'otra cosa' });
+ok('Caso C: ack no se repite en 6h', lastOut(A).filter(x=>/Ya tenemos registrada/.test(x)).length === 1);
+// won
+const lw = lead(B); lw.status = 'won';
+await send(B, null, { text: 'hola de nuevo' });
+ok('Caso E won: actividad recontact, mismo lead', T.acts.some(a=>a.lead_id===lw.id && a.event_type==='whatsapp_recontact_after_won') && T.leads.filter(l=>l.phone_e164===B).length===1 && lead(B).status==='won');
+// lost <30d y >=30d
+const lc = lead(C); lc.status = 'lost'; lc.updated_at = new Date().toISOString();
+await send(C, null, { text: 'hola' });
+ok('Caso D lost<30d: mismo lead', T.leads.filter(l=>l.phone_e164===C).length===1 && T.sessions.filter(s=>s.phone_e164===C).length===1);
+await send(C, null, { text: 'hola otra vez', headers: {'x-sim-now': new Date(Date.now()+31*864e5).toISOString()} });
+ok('Caso D lost>=30d: sesión nueva (lead nuevo recién en P2)', T.sessions.filter(s=>s.phone_e164===C).length===2 && T.leads.filter(l=>l.phone_e164===C).length===1);
+// 72h
+const I = '+56900001009';
+await send(I, null, { text: 'hola' }); await send(I, null, { type: 'interactive', ...btn('q1:no') }); await send(I, null, { type: 'interactive', ...reply('q2:know_sirios') });
+const leadI = lead(I).id;
+await send(I, null, { text: 'hola' }); // dentro de 72h => continúa
+ok('Caso A <72h: misma sesión', T.sessions.filter(s=>s.phone_e164===I).length===1);
+await send(I, null, { text: 'hola', headers: {'x-sim-now': new Date(Date.now()+73*36e5).toISOString()} });
+const sI = T.sessions.filter(s=>s.phone_e164===I);
+ok('Caso B >=72h: expira, nueva sesión, mismo lead, precarga', sI.length===2 && sI[0].status==='expired' && sI[1].lead_id===leadI && sI[1].context.fields.need==='know_sirios' && sI[1].context.pending==='q3', JSON.stringify(sI[1].context.pending));
+ok('Caso B: solo pregunta lo faltante (P3)', /plazo/.test(lastOut(I).slice(-1)[0]));
+// Fallo al enviar respuesta
+const J = '+56900001010';
+await send(J, null, { text: 'hola' }); await send(J, null, { type: 'interactive', ...btn('q1:no') });
+const rj = await send(J, null, { type: 'interactive', ...reply('q2:renew'), headers: {'x-sim-fail-send':'1'} });
+const lj = lead(J);
+ok('fallo de envío: 200, error guardado, actividad, lead intacto', rj.status===200 && T.messages.some(m=>m.lead_id===lj.id && m.direction==='outbound' && m.metadata.error) && T.acts.some(a=>a.lead_id===lj.id && a.event_type==='whatsapp_send_failed'));
+console.log(`\n${results.filter(Boolean).length}/${results.length} PASS`);

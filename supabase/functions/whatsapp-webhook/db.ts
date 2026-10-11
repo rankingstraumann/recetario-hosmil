@@ -1,0 +1,112 @@
+// db.ts — Acceso a Supabase con service_role (solo dentro de la Edge Function; la key la inyecta Supabase).
+import { createClient } from 'npm:@supabase/supabase-js@2';
+import type { Ctx, Fields } from './engine.ts';
+
+export type Session = { id: string; phone_e164: string; lead_id: string | null; current_step: string; status: string; last_message_at: string; context: Ctx };
+export type Lead = { id: string; status: string; updated_at: string; high_intent_override: boolean; score: number; temperature: string };
+
+const LEAD_COLS = 'id,status,updated_at,high_intent_override,score,temperature';
+
+export function makeDb() {
+  const url = Deno.env.get('SUPABASE_URL')!;
+  const key = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!;
+  const sb = createClient(url, key, { auth: { persistSession: false, autoRefreshToken: false } });
+  const fail = (op: string, error: any) => { throw new Error(`db_${op}:${error?.code || ''}:${String(error?.message || '').slice(0, 120)}`); };
+
+  return {
+    async findInbound(providerId: string) {
+      const { data, error } = await sb.from('digital_lead_messages').select('id,created_at,metadata').eq('provider_message_id', providerId).maybeSingle();
+      if (error) fail('findInbound', error);
+      return data as { id: number; created_at: string; metadata: any } | null;
+    },
+    async getActiveSession(phone: string) {
+      const { data, error } = await sb.from('digital_lead_sessions').select('*').eq('phone_e164', phone)
+        .not('status', 'in', '(completed,expired,handed_off)').maybeSingle();
+      if (error) fail('getActiveSession', error);
+      return data as Session | null;
+    },
+    async getLatestSession(phone: string) {
+      const { data, error } = await sb.from('digital_lead_sessions').select('*').eq('phone_e164', phone)
+        .order('created_at', { ascending: false }).limit(1).maybeSingle();
+      if (error) fail('getLatestSession', error);
+      return data as Session | null;
+    },
+    async createSession(phone: string, ctx: Ctx, leadId: string | null, nowIso: string) {
+      const { data, error } = await sb.from('digital_lead_sessions').insert({
+        phone_e164: phone, lead_id: leadId, context: ctx, last_message_at: nowIso,
+      }).select('*').single();
+      if (error) {
+        if ((error as any).code === '23505') { // carrera: otra invocación creó la sesión activa
+          const s = await this.getActiveSession(phone); if (s) return s;
+        }
+        fail('createSession', error);
+      }
+      return data as Session;
+    },
+    async updateSession(id: string, patch: Record<string, unknown>) {
+      const { error } = await sb.from('digital_lead_sessions').update(patch).eq('id', id);
+      if (error) fail('updateSession', error);
+    },
+    async getLead(id: string) {
+      const { data, error } = await sb.from('digital_leads').select(LEAD_COLS).eq('id', id).maybeSingle();
+      if (error) fail('getLead', error);
+      return data as Lead | null;
+    },
+    async createLead(phone: string, f: Fields, isTest: boolean) {
+      const { data, error } = await sb.from('digital_leads').insert({
+        source_channel: 'meta_whatsapp', phone_e164: phone, is_test: isTest, ...leadColumns(f),
+      }).select(LEAD_COLS).single();
+      if (error) fail('createLead', error);
+      return data as Lead;
+    },
+    async updateLead(id: string, patch: Record<string, unknown>) {
+      const { data, error } = await sb.from('digital_leads').update(patch).eq('id', id).select(LEAD_COLS).single();
+      if (error) fail('updateLead', error);
+      return data as Lead;
+    },
+    async insertMessage(row: Record<string, unknown>) {
+      const { data, error } = await sb.from('digital_lead_messages').insert(row).select('id').single();
+      if (error) {
+        if ((error as any).code === '23505') return { duplicate: true as const, id: null };
+        fail('insertMessage', error);
+      }
+      return { duplicate: false as const, id: (data as any).id as number };
+    },
+    async updateMessage(id: number, patch: Record<string, unknown>) {
+      const { error } = await sb.from('digital_lead_messages').update(patch).eq('id', id);
+      if (error) fail('updateMessage', error);
+    },
+    async linkMessages(sessionId: string, leadId: string) {
+      const { error } = await sb.from('digital_lead_messages').update({ lead_id: leadId }).eq('session_id', sessionId).is('lead_id', null);
+      if (error) fail('linkMessages', error);
+    },
+    async addActivity(leadId: string, eventType: string, detail: Record<string, unknown>) {
+      const { error } = await sb.from('digital_lead_activities').insert({ lead_id: leadId, event_type: eventType, detail });
+      if (error) fail('addActivity', error);
+    },
+    async lastAckSince(leadId: string, sinceIso: string) {
+      const { data, error } = await sb.from('digital_lead_messages').select('id').eq('lead_id', leadId).eq('direction', 'outbound')
+        .contains('metadata', { kind: 'ack' }).gte('created_at', sinceIso).limit(1);
+      if (error) fail('lastAckSince', error);
+      return (data || []).length > 0;
+    },
+  };
+}
+export type Db = ReturnType<typeof makeDb>;
+
+/** Columnas de negocio del lead. Siempre incluye las columnas de scoring para que el trigger recalcule. */
+export function leadColumns(f: Fields): Record<string, unknown> {
+  const c: Record<string, unknown> = {
+    uses_intraoral_scanner: f.uses_intraoral_scanner ?? null,
+    current_scanner: f.current_scanner ?? null,
+    need: f.need ?? null,
+    purchase_timeline: f.purchase_timeline ?? null,
+    wants_demo: f.wants_demo ?? null,
+    wants_quote: f.wants_quote ?? null,
+  };
+  if (f.contact_name) c.contact_name = f.contact_name;
+  if (f.clinic_name) c.clinic_name = f.clinic_name;
+  if (f.commune) c.commune = f.commune;
+  if (f.high_intent) { c.high_intent_override = true; if (f.high_intent_reason) c.high_intent_reason = f.high_intent_reason; }
+  return c;
+}
