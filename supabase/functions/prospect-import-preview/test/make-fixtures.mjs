@@ -1,10 +1,10 @@
-// Genera fixtures 100% FICTICIOS (sin clientes reales). Uso: npm i xlsx@0.18.5 (solo para generar) && node make-fixtures.mjs
-import { createRequire } from 'node:module';
+// Genera fixtures 100% FICTICIOS (sin clientes reales). Usa SheetJS 0.20.3 vendorizada (../vendor/xlsx.mjs). Uso: node make-fixtures.mjs
 import { writeFileSync, mkdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-const require = createRequire(process.env.XLSX_FROM ? process.env.XLSX_FROM + '/' : import.meta.url);
-const XLSX = require('xlsx');
+import * as XLSX from '../vendor/xlsx.mjs';
+import * as fs from 'node:fs';
+XLSX.set_fs(fs);
 const dir = join(dirname(fileURLToPath(import.meta.url)), 'fixtures'); mkdirSync(dir, { recursive: true });
 
 const H = ['Sold-To', 'Cliente', 'Prioridad', 'Último año facturado', 'Cartera original', 'Trade Up financiero', 'Contacto', 'Uso VV', 'Interés', 'Próxima acción', 'Fecha', 'Observación'];

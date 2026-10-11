@@ -7,11 +7,9 @@
 //  - Parsing determinista (sin IA, sin servicios externos). No se evaluan formulas.
 //  - Los logs contienen SOLO contadores/codigos; nunca nombres, telefonos, correos ni filas.
 import { createClient } from 'npm:@supabase/supabase-js@2.45.4';
-// SheetJS pinneada (version fija). Importacion server-side; NO se usa CDN en admin.html.
-// NOTA DE SEGURIDAD: 0.18.5 es la ultima en npm y tiene CVE conocidas (CVE-2023-30533 prototype pollution, CVE-2024-22363 ReDoS),
-// corregidas en 0.19.3/0.20.2 (solo distribuidas por cdn.sheetjs.com, que el bundler de Supabase no permite importar).
-// Mitigaciones: solo Lead Admin, limite 5 MB / 5000 filas, sin formulas, sin salida de red. Pendiente: vendorizar 0.20.3.
-import XLSX from 'npm:xlsx@0.18.5';
+// SheetJS 0.20.3 oficial, VENDORIZADA (sin modificar) en ./vendor/xlsx.mjs; ver vendor/VENDOR.md (origen + SHA-256).
+// Se empaqueta con la funcion: sin descarga ni CDN en runtime. No usar npm:xlsx (0.18.5, vulnerable).
+import * as XLSX from './vendor/xlsx.mjs';
 import { analyze, decodeCsv, ImportError, LIMITS, parseCsv, type Existing, type RawSheet } from './parse.ts';
 import { readWorkbook } from './xlsx_read.ts';
 

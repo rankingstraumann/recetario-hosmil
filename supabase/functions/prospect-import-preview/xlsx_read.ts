@@ -1,4 +1,4 @@
-// Lectura de libros XLSX -> hojas crudas. La libreria se INYECTA (en produccion: SheetJS 0.20.3 pinneada por URL).
+// Lectura de libros XLSX -> hojas crudas. La libreria se INYECTA (en produccion y tests: SheetJS 0.20.3 vendorizada en ./vendor/xlsx.mjs, ver vendor/VENDOR.md).
 // Solo VALORES de celda: no se evaluan formulas, no se leen macros, estilos ni HTML.
 import { ImportError, LIMITS, type RawSheet } from './parse.ts';
 

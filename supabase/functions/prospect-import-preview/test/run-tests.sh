@@ -1,3 +1,3 @@
 #!/usr/bin/env bash
-# Requiere Node >= 22 y xlsx@0.18.5 instalado (solo dev): XLSX_FROM=<carpeta con node_modules/xlsx> ./run-tests.sh
+# Requiere Node >= 22. Usa SheetJS 0.20.3 vendorizada (../vendor/xlsx.mjs); no requiere npm install.
 cd "$(dirname "$0")" && node --experimental-strip-types --no-warnings --test import-preview.test.mjs
