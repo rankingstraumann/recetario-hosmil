@@ -4778,13 +4778,16 @@ var prospectosCargando = false;
 var prospectosError = null;
 var prospectosFiltro = { q: '', origen: '', consent: '', estado: '', lote: '', prueba: null };
 var PROSP_ESTADO = { pending: 'Pendiente', contacted: 'Contactado', replied: 'Respondió', opted_out: 'No contactar (baja)', failed: 'Falló', converted: 'Convertido' };
-var PROSP_CONSENT = { yes: 'Sí', no: 'No', unknown: 'Sin definir' };
+var PROSP_CONSENT = { yes: 'Autorizado', no: 'No autorizado', unknown: 'Sin definir' };
+// Almacenamiento: yes=granted, no=denied, unknown. Fuentes de consentimiento (lista cerrada; la valida la RPC).
+var PROSP_CONS_FUENTE = { formulario_web: 'Formulario web', correo_electronico: 'Correo electrónico', whatsapp_optin: 'Opt-in por WhatsApp', telefono_registrado: 'Llamada telefónica registrada', presencial: 'Presencial / firmado', evento: 'Evento o capacitación', otro: 'Otro (detallar en la nota)' };
 
 function prospectosLimpiar() {
   leadsSubvista = 'leads'; prospectosDatos = []; prospectosImports = []; prospectosCargado = false; prospectosCargando = false;
   prospectosError = null; prospectosFiltro = { q: '', origen: '', consent: '', estado: '', lote: '', prueba: null };
   prospectosImp = { abierto: false, analizando: false, error: null, res: null, filtro: '', file: null, confirmando: false, resultado: null, modo: 'test' };
   prospectosEnr = prospectosEnrNuevo();
+  prospectosCons = prospectosConsNuevo();
 }
 function prospectosInyectarEstilos() {
   if (document.getElementById('prospectos-estilos')) return;
@@ -4820,9 +4823,9 @@ function prospectosEnlazarSubtabs() {
 }
 // Elegibilidad: UNA sola fuente de verdad en la base -> columna generada digital_prospects.whatsapp_eligible
 // (consent=yes + telefono E.164 valido + estado no opted_out/converted). La UI NO la recalcula.
-// "Listo para contactar" = whatsapp_eligible AND outreach_status='pending'. Es la regla futura del boton (hoy deshabilitado).
 function prospectoElegible(p) { return p.whatsapp_eligible === true; }
-function prospectoListo(p) { return p.whatsapp_eligible === true && p.outreach_status === 'pending'; }
+// "Listo para contactar" = columna generada contact_ready (REAL + movil +569 + consent granted + outreach pending). La UI no la recalcula.
+function prospectoListo(p) { return p.contact_ready === true; }
 // Solo texto explicativo (no decide nada).
 function prospectoElegibilidad(p) {
   if (prospectoListo(p)) return { ok: true, cls: 'ok', txt: 'Listo para contactar' };
@@ -4871,6 +4874,7 @@ function prospectosEnlazarBarra() {
   document.getElementById('pr-enriquecer').addEventListener('click', function () { prospectosEnr.abierto = !prospectosEnr.abierto; if (prospectosEnr.abierto) prospectosImp.abierto = false; prospectosImportPintar(); prospectosEnrPintar(); });
   prospectosImportPintar();
   prospectosEnrPintar();
+  prospectosConsPintar();
 }
 async function prospectosCargar() {
   if (prospectosCargando) return;
@@ -4928,6 +4932,7 @@ function prospectosPintar() {
     card('Contactados', n(function (p) { return p.outreach_status === 'contacted'; })) +
     card('Respondieron', n(function (p) { return p.outreach_status === 'replied'; })) +
     card('Convertidos', n(function (p) { return p.outreach_status === 'converted'; })) + '</div>';
+  var nCons = '<div style="font-size:12px;color:var(--muted);margin:6px 0;">Consentimiento WhatsApp: <strong>' + n(function (p) { return p.whatsapp_consent === 'yes'; }) + '</strong> autorizados · <strong>' + n(function (p) { return p.whatsapp_consent === 'no'; }) + '</strong> no autorizados · <strong>' + n(function (p) { return p.whatsapp_consent === 'unknown'; }) + '</strong> sin definir. «Listo para contactar» exige prospecto real, móvil +569, consentimiento autorizado y estado pendiente.</div>';
   var nota = '<div class="pr-nota">Los prospectos no cuentan como leads (ni en Nuevos hoy, HOT, Tibios, Fríos ni asignaciones) hasta que respondan y se conviertan. El envío por WhatsApp aún no está habilitado.</div>';
   var impPorId = {}; prospectosImports.forEach(function (i) { impPorId[i.id] = i; });
   var lista = prospectosFiltrados();
@@ -4941,19 +4946,20 @@ function prospectosPintar() {
       '<td>' + lEsc(p.commune || '—') + '</td>' +
       '<td>' + (p.phone_e164 ? lEsc(p.phone_e164) : '<span class="pr-badge no">Inválido</span><div style="font-size:11px;color:var(--muted);">' + lEsc(p.phone_raw || 'sin teléfono') + '</div>') + '</td>' +
       '<td>' + lEsc(p.source || '—') + (p.source_detail ? '<div style="font-size:11px;color:var(--muted);">' + lEsc(p.source_detail) + '</div>' : '') + '</td>' +
-      '<td><span class="pr-badge ' + cb + '">' + lEsc(PROSP_CONSENT[p.whatsapp_consent] || p.whatsapp_consent) + '</span><div class="pr-elig ' + el.cls + '">' + lEsc(el.txt) + '</div></td>' +
+      '<td><span class="pr-badge ' + cb + '">' + lEsc(PROSP_CONSENT[p.whatsapp_consent] || p.whatsapp_consent) + '</span><div class="pr-elig ' + el.cls + '">' + lEsc(el.txt) + '</div>' + prospectoConsDetalle(p) + '</td>' +
       '<td>' + lEsc(PROSP_ESTADO[p.outreach_status] || p.outreach_status) + (p.last_outreach_at ? '<div style="font-size:11px;color:var(--muted);">' + lEsc(leadsFechaCorta(p.last_outreach_at)) + '</div>' : '') + '</td>' +
       '<td>' + lEsc(leadsFechaCorta(imp ? imp.created_at : p.created_at)) + '</td>' +
-      '<td><button class="ld-btn" disabled title="Disponible en una fase futura (plantilla WhatsApp). No envía nada.">Contactar por WhatsApp</button></td>' +
+      '<td><button class="ld-btn" data-prc="' + lEsc(p.id) + '">Registrar consentimiento</button> <button class="ld-btn" disabled title="Disponible en una fase futura (plantilla WhatsApp). No envía nada.">Contactar por WhatsApp</button></td>' +
       '</tr>';
   }).join('');
-  box.innerHTML = cards + nota +
+  box.innerHTML = cards + nCons + nota +
     '<div class="ld-wrap"><table class="dash-table"><thead><tr>' +
     '<th>Nombre</th><th>Clínica</th><th>Comuna</th><th>Teléfono</th><th>Origen</th><th>Consentimiento WhatsApp</th><th>Estado de contacto</th><th>Importación</th><th>Acción</th>' +
     '</tr></thead><tbody>' +
     (filas || '<tr><td colspan="9" style="text-align:center;color:var(--muted);padding:24px;">' + (base.length ? 'No hay prospectos con estos filtros.' : 'Aún no hay prospectos. Las bases se importarán en una fase posterior.') + '</td></tr>') +
     '</tbody></table></div>' +
     '<div style="font-size:11px;color:var(--muted);margin-top:8px;">' + lista.length + ' prospecto(s)</div>';
+  box.querySelectorAll('[data-prc]').forEach(function (b) { b.addEventListener('click', function () { prospectosConsAbrir(b.getAttribute('data-prc')); }); });
 }
 
 
@@ -5246,6 +5252,111 @@ function prospectosEnrPintar() {
   });
 }
 
+// ---- Consentimiento WhatsApp (Outbound 6): registro INDIVIDUAL, con evidencia y auditoria. Solo Lead Admin (la RPC lo exige). ----
+// No hay accion masiva. No cambia outreach_status. No envia WhatsApp. Sin service_role: sb.rpc con la sesion del usuario.
+function prospectosConsNuevo() { return { id: null, estado: 'granted', fuente: '', fecha: '', nota: '', enviando: false, error: null, ok: null, historial: [], cargandoHist: false }; }
+var prospectosCons = prospectosConsNuevo();
+var PROSP_CONS_ESTADO = { granted: 'Autorizado', denied: 'No autorizado', unknown: 'Sin definir' };
+var PROSP_CONS_ERR = {
+  FUENTE_REQUERIDA: 'Indica la fuente del consentimiento.', FUENTE_INVALIDA: 'Fuente no válida.', FECHA_REQUERIDA: 'Indica la fecha del consentimiento.',
+  FECHA_INVALIDA: 'La fecha no es válida (no puede ser futura ni anterior a 2015).', NOTA_REQUERIDA: 'La nota o referencia es obligatoria (mínimo 5 caracteres).',
+  SIN_CAMBIO: 'El prospecto ya tiene ese estado de consentimiento.', PROSPECTO_DADO_DE_BAJA: 'El prospecto se dio de baja (opted_out): no se puede autorizar.',
+  PROSPECTO_NO_ENCONTRADO: 'Prospecto no encontrado.', NO_AUTORIZADO: 'No tienes permiso para modificar consentimientos.', PARAMETROS_INVALIDOS: 'Datos no válidos.'
+};
+function prospectoConsEstadoDe(p) { return p.whatsapp_consent === 'yes' ? 'granted' : (p.whatsapp_consent === 'no' ? 'denied' : 'unknown'); }
+function prospectoConsDetalle(p) {
+  if (p.whatsapp_consent === 'unknown' && !p.consent_source && !p.consent_at) return '';
+  var t = [];
+  if (p.consent_source) t.push('Fuente: ' + (PROSP_CONS_FUENTE[p.consent_source] || p.consent_source));
+  if (p.consent_at) t.push('Fecha: ' + String(p.consent_at).slice(0, 10).split('-').reverse().join('-'));
+  return t.length ? '<div style="font-size:11px;color:var(--muted);">' + lEsc(t.join(' · ')) + '</div>' : '';
+}
+function prospectosConsHoy() { var d = new Date(); return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); }
+async function prospectosConsAbrir(id) {
+  var C = prospectosCons = prospectosConsNuevo(); C.id = id;
+  var p = prospectosDatos.filter(function (x) { return x.id === id; })[0];
+  C.estado = (p && prospectoConsEstadoDe(p) === 'granted') ? 'denied' : 'granted';
+  C.fecha = '';
+  prospectosConsPintar(); prospectosConsHistorial();
+  var r = document.getElementById('prospectos-consent-root'); if (r && r.scrollIntoView) { try { r.scrollIntoView({ block: 'nearest' }); } catch (x) {} }
+}
+async function prospectosConsHistorial() {
+  var C = prospectosCons, id = C.id; if (!id) return;
+  C.cargandoHist = true; prospectosConsPintar();
+  try {
+    var r = await sb.from('digital_prospect_consent_log').select('previous_state,new_state,source,consent_date,note,changed_by_email,changed_at').eq('prospect_id', id).order('changed_at', { ascending: false });
+    if (prospectosCons.id === id) prospectosCons.historial = r.error ? [] : (r.data || []);
+  } catch (e) { if (prospectosCons.id === id) prospectosCons.historial = []; }
+  if (prospectosCons.id === id) { prospectosCons.cargandoHist = false; prospectosConsPintar(); }
+}
+async function prospectosConsGuardar() {
+  var C = prospectosCons; if (!C.id || C.enviando) return;
+  var p = prospectosDatos.filter(function (x) { return x.id === C.id; })[0]; if (!p) return;
+  var nota = (C.nota || '').trim();
+  C.error = null; C.ok = null;
+  if (C.estado === 'granted') {
+    if (!C.fuente) C.error = PROSP_CONS_ERR.FUENTE_REQUERIDA; else if (!C.fecha) C.error = PROSP_CONS_ERR.FECHA_REQUERIDA;
+    else if (C.fecha > prospectosConsHoy()) C.error = PROSP_CONS_ERR.FECHA_INVALIDA; else if (nota.length < 5) C.error = PROSP_CONS_ERR.NOTA_REQUERIDA;
+  } else if (C.estado === 'unknown' && nota.length < 5) C.error = PROSP_CONS_ERR.NOTA_REQUERIDA;
+  if (C.error) { prospectosConsPintar(); return; }
+  var txt = 'Registrar consentimiento WhatsApp de este prospecto:\n' + (p.full_name || p.clinic_name || p.external_customer_id || 'sin nombre') + '\n\n' + PROSP_CONS_ESTADO[prospectoConsEstadoDe(p)] + '  →  ' + PROSP_CONS_ESTADO[C.estado] +
+    (C.estado === 'granted' ? '\nFuente: ' + (PROSP_CONS_FUENTE[C.fuente] || C.fuente) + '\nFecha: ' + C.fecha + '\nNota: ' + nota : '') +
+    '\n\nQuedará registrado tu usuario y la fecha del cambio. No se enviará ningún mensaje ni se cambiará el estado de contacto.';
+  if (!window.confirm(txt)) return;
+  C.enviando = true; prospectosConsPintar();
+  try {
+    var r = await sb.rpc('set_prospect_consent', { p_prospect_id: C.id, p_state: C.estado, p_source: C.fuente || null, p_consent_date: C.fecha || null, p_note: nota || null });
+    if (r.error) {
+      var m = String(r.error.message || ''), k = Object.keys(PROSP_CONS_ERR).filter(function (c) { return m.indexOf(c) >= 0; })[0];
+      throw new Error(k ? PROSP_CONS_ERR[k] : 'No se pudo registrar el consentimiento. No se cambió nada.');
+    }
+    C.ok = 'Consentimiento registrado: ' + PROSP_CONS_ESTADO[r.data.new_state] + (r.data.contact_ready ? ' · el prospecto queda LISTO para contactar (sin envío automático).' : '.');
+    C.nota = ''; C.fuente = '';
+    prospectosCargado = false; prospectosCargando = false; prospectosCargar();
+    prospectosConsHistorial();
+  } catch (e) { C.error = (e && e.message) ? e.message : 'No se pudo registrar el consentimiento. No se cambió nada.'; }
+  C.enviando = false; prospectosConsPintar();
+}
+function prospectosConsPintar() {
+  var root = document.getElementById('prospectos-consent-root'); if (!root) return;
+  var C = prospectosCons;
+  if (!C.id) { root.innerHTML = ''; return; }
+  var p = prospectosDatos.filter(function (x) { return x.id === C.id; })[0];
+  if (!p) { root.innerHTML = ''; return; }
+  var actual = prospectoConsEstadoDe(p), dis = C.enviando ? ' disabled' : '';
+  var radios = ['granted', 'denied', 'unknown'].filter(function (e) { return e !== actual; }).map(function (e) {
+    return '<label style="margin-right:14px;"><input type="radio" name="pc-estado" value="' + e + '"' + (C.estado === e ? ' checked' : '') + dis + '> ' + (e === 'unknown' ? 'Volver a Sin definir' : PROSP_CONS_ESTADO[e]) + '</label>';
+  }).join('');
+  var lbl = 'font-size:12px;font-weight:700;display:block;margin:8px 0 3px;';
+  var opts = '<option value="">— Selecciona —</option>' + Object.keys(PROSP_CONS_FUENTE).map(function (k) { return '<option value="' + k + '"' + (C.fuente === k ? ' selected' : '') + '>' + lEsc(PROSP_CONS_FUENTE[k]) + '</option>'; }).join('');
+  var html = '<div class="pr-imp pr-cons"><div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;"><strong style="font-size:14px;">Registrar consentimiento WhatsApp</strong><button class="ld-btn" id="pc-cerrar">Cerrar</button></div>' +
+    '<div style="font-size:13px;margin:6px 0;"><strong>' + lEsc(p.full_name || p.clinic_name || 'Sin nombre') + '</strong>' + (p.external_customer_id ? ' · Sold-To ' + lEsc(p.external_customer_id) : '') + (p.is_test ? ' <span class="ld-test">PRUEBA</span>' : '') +
+    ' · Estado actual: <span class="pr-badge ' + (actual === 'granted' ? 'ok' : (actual === 'denied' ? 'no' : 'unk')) + '">' + PROSP_CONS_ESTADO[actual] + '</span>' + prospectoConsDetalle(p) + '</div>' +
+    '<div class="aviso">El consentimiento nunca se asigna por tener teléfono. Cada cambio es individual, exige evidencia (si es «Autorizado») y queda en el historial con tu usuario. No envía mensajes ni cambia el estado de contacto.</div>' +
+    '<div style="margin:6px 0;">' + radios + '</div>';
+  if (C.estado !== 'unknown') {
+    html += '<label style="' + lbl + '">Fuente del consentimiento' + (C.estado === 'granted' ? ' *' : ' (opcional)') + '</label><select id="pc-fuente"' + dis + '>' + opts + '</select>' +
+      '<label style="' + lbl + '">Fecha del consentimiento' + (C.estado === 'granted' ? ' *' : ' (opcional; por defecto hoy)') + '</label><input type="date" id="pc-fecha" max="' + prospectosConsHoy() + '" value="' + lEsc(C.fecha) + '"' + dis + '>';
+  }
+  html += '<label style="' + lbl + '">' + (C.estado === 'granted' ? 'Referencia o nota breve *' : (C.estado === 'unknown' ? 'Motivo (obligatorio) *' : 'Motivo (opcional)')) + '</label>' +
+    '<textarea id="pc-nota" maxlength="500" rows="2" style="width:100%;max-width:560px;"' + dis + ' placeholder="' + (C.estado === 'granted' ? 'Ej.: formulario firmado en consulta, folio 123' : 'Breve') + '">' + lEsc(C.nota) + '</textarea>';
+  if (C.error) html += '<div style="background:#fee2e2;border:1px solid #fecaca;border-radius:8px;padding:8px 12px;font-size:12px;color:#991b1b;margin-top:8px;">⚠️ ' + lEsc(C.error) + '</div>';
+  if (C.ok) html += '<div style="background:#dcfce7;border:1px solid #bbf7d0;border-radius:8px;padding:8px 12px;font-size:13px;font-weight:700;color:#166534;margin-top:8px;">✅ ' + lEsc(C.ok) + '</div>';
+  html += '<div style="margin-top:10px;"><button class="ld-btn primary" id="pc-guardar"' + dis + '>' + (C.enviando ? 'Guardando…' : 'Guardar consentimiento') + '</button></div>';
+  html += '<div style="margin-top:12px;font-size:12px;font-weight:700;">Historial</div>' + (C.cargandoHist ? '<div style="font-size:12px;color:var(--muted);">Cargando…</div>' :
+    (C.historial.length ? '<div class="ld-wrap"><table class="dash-table"><thead><tr><th>Fecha del cambio</th><th>Cambio</th><th>Fuente</th><th>Fecha consent.</th><th>Nota</th><th>Por</th></tr></thead><tbody>' +
+      C.historial.map(function (h) { return '<tr><td>' + lEsc(leadsFechaCorta(h.changed_at)) + '</td><td>' + lEsc((PROSP_CONS_ESTADO[h.previous_state] || h.previous_state) + ' → ' + (PROSP_CONS_ESTADO[h.new_state] || h.new_state)) + '</td><td>' + lEsc(PROSP_CONS_FUENTE[h.source] || h.source || '—') + '</td><td>' + lEsc(h.consent_date || '—') + '</td><td>' + lEsc(h.note || '—') + '</td><td>' + lEsc(h.changed_by_email || '—') + '</td></tr>'; }).join('') + '</tbody></table></div>'
+      : '<div style="font-size:12px;color:var(--muted);">Sin cambios registrados.</div>'));
+  html += '</div>';
+  root.innerHTML = html;
+  document.getElementById('pc-cerrar').addEventListener('click', function () { prospectosCons = prospectosConsNuevo(); prospectosConsPintar(); });
+  root.querySelectorAll('input[name=pc-estado]').forEach(function (rd) { rd.addEventListener('change', function () { if (!rd.checked || C.enviando) return; prospectosCons.estado = rd.value; prospectosCons.error = null; prospectosCons.ok = null; prospectosConsPintar(); }); });
+  var f = document.getElementById('pc-fuente'); if (f) f.addEventListener('change', function () { prospectosCons.fuente = f.value; });
+  var d = document.getElementById('pc-fecha'); if (d) d.addEventListener('change', function () { prospectosCons.fecha = d.value; });
+  var n = document.getElementById('pc-nota'); if (n) n.addEventListener('input', function () { prospectosCons.nota = n.value; });
+  document.getElementById('pc-guardar').addEventListener('click', function () { prospectosConsGuardar(); });
+}
+
 // ---- Datos ----
 // Describe con precisión QUÉ consulta falló (tabla/RPC, código, HTTP, mensaje) para poder diagnosticar.
 function leadsDetalleError(operacion, r) {
@@ -5371,7 +5482,7 @@ function renderLeadsDigital() {
     '<h2 style="margin:0 0 4px;font-size:18px;">Leads Digital</h2>' +
     '<p style="margin:0 0 12px;font-size:12px;color:var(--muted);">Leads SIRIOS (RM). Todos llegan primero a ti; la derivación es manual. Vista privada.</p>' +
     prospectosSubtabsHtml() +
-    (leadsSubvista === 'prospectos' ? prospectosBarraHtml() + '<div id="prospectos-import-root"></div><div id="prospectos-enrich-root"></div><div id="prospectos-resultados"></div>' : barra + '<div id="leads-resultados"></div>') +
+    (leadsSubvista === 'prospectos' ? prospectosBarraHtml() + '<div id="prospectos-import-root"></div><div id="prospectos-enrich-root"></div><div id="prospectos-consent-root"></div><div id="prospectos-resultados"></div>' : barra + '<div id="leads-resultados"></div>') +
     '</main>' +
     '<div id="leads-drawer-root"></div>';
 
