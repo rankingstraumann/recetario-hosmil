@@ -4777,7 +4777,7 @@ var prospectosCargado = false;
 var prospectosCargando = false;
 var prospectosError = null;
 var prospectosFiltro = { q: '', origen: '', consent: '', estado: '', lote: '', prueba: null };
-var PROSP_ESTADO = { pending: 'Pendiente', eligible: 'Elegible', contacted: 'Contactado', replied: 'Respondió', opted_out: 'No contactar (baja)', failed: 'Falló', converted: 'Convertido' };
+var PROSP_ESTADO = { pending: 'Pendiente', contacted: 'Contactado', replied: 'Respondió', opted_out: 'No contactar (baja)', failed: 'Falló', converted: 'Convertido' };
 var PROSP_CONSENT = { yes: 'Sí', no: 'No', unknown: 'Sin definir' };
 
 function prospectosLimpiar() {
@@ -4815,18 +4815,23 @@ function prospectosEnlazarSubtabs() {
     });
   });
 }
-// Elegibilidad DERIVADA por reglas (no depende de outreach_status='eligible'):
-// consentimiento = yes + telefono E.164 valido + estado distinto de opted_out y converted. No dispara nada.
-function prospectoElegible(p) {
-  return p.whatsapp_consent === 'yes' && !!p.phone_e164 && p.outreach_status !== 'opted_out' && p.outreach_status !== 'converted';
-}
+// Elegibilidad: UNA sola fuente de verdad en la base -> columna generada digital_prospects.whatsapp_eligible
+// (consent=yes + telefono E.164 valido + estado no opted_out/converted). La UI NO la recalcula.
+// "Listo para contactar" = whatsapp_eligible AND outreach_status='pending'. Es la regla futura del boton (hoy deshabilitado).
+function prospectoElegible(p) { return p.whatsapp_eligible === true; }
+function prospectoListo(p) { return p.whatsapp_eligible === true && p.outreach_status === 'pending'; }
+// Solo texto explicativo (no decide nada).
 function prospectoElegibilidad(p) {
+  if (prospectoListo(p)) return { ok: true, cls: 'ok', txt: 'Listo para contactar' };
+  if (p.whatsapp_eligible === true) {
+    if (p.outreach_status === 'failed') return { ok: false, cls: 'unk', txt: 'Elegible, pero el último envío falló' };
+    return { ok: false, cls: 'neu', txt: 'Elegible, ya contactado' };
+  }
   if (!p.phone_e164) return { ok: false, cls: 'no', txt: 'Teléfono inválido: no elegible' };
   if (p.outreach_status === 'opted_out') return { ok: false, cls: 'no', txt: 'Se dio de baja: no contactar' };
-  if (p.whatsapp_consent === 'no') return { ok: false, cls: 'no', txt: 'Sin consentimiento: no contactar' };
-  if (p.whatsapp_consent !== 'yes') return { ok: false, cls: 'unk', txt: 'Consentimiento por resolver: no contactar' };
   if (p.outreach_status === 'converted') return { ok: false, cls: 'neu', txt: 'Ya convertido a lead' };
-  return { ok: true, cls: 'ok', txt: 'Elegible para WhatsApp' + ((p.outreach_status === 'contacted' || p.outreach_status === 'replied') ? ' (ya contactado)' : '') };
+  if (p.whatsapp_consent === 'no') return { ok: false, cls: 'no', txt: 'Sin consentimiento: no contactar' };
+  return { ok: false, cls: 'unk', txt: 'Consentimiento por resolver: no contactar' };
 }
 function prospectosBase() {
   return prospectosDatos.filter(function (p) { return prospectosFiltro.prueba === true || !p.is_test; });
@@ -4907,7 +4912,7 @@ function prospectosPintar() {
   var card = function (label, val, hl) { return '<div class="dash-card' + (hl ? ' highlight' : '') + '"><div class="dc-label">' + label + '</div><div class="dc-value">' + val + '</div></div>'; };
   var cards = '<div class="dash-grid ld-cards">' +
     card('Total prospectos', base.length) +
-    card('Elegibles WhatsApp', n(prospectoElegible), true) +
+    card('Listos para contactar', n(prospectoListo), true) +
     card('Pendientes', n(function (p) { return p.outreach_status === 'pending'; })) +
     card('Contactados', n(function (p) { return p.outreach_status === 'contacted'; })) +
     card('Respondieron', n(function (p) { return p.outreach_status === 'replied'; })) +
