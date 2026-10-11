@@ -1,0 +1,8 @@
+﻿Sold-To;Cliente;Contacto;Teléfono;Correo;Observación
+2000000001;Clínica Csv Uno;Persona Csv Uno;+56 9 9000 0001;uno@ejemplo.test;"Nota; con punto y coma"
+2000000002;Clínica Csv Dos;Persona Csv Dos;9 9000 0001;dos@ejemplo.test;Teléfono repetido del anterior
+2000000003;Clínica Csv Tres;;22 2345 678;malcorreo;Fijo y correo inválido
+2000000004;Clínica Csv Cuatro;Persona Csv Cuatro;56990000004;;Formato 56…
+2000000005;Clínica Csv Cinco;Persona Existente;+56990000009;;Coincide con BD (teléfono)
+2000000006;Clínica Csv Seis;;;;"Línea 1
+Línea 2"

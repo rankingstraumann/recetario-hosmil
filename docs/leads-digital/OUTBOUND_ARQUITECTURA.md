@@ -37,6 +37,19 @@ No hay un segundo bot ni un segundo scoring. Los prospectos **no** son leads: no
 ## UI (admin.html)
 Leads Digital → sub-pestañas **[ Leads ] [ Prospectos ]**. Prospectos: contadores (Total, Listos para contactar, Pendientes, Contactados, Respondieron, Convertidos), filtros (búsqueda, origen, consentimiento, estado de contacto, importación, incluir prueba) y tabla. Elegibilidad leída de `whatsapp_eligible`; No / Sin definir / teléfono inválido / baja = no contactar. Botón "Contactar por WhatsApp" **deshabilitado** (no envía nada).
 
+## Outbound 2 — Importador con PREVIEW (no inserta nada)
+Prospectos → **⬆ Importar prospectos** → elegir `.xlsx`/`.csv` → Edge Function `prospect-import-preview` → resumen + tabla filtrable. **"Confirmar importación" está deshabilitado**; todo el análisis es de solo lectura (`import_performed:false`).
+
+**Seguridad de la función:** exige sesión y `is_lead_admin()` con el JWT del usuario (sin `service_role`; los duplicados contra BD se leen con RLS del usuario). El archivo se procesa en memoria: no se guarda en Storage ni en la base. Parsing determinista, sin IA ni servicios externos. No se evalúan fórmulas (solo valores). Logs: solo contadores. Límites: 5 MB, 5.000 filas, 20 hojas, 60 columnas, celdas ≤ 2.000 caracteres; extensión y firma (zip/no-zip) validadas.
+**Librería:** `npm:xlsx@0.18.5` pinneada (única versión en npm). Tiene CVE conocidas corregidas en 0.19.3/0.20.2 (solo en cdn.sheetjs.com, que el bundler de Supabase no deja importar). Mitigaciones: solo Daniel, límites, sin fórmulas. **Pendiente:** vendorizar 0.20.3 en el repo.
+
+**Mapeo (Trade Up):** Sold-To→`external_customer_id` (texto), Cliente→`clinic_name`, Contacto→`full_name` (vacío = vacío, no se inventa), Cartera original→`source_owner`, Prioridad→`priority_source`, Último año facturado→`last_billed_year`, Trade Up financiero→`trade_up_financial`, Observación→`notes`, el resto (Uso VV, Interés, Próxima acción, Fecha…)→`raw_payload` (todas las columnas originales). `source`='Trade Up', `source_detail`=archivo/hoja, `whatsapp_consent`='unknown', `outreach_status`='pending', `phone_e164`=null si no hay teléfono.
+
+**Validaciones:** Sold-To decimal/científico/caracteres raros → INVÁLIDO; año no entero o fuera de 1990–2100 → INVÁLIDO; fila sin Sold-To/cliente/contacto/teléfono/correo → INVÁLIDO; texto > 300 caracteres → INVÁLIDO; encabezados repetidos dentro de la hoja → excluidos; hojas vacías o sin encabezados reconocibles → informadas y omitidas. Trade Up financiero: `O/SI/SÍ/TRUE/VERDADERO/YES/1`→true, `NO/FALSE/FALSO/0`→false, **vacío→null** (ausencia de marca ≠ "no"), cualquier otro valor→null + advertencia. Teléfonos: celular chileno de 9 dígitos (con/sin 56/+56) → `+569…`; otro formato → sin teléfono + advertencia.
+**Duplicados:** Sold-To exacto (archivo o BD) → DUPLICADO (en el archivo queda la primera aparición, las siguientes son duplicados); teléfono exacto → ADVERTENCIA en todos los miembros; nombre normalizado → ADVERTENCIA. Nunca se fusiona.
+
+**Tests:** `supabase/functions/prospect-import-preview/test/` (`make-fixtures.mjs` genera fixtures 100 % ficticios; `run-tests.sh`, 25 casos).
+
 ## Pendiente (fases siguientes)
 Parser Excel/CSV (normalización E.164, duplicados, consentimiento), RPC/Edge Function de importación, plantilla WhatsApp aprobada y envío con control de consentimiento/baja, vínculo prospecto→lead en el webhook (match por teléfono), opt-out.
 
