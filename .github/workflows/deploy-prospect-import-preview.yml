@@ -2,6 +2,11 @@ name: Deploy prospect-import-preview
 
 on:
   workflow_dispatch:
+  push:
+    branches:
+      - leads-outbound-v1-preview
+    paths:
+      - ".github/workflows/deploy-prospect-import-preview.yml"
 
 permissions:
   contents: read
