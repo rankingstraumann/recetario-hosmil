@@ -1,5 +1,6 @@
 name: Deploy prospect-import-preview
 
+# Trigger de despliegue controlado para OUTBOUND 3 (modo confirm)
 on:
   workflow_dispatch:
   push:
