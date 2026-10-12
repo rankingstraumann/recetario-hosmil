@@ -17,6 +17,7 @@ function start(prospect = {}, known = {}) {
   const pr = { id: 'pr-' + p, phone_e164: p, is_test: true, whatsapp_consent: 'yes', outreach_status: 'replied', full_name: 'Daniel Prueba', clinic_name: 'Clínica Ficticia', commune: 'Ñuñoa', ...prospect };
   Object.keys(prospect).forEach((k) => { if (prospect[k] === null) delete pr[k]; });
   T.prospects.push(pr);
+  T.sends.push({ prospect_id: pr.id, status: 'sent', sent_at: new Date().toISOString() });   // 9B: la conversion exige un envio 'sent' valido
   const ctx = startOutboundCtx(pr); Object.assign(ctx.fields, known);
   T.sessions.push({ id: 'so-' + p, phone_e164: p, lead_id: null, current_step: 'start', status: 'started', last_message_at: new Date().toISOString(), context: ctx });
   return p;
@@ -43,8 +44,8 @@ ok('T1d CTA estable trade_up_evaluation + intencion fuerte', F(p).cta_selected =
 ok('T1e datos prellenados completos => Q5 es timing', O(p).pending_kind === 'timing' && lastQ(p).metadata.step === 'q5');
 await pick(p, 'o9:timing:now');
 ok('T1f cierre Trade Up + lead creado', /Tu Evaluación de Trade Up quedó solicitada/.test(texts(p).slice(-1)[0]) && sess(p).status === 'completed' && !!lead(p) && F(p).customer_profile === 'owner_partner');
-ok('T1g 9A: la intencion fuerte NO se propaga al scoring (override=false) y queda en el contexto', lead(p).high_intent_override === false && F(p).high_intent === true);
-ok('T1h perfil/ruta/CTA/interes solo en context.fields (no columnas nuevas en lead)', !('customer_profile' in lead(p)) && !('commercial_route' in lead(p)) && !('cta_selected' in lead(p)));
+ok('T1g 9B: la intencion fuerte SI se propaga (override=true => minimo 70) y queda en el contexto', lead(p).high_intent_override === true && lead(p).score >= 70 && F(p).high_intent === true);
+ok('T1h 9B: perfil/ruta/CTA/interes persisten en el lead Y en el contexto', lead(p).customer_profile === 'owner_partner' && lead(p).commercial_route === 'trade_up' && lead(p).cta_selected === 'trade_up_evaluation' && F(p).customer_profile === 'owner_partner');
 const nq1 = questions(p).length;
 
 // ---- 2. Owner + Trade Up + scanner desconocido => pregunta scanner; Q5 = CTA; sin timing; maximo 5
@@ -212,7 +213,7 @@ ok('T18f telefono ambiguo: ningun journey outbound se asocia solo (cae en Inboun
 const only = T.prospects.every((x) => x.is_test !== false);
 ok('T19 todos los prospectos del fake son TEST (nunca los 138 reales); el journey no modifica prospectos', only && snapshotProspects().length > 0);
 const proj = (x) => JSON.stringify(T.prospects.filter((y) => y.id.startsWith('pr-')));
-ok('T19b el journey outbound no altera ningun campo del prospecto inyectado', T.prospects.filter((y) => y.id.startsWith('pr-')).every((y) => y.outreach_status === 'replied' && y.whatsapp_consent === 'yes'));
+ok('T19b el journey solo cambia estado del prospecto TEST a converted (+vinculo); consentimiento intacto', T.prospects.filter((y) => y.id.startsWith('pr-')).every((y) => ['replied', 'converted'].includes(y.outreach_status) && y.whatsapp_consent === 'yes' && y.is_test === true));
 ok('T20 cero llamadas a Meta y cero llamadas a la IA durante el journey outbound; ninguna otra red', net.meta === 0 && net.other === 0, JSON.stringify(net));
 
 // ---- Extras

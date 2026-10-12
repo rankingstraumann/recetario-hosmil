@@ -80,7 +80,7 @@ export function startOutboundCtx(prospect: ProspectLite): Ctx {
   const n = _cleanStr(prospect.full_name, 80); if (n) fields.contact_name = n;
   const c = _cleanStr(prospect.clinic_name, 100); if (c) fields.clinic_name = c;
   const m = _cleanStr(prospect.commune, 60); if (m) fields.commune = m;
-  return { fields, journey: JOURNEY, greeted: true, first_turn: true, llm_calls: 0, msg_count: 0, o: { asked: [], done: [], prospect_id: prospect.id } };
+  return { fields, journey: JOURNEY, greeted: true, first_turn: true, llm_calls: 0, msg_count: 0, o: { asked: [], done: [], route_msgs: [], prospect_id: prospect.id } };
 }
 
 // ---------- Ruta comercial ----------
@@ -324,7 +324,7 @@ export function outboundTurn(ctxIn: Ctx, inb: { text: string; interactiveId?: st
     else if (pend === 'digital' && ['yes', 'no', 'unsure'].includes(v)) takeDigital(v);
     else if (pend === 'need' && optsFor('need', ctx).some((x) => x.id === v)) takeNeed(v);
     else if (pend === 'cta' && (CTAS as readonly string[]).includes(v)) takeCta(v);
-    else if (pend === 'timing' && optsFor('timing', ctx).some((x) => x.id === v)) { add.purchase_timeline = v; answered = true; }
+    else if (pend === 'timing' && optsFor('timing', ctx).some((x) => x.id === v)) { add.purchase_timeline = v; if (v === 'now') { add.high_intent = true; add.high_intent_reason = REASON.now; } answered = true; }
   } else if (!id && t) {
     sig = sigsFromText(text);
     if (pend && !trivial) {
@@ -333,7 +333,7 @@ export function outboundTurn(ctxIn: Ctx, inb: { text: string; interactiveId?: st
       else if (pend === 'digital') { const v = byOpt || parseDigital(t); if (v) takeDigital(v); }
       else if (pend === 'need') { const v = byOpt || parseNeed(t); if (v) takeNeed(v); }
       else if (pend === 'cta') { const v = byOpt || parseCta(t) || sig.fields.cta_selected; if (v) takeCta(v); }
-      else if (pend === 'timing') { const k = byOpt ? { purchase_timeline: byOpt } as Fields : keywordExtract(text, 'q3', ctx.fields); if (k.purchase_timeline) { add.purchase_timeline = k.purchase_timeline; answered = true; } }
+      else if (pend === 'timing') { const k = byOpt ? { purchase_timeline: byOpt } as Fields : keywordExtract(text, 'q3', ctx.fields); if (k.purchase_timeline) { add.purchase_timeline = k.purchase_timeline; if (k.purchase_timeline === 'now') { add.high_intent = true; add.high_intent_reason = REASON.now; } answered = true; } }
       else if (pend === 'scanner') {
         if (!sig.any && t.length <= 60 && !/no se|no estoy seguro|ni idea/.test(t)) { const c = _cleanStr(text, 60); if (c) { add.current_scanner = c; add.uses_intraoral_scanner = true; } }
         answered = !sig.any;
@@ -358,7 +358,6 @@ export function outboundTurn(ctxIn: Ctx, inb: { text: string; interactiveId?: st
   if (ctx.fields.cta_selected) set('cta');
   // ruta
   const route = computeRoute(ctx.fields, needKnown(ctx));
-  const routeNew = route && ctx.fields.commercial_route !== route;
   if (route) ctx.fields.commercial_route = route;
 
   // ----- salida -----
@@ -368,7 +367,8 @@ export function outboundTurn(ctxIn: Ctx, inb: { text: string; interactiveId?: st
 
   const next = planNext(ctx);
   if (next) {
-    if (route && routeNew && !o.route_msg) { outs.push({ kind: 'text', body: ROUTE_MSG[route] }); o.route_msg = true; }
+    // 9B: cada ruta muestra su mensaje contextual UNA vez; si la ruta cambia (p. ej. exploration -> trade_up) se muestra el de la nueva ruta
+    if (route && !(o.route_msgs || []).includes(route)) { outs.push({ kind: 'text', body: ROUTE_MSG[route] }); o.route_msgs = [...(o.route_msgs || []), route]; o.route_message_shown_for = route; }
     if (!o.asked.includes(next)) o.asked.push(next);
     o.pending_kind = next;
     const q = questionOut(next, ctx);
@@ -386,5 +386,34 @@ export function outboundTurn(ctxIn: Ctx, inb: { text: string; interactiveId?: st
   return { ctx, outs, done: true, kind: null, step: 'done' };
 }
 
-/** Campos para persistir en digital_leads: SIN high_intent (en 9A la intencion fuerte solo queda en el contexto; el scoring no se toca). */
-export function leadFieldsOut(f: Fields): Fields { const c = { ...f }; delete c.high_intent; delete c.high_intent_reason; return c; }
+/** Mensaje neutro (9B): si la conversion falla en BD NO se afirma que la evaluacion quedo solicitada. */
+export const CONVERT_FAIL_MSG = 'Gracias por tus respuestas. Tuvimos un inconveniente técnico al registrar tu solicitud, por lo que todavía no puedo confirmarla. Nuestro equipo la revisará; si quieres, escríbenos nuevamente por este mismo canal.';
+
+/** Reintento de conversion pendiente: no se reinterpreta el mensaje; se vuelve a intentar cerrar con el estado ya capturado. */
+export function retryClosingTurn(ctxIn: Ctx): OutTurn {
+  const ctx: Ctx = { ...ctxIn, fields: { ...ctxIn.fields }, o: { ...(ctxIn.o || { asked: [], done: [] }) } };
+  return { ctx, outs: [{ kind: 'text', body: outboundClosing(ctx.fields) }], done: true, kind: null, step: 'done' };
+}
+
+// ---------- Seleccion del prospecto para activar el journey (9B, TEST-ONLY, fail-closed) ----------
+export interface OutboundCandidate extends ProspectLite { whatsapp_consent?: string; outreach_status: string }
+export type OutboundSelection =
+  | { kind: 'start'; prospect: OutboundCandidate }
+  | { kind: 'none' | 'ambiguous' }
+  | { kind: 'blocked'; reason: 'real' | 'consent' | 'no_send' };
+
+/**
+ * @param candidates prospectos con phone exacto y estado contacted/replied (de CUALQUIER tipo: un candidato real tambien cuenta para la ambiguedad)
+ * @param sent       envios 'sent' (digital_outbound_sends) de esos candidatos
+ * Reutiliza pickReplyTarget. Barreras: is_test=true, consentimiento 'yes', envio 'sent' valido. Modo real NO implementado en 9B:
+ * aunque OUTBOUND_SIRIOS_TEST_ONLY fuera 'false', un prospecto real jamas inicia (fail-closed).
+ */
+export function selectOutboundProspect(candidates: OutboundCandidate[], sent: SentRow[]): OutboundSelection {
+  const r = resolveOutboundProspect(candidates, sent);
+  if (r.kind !== 'one') return { kind: r.kind };
+  const p = candidates.find((c) => c.id === r.id)!;
+  if (p.is_test !== true) return { kind: 'blocked', reason: 'real' };
+  if (p.whatsapp_consent !== 'yes') return { kind: 'blocked', reason: 'consent' };
+  if (!sent.some((x) => x.prospect_id === p.id)) return { kind: 'blocked', reason: 'no_send' };
+  return { kind: 'start', prospect: p };
+}

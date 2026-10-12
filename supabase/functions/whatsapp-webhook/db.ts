@@ -2,6 +2,7 @@
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import type { Ctx, Fields } from './engine.ts';
 import { pickReplyTarget, type SentRow } from './reply.ts';
+import { selectOutboundProspect, type OutboundCandidate, type OutboundSelection } from './outbound-sirios.ts';
 
 export type Session = { id: string; phone_e164: string; lead_id: string | null; current_step: string; status: string; last_message_at: string; context: Ctx };
 export type Lead = { id: string; status: string; updated_at: string; high_intent_override: boolean; score: number; temperature: string };
@@ -38,6 +39,23 @@ export function makeDb() {
       const u = await sb.from('digital_prospects').update({ outreach_status: 'replied' }).eq('id', t.id).eq('outreach_status', 'contacted');
       if (u.error) fail('markProspectReplied', u.error);
       return 'updated';
+    },
+    /** OUTBOUND 9B: candidatos (contacted/replied, cualquier is_test) + envios 'sent' => seleccion pura y conservadora (selectOutboundProspect). */
+    async getOutboundSelection(phone: string): Promise<OutboundSelection> {
+      const c = await sb.from('digital_prospects').select('id,is_test,whatsapp_consent,outreach_status,full_name,clinic_name,commune')
+        .eq('phone_e164', phone).in('outreach_status', ['contacted', 'replied']).limit(50);
+      if (c.error) fail('outboundCandidates', c.error);
+      const cands = (c.data || []) as OutboundCandidate[];
+      if (cands.length === 0) return { kind: 'none' };
+      const s = await sb.from('digital_outbound_sends').select('prospect_id,sent_at').eq('status', 'sent').in('prospect_id', cands.map((x) => x.id)).order('sent_at', { ascending: false }).limit(200);
+      if (s.error) fail('outboundSends', s.error);
+      return selectOutboundProspect(cands, (s.data || []) as SentRow[]);
+    },
+    /** OUTBOUND 9B: conversion atomica prospecto -> lead (RPC SECURITY DEFINER solo service_role; valida TEST-ONLY y consentimiento en BD). */
+    async completeOutboundConversion(a: { session_id: string; prospect_id: string; fields: Fields; summary: string }) {
+      const { data, error } = await sb.rpc('complete_outbound_conversion', { p_session_id: a.session_id, p_prospect_id: a.prospect_id, p_fields: a.fields, p_summary: a.summary });
+      if (error) fail('completeOutboundConversion', error);
+      return data as { lead_id: string; score: number; temperature: string; status: string; lead_created: boolean; already_converted: boolean };
     },
     async getActiveSession(phone: string) {
       const { data, error } = await sb.from('digital_lead_sessions').select('*').eq('phone_e164', phone)

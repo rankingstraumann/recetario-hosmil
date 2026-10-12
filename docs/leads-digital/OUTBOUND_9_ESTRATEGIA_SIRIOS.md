@@ -203,3 +203,19 @@ Apertura (no cuenta como pregunta; sin «soy el asistente digital»; 36 cuotas u
 **Seguridad de teléfono:** `resolveOutboundProspect` reutiliza `pickReplyTarget` (reply.ts): solo asocia un prospecto si es inequívoco; ambiguo/ninguno ⇒ no se elige ninguno.
 
 **Pendiente para 9B (no hecho):** activación real del journey desde el prospecto resuelto, reevaluación de scoring con las nuevas señales, plantilla V2, cualquier envío real.
+
+## OUTBOUND 9B — activación TEST + conversión + scoring (preparado, NO desplegado, migración 016 NO aplicada)
+
+**Estado:** código y SQL listos en `leads-outbound-v1-preview`. Migración 016 sin aplicar, Edge Function sin desplegar, `OUTBOUND_TEMPLATE_APPROVED=false`, sin envíos WhatsApp.
+
+- **Activación (solo TEST):** al abrir una sesión nueva, `getOutboundSelection(phone)` busca prospectos `contacted/replied` con envío `sent` y los resuelve con `pickReplyTarget` (`selectOutboundProspect`). 0 candidatos → Inbound V1; 1 inequívoco y `is_test=true` + consentimiento `yes` → `outbound_sirios`; ambiguo → ninguno, sin tocar prospectos, log sin PII. Un prospecto real jamás inicia el journey. `OUTBOUND_SIRIOS_TEST_ONLY` es fail-closed: no existe modo real en 9B (aunque valga `false` solo se loguea).
+- **Prefill:** `full_name→contact_name`, `clinic_name`, `commune`; `prospect_id` en `session.context.o.prospect_id`; no se vuelven a pedir.
+- **Mensaje de ruta:** `o.route_msgs[]` / `route_message_shown_for`; cada mensaje de ruta se muestra una sola vez; un cambio de ruta (exploration→trade_up) muestra el de la nueva ruta.
+- **Scoring:** `high_intent` → `high_intent_override=true` (el trigger garantiza ≥70). Umbrales HOT≥70 / WARM 40–69 / COLD<40. El perfil no puntúa por sí solo.
+- **Persistencia:** `customer_profile`, `commercial_route`, `product_interest` (`undecided` sin selección expresa), `cta_selected` en `digital_leads` y en `session.context`.
+- **Conversión atómica:** RPC `complete_outbound_conversion(session, prospect, fields, summary)` (016, solo `service_role`): bloquea prospecto y sesión, valida `is_test`, consentimiento, no opt-out, envío válido, sesión↔prospecto, crea o reutiliza el lead (`linked_lead_id`), persiste campos, aplica override, setea `linked_lead_id` + `converted`, registra actividad `outbound_sirios_conversion`. Idempotente: nunca dos leads por prospecto.
+- **Cierre:** se envía solo tras persistir la conversión. Si falla la BD: mensaje neutro (`CONVERT_FAIL_MSG`), la sesión queda en `q5` con `convert_pending` y se reintenta en el siguiente mensaje.
+- **Financiamiento:** "hasta 36 cuotas", "sujeto a evaluación comercial"; `cta_selected=financing`; sin tasa/CAE/monto inventados.
+- **Historial (Outbound 8):** `get_prospect_timeline` muestra en la conversión perfil, ruta, interés, CTA, score, temperatura y estado (sin texto de mensajes).
+- **Rollback:** `sql/leads-digital/999m_rollback_outbound_conversion_sirios.sql`.
+- **Pruebas:** Inbound 50/50, 9A 69/69, 9B 45/45, importación 58/58, envío 19/19. La validación de la 016 contra la BD real no se pudo ejecutar (cancelada); el SQL está validado solo contra el espejo en `fake-db.ts` y debe validarse en transacción con rollback antes de aplicar.

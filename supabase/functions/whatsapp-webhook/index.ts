@@ -5,7 +5,7 @@ import {
   leadReady, plainFallback, questionFor, strongIntent, trivialMessage, type Ctx, type Fields, type Out, type Step,
 } from './engine.ts';
 import { extractWithLlm } from './extract.ts';
-import { leadFieldsOut, outboundSummary, outboundTurn } from './outbound-sirios.ts';
+import { CONVERT_FAIL_MSG, outboundSummary, outboundTurn, retryClosingTurn, startOutboundCtx } from './outbound-sirios.ts';
 import { buildSummary } from './summary.ts';
 import { sendMessage, type WaCfg } from './whatsapp.ts';
 import { leadColumns, makeDb, type Db, type Lead, type Session } from './db.ts';
@@ -88,7 +88,17 @@ async function resolve(db: Db, phone: string, nowMs: number): Promise<Decision> 
       : { fields: { ...(prev.fields || {}) }, greeted: true, first_turn: true, resumed: true, llm_calls: 0, msg_count: 0 };
     return { kind: 'flow', session: await db.createSession(phone, ctx, last.lead_id, nowIso), resumed: true };
   }
-  const s = await db.createSession(phone, { fields: {}, first_turn: true, llm_calls: 0, msg_count: 0 }, null, nowIso);
+  // OUTBOUND 9B (TEST-ONLY, fail-closed): sesion nueva => ¿es la respuesta de UN prospecto TEST contactado por plantilla? (resolucion inequivoca, reply.ts)
+  //   0 candidatos => Inbound V1 | 1 inequivoco y valido => outbound_sirios | ambiguo/bloqueado => Inbound V1, sin tocar prospectos. Logs sin PII.
+  let ctx0: Ctx = { fields: {}, first_turn: true, llm_calls: 0, msg_count: 0 };
+  if (env('OUTBOUND_SIRIOS_TEST_ONLY') === 'false') log({ ev: 'outbound_sirios_real_mode_not_implemented' });   // el modo real NO existe en 9B: se mantiene fail-closed
+  try {
+    const sel = await db.getOutboundSelection(phone);
+    if (sel.kind === 'start') { ctx0 = startOutboundCtx(sel.prospect); log({ ev: 'outbound_sirios_start' }); }
+    else if (sel.kind === 'ambiguous') log({ ev: 'outbound_sirios_ambiguous' });
+    else if (sel.kind === 'blocked') log({ ev: 'outbound_sirios_blocked', reason: sel.reason });
+  } catch (_e) { log({ ev: 'outbound_sirios_select_failed' }); }
+  const s = await db.createSession(phone, ctx0, null, nowIso);
   return { kind: 'flow', session: s, resumed: false };
 }
 
@@ -192,30 +202,35 @@ async function handleMessage(db: Db, wa: WaCfg, sim: Sim, m: any): Promise<strin
     return ok ? 'unsupported' : 'unsupported_send_failed';
   }
 
-  // ===== OUTBOUND 9A: journey outbound_sirios (mismo webhook/motor; se activa SOLO por session.context.journey; Inbound V1 no pasa por aqui) =====
+  // ===== OUTBOUND 9A/9B: journey outbound_sirios (mismo webhook/motor; se activa SOLO por session.context.journey; Inbound V1 no pasa por aqui) =====
   if (ctx.journey === 'outbound_sirios') {
-    const turn = outboundTurn(ctx, { text, interactiveId: inb.interactiveId });
+    const turn = ctx.o?.convert_pending ? retryClosingTurn(ctx) : outboundTurn(ctx, { text, interactiveId: inb.interactiveId });
     ctx = turn.ctx; ctx.first_turn = false;
     const nowIsoO = new Date(nowMs).toISOString();
+    let outsO: Out[] = turn.outs; let completed = false;
     if (turn.done) {
-      const lf = leadFieldsOut(ctx.fields);   // 9A: la intencion fuerte NO se propaga al scoring; queda en el contexto
-      let leadO: Lead | null = null;
-      if (!leadId) {
-        leadO = await db.createLead(phone, lf, env('WHATSAPP_LEADS_IS_TEST') !== 'false');
-        leadId = leadO.id;
-        await db.linkMessages(session.id, leadId);
-        await db.addActivity(leadId, 'whatsapp_lead_created', { session_id: session.id, is_test: env('WHATSAPP_LEADS_IS_TEST') !== 'false', journey: 'outbound_sirios' });
+      // CONVERSION ATOMICA (RPC complete_outbound_conversion): prospecto + lead + scoring + vinculo en una sola transaccion, idempotente.
+      // El cierre ("tu evaluacion quedo solicitada") SOLO se envia si la conversion se persistio; si falla, mensaje neutro y reintento en el siguiente mensaje.
+      let conv: { lead_id: string; score: number; temperature: string } | null = null;
+      const pid = ctx.o?.prospect_id;
+      if (pid) {
+        try { conv = await db.completeOutboundConversion({ session_id: session.id, prospect_id: pid, fields: ctx.fields, summary: outboundSummary(ctx.fields) }); }
+        catch (e) { log({ ev: 'outbound_conversion_failed', msg: String((e as Error).message).slice(0, 120) }); }
       }
-      leadO = await db.updateLead(leadId, { ...leadColumns(lf), ai_summary: outboundSummary(ctx.fields) });
-      await db.addActivity(leadId, 'whatsapp_conversation_completed', { temperature: leadO.temperature, score: leadO.score, session_id: session.id, journey: 'outbound_sirios' });
+      if (conv) {
+        leadId = conv.lead_id; completed = true; ctx.o = { ...(ctx.o as NonNullable<Ctx['o']>), convert_pending: false };
+        await db.addActivity(leadId, 'whatsapp_conversation_completed', { temperature: conv.temperature, score: conv.score, session_id: session.id, journey: 'outbound_sirios' });
+      } else {
+        outsO = turn.outs.slice(0, -1).concat([{ kind: 'text', body: CONVERT_FAIL_MSG }]);
+        ctx.o = { ...(ctx.o as NonNullable<Ctx['o']>), convert_pending: true }; ctx.pending = 'done';
+      }
     }
-    await deliver(db, wa, sim, phone, turn.outs, { sessionId: session.id, leadId }, turn.done ? 'final' : 'question');
-    await db.updateSession(session.id, {
-      status: turn.done ? 'completed' : String(turn.step), current_step: turn.done ? 'done' : String(turn.step), last_message_at: nowIsoO, context: ctx, lead_id: leadId,
-    });
+    const stepO = completed ? 'done' : turn.done ? 'q5' : String(turn.step);
+    await deliver(db, wa, sim, phone, outsO, { sessionId: session.id, leadId }, completed ? 'final' : turn.done ? 'conversion_failed' : 'question');
+    await db.updateSession(session.id, { status: completed ? 'completed' : stepO, current_step: stepO, last_message_at: nowIsoO, context: ctx, lead_id: leadId });
     await done(leadId);
-    log({ ev: 'processed_outbound', phone: mask(phone), step: turn.step, route: ctx.fields.commercial_route });
-    return `outbound_${turn.step}`;
+    log({ ev: 'processed_outbound', phone: mask(phone), step: stepO, route: ctx.fields.commercial_route, converted: completed });
+    return `outbound_${stepO}`;
   }
 
   const pending: Step = ctx.pending ?? 'q1';

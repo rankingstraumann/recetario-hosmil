@@ -46,7 +46,9 @@ export interface OutState {
   asked: string[];           // tipos de pregunta ya formulados (maximo 5; una repeticion de la misma no cuenta)
   done: string[];            // tipos de pregunta resueltos
   pending_kind?: string;     // pregunta pendiente
-  route_msg?: boolean;       // mensaje contextual de la ruta ya enviado
+  route_message_shown_for?: string;  // ultima ruta cuyo mensaje contextual se mostro
+  route_msgs?: string[];     // rutas cuyo mensaje ya se mostro (cada una se muestra UNA vez)
+  convert_pending?: boolean; // la conversion fallo en BD: se reintenta en el siguiente mensaje
   prospect_id?: string;      // prospecto resuelto de forma inequivoca (inyectado; 9B)
 }
 

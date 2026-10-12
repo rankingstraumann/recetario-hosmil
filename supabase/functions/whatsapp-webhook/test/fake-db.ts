@@ -1,7 +1,8 @@
 // FAKE in-memory db para pruebas locales (misma interfaz que db.ts real)
 import type { Ctx, Fields } from './engine.ts';
 import { pickReplyTarget } from './reply.ts';
-export const T: any = { sessions: [], leads: [], messages: [], acts: [], prospects: [], sends: [] };
+import { selectOutboundProspect } from './outbound-sirios.ts';
+export const T: any = { sessions: [], leads: [], messages: [], acts: [], prospects: [], sends: [], failConversion: false, rpcCalls: [] };
 let seq = 1;
 const uid = () => 'id-' + (seq++);
 function score(l: any) {
@@ -26,6 +27,37 @@ export function makeDb() {
       if (t.kind !== 'one') return t.kind === 'none' ? 'none' : 'ambiguous';
       const row = T.prospects.find((p: any) => p.id === t.id && p.outreach_status === 'contacted'); if (row) row.outreach_status = 'replied';
       return 'updated';
+    },
+    async getOutboundSelection(phone: string) {
+      const cands = T.prospects.filter((p: any) => p.phone_e164 === phone && ['contacted', 'replied'].includes(p.outreach_status)).map((p: any) => clone(p));
+      const ids = cands.map((p: any) => p.id);
+      const sent = T.sends.filter((x: any) => x.status === 'sent' && ids.includes(x.prospect_id)).map((x: any) => ({ prospect_id: x.prospect_id, sent_at: x.sent_at }));
+      return cands.length ? selectOutboundProspect(cands, sent) : { kind: 'none' };
+    },
+    // Espejo FIEL de la RPC complete_outbound_conversion (sql/leads-digital/016): mismas barreras, idempotencia y efectos.
+    async completeOutboundConversion(a: any) {
+      T.rpcCalls.push(a.prospect_id);
+      if (T.failConversion) throw new Error('db_completeOutboundConversion:simulated');
+      const p = T.prospects.find((x: any) => x.id === a.prospect_id); if (!p) throw new Error('PROSPECTO_NO_ENCONTRADO');
+      const s = T.sessions.find((x: any) => x.id === a.session_id); if (!s) throw new Error('SESION_NO_ENCONTRADA');
+      if (p.is_test !== true) throw new Error('PROSPECTO_REAL_NO_PERMITIDO');
+      if (p.whatsapp_consent !== 'yes') throw new Error('SIN_CONSENTIMIENTO');
+      if (p.outreach_status === 'opted_out') throw new Error('PROSPECTO_OPT_OUT');
+      if (!['contacted', 'replied', 'converted'].includes(p.outreach_status) || (p.outreach_status === 'converted' && !p.linked_lead_id)) throw new Error('ESTADO_NO_VALIDO');
+      if (!p.phone_e164 || s.phone_e164 !== p.phone_e164 || s.context?.journey !== 'outbound_sirios' || s.context?.o?.prospect_id !== p.id) throw new Error('SESION_NO_CORRESPONDE');
+      if (['contacted', 'replied'].includes(p.outreach_status) && !T.sends.some((x: any) => x.prospect_id === p.id && x.status === 'sent')) throw new Error('SIN_ENVIO_VALIDO');
+      if (p.linked_lead_id && s.lead_id && p.linked_lead_id !== s.lead_id) throw new Error('LEAD_CONFLICTO');
+      const was = p.outreach_status; const f = a.fields || {};
+      let l = T.leads.find((x: any) => x.id === (p.linked_lead_id || s.lead_id));
+      let created = false;
+      const cols: any = { ...leadColumns({ ...f, high_intent: false, high_intent_reason: undefined }), customer_profile: f.customer_profile ?? null, commercial_route: f.commercial_route ?? null, product_interest: f.product_interest ?? null, cta_selected: f.cta_selected ?? null, ai_summary: a.summary ?? null };
+      if (!l) { l = { id: uid(), status: 'new', source_channel: 'meta_whatsapp', phone_e164: p.phone_e164, is_test: true, high_intent_override: false, updated_at: new Date().toISOString(), ...cols }; l.high_intent_override = f.high_intent === true; if (f.high_intent === true) l.high_intent_reason = f.high_intent_reason ?? null; T.leads.push(l); created = true; }
+      else { for (const k of Object.keys(cols)) { if (cols[k] !== null && cols[k] !== undefined) l[k] = cols[k]; } if (f.high_intent === true) { l.high_intent_override = true; l.high_intent_reason = l.high_intent_reason ?? f.high_intent_reason ?? null; } }
+      score(l);
+      p.linked_lead_id = l.id; p.outreach_status = 'converted'; s.lead_id = l.id;
+      T.messages.filter((m: any) => m.session_id === s.id && !m.lead_id).forEach((m: any) => (m.lead_id = l.id));
+      if (was !== 'converted') T.acts.push({ lead_id: l.id, event_type: 'outbound_sirios_conversion', detail: { session_id: s.id, prospect_id: p.id, lead_created: created } });
+      return { lead_id: l.id, score: l.score, temperature: l.temperature, status: l.status, lead_created: created, already_converted: was === 'converted' };
     },
     async getActiveSession(phone: string) { return clone(T.sessions.find((s: any) => s.phone_e164 === phone && !['completed','expired','handed_off'].includes(s.status)) || null); },
     async getLatestSession(phone: string) { const a = T.sessions.filter((s: any) => s.phone_e164 === phone); return clone(a[a.length - 1] || null); },
