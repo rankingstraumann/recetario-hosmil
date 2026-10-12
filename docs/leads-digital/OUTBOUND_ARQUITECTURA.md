@@ -128,6 +128,7 @@ Flujo: Lead Admin genera invitación → el cliente abre `consentimiento-whatsap
 - **Estado:** `015` **NO aplicada** (pendiente de autorización). Validada en transacción con rollback (21 casos: sin actividad, consentimiento, dry_run, sent, failed, replied, convertido, REAL solo lectura, no-admin, anon). Rollback: `999l_rollback_outbound_historial_prospecto.sql`.
 
 ## Pendiente (fases siguientes)
+- **Estrategia comercial/UX de Outbound 9 (SIRIOS / SIRIOS X3):** ver [`OUTBOUND_9_ESTRATEGIA_SIRIOS.md`](OUTBOUND_9_ESTRATEGIA_SIRIOS.md) (decisiones congeladas; sin código todavía).
 Parser Excel/CSV (normalización E.164, duplicados, consentimiento), RPC/Edge Function de importación, plantilla WhatsApp aprobada y envío con control de consentimiento/baja, vínculo prospecto→lead en el webhook (match por teléfono), opt-out.
 
 ## Rollback
