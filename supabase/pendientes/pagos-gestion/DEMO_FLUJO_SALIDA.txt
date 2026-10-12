@@ -1,0 +1,28 @@
+
+=== Caso 1: UDP — Customer Service primero, luego Finanzas ===
+  cotización "Enviada al paciente"               cotización="Enviada al paciente" | envío=- | SAP=- | Finanzas=no 
+  paciente informa pago (RPC público existente)  cotización="Pago informado" | envío=pendiente | SAP=- | Finanzas=no 
+  emisor (Deno) envía correo interno             cotización="Pago informado" | envío=aceptado | SAP=- | Finanzas=no 
+    Asunto: Scarlett Salas López - RUT paciente: 16072120-0 - Institución: UDP Santiago
+    Para: cobranza.cl@straumann.com, m.cl.customerservicechile@straumann.com
+    CC: daniel.jordan@straumann.com, isleinny.rojas@straumann.com
+    Reply-To: reply+<token oculto>@pagos.recetariostra.cl
+  Customer Service responde con N° SAP -> registrado cotización="Pago informado" | envío=aceptado | SAP=4500123456 | Finanzas=no 
+  Finanzas responde "Pago validado" -> pedido_ingresado cotización="Pedido ingresado al sistema" | envío=aceptado | SAP=4500123456 | Finanzas=sí 
+
+=== Caso 2: HOSMIL — Finanzas primero, luego Customer Service ===
+  cotización "Enviada al paciente"               cotización="Enviada al paciente" | envío=- | SAP=- | Finanzas=no 
+  paciente informa pago (RPC público existente)  cotización="Pago informado" | envío=pendiente | SAP=- | Finanzas=no 
+  emisor (Deno) envía correo interno             cotización="Pago informado" | envío=aceptado | SAP=- | Finanzas=no 
+    Asunto: Scarlett Salas López - RUT paciente: 16072120-0 - Institución: HOSMIL
+    Para: cobranza.cl@straumann.com, m.cl.customerservicechile@straumann.com
+    CC: daniel.jordan@straumann.com, gloria.trejos@straumann.com
+    Reply-To: reply+<token oculto>@pagos.recetariostra.cl
+  Finanzas responde "Pago validado" -> pago_validado cotización="Pago validado" | envío=aceptado | SAP=- | Finanzas=sí 
+  Customer Service responde con N° SAP -> pedido_ingresado cotización="Pedido ingresado al sistema" | envío=aceptado | SAP=4500123456 | Finanzas=sí 
+
+=== Caso 3: respuestas NO válidas no cambian nada ===
+  remitente no autorizado -> no_autorizado
+  CS sin autenticación    -> no_autorizado
+  Finanzas ambigua        -> ambigua_registrada
+  estado final (sin cambios)                     cotización="Pago informado" | envío=aceptado | SAP=- | Finanzas=no 
