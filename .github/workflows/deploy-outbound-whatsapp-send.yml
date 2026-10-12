@@ -1,0 +1,53 @@
+name: Deploy outbound-whatsapp-send + whatsapp-webhook (OUTBOUND 7, PRUEBA)
+
+# SOLO manual (workflow_dispatch): NO se ejecuta por push.
+# Hace TODO en una corrida: pruebas -> secretos OUTBOUND_* (APPROVED=false explicito) -> deploy outbound-whatsapp-send -> deploy whatsapp-webhook.
+# Con OUTBOUND_TEMPLATE_APPROVED=false la funcion queda SIEMPRE en dry_run: NO llama a Meta aunque existan WHATSAPP_ACCESS_TOKEN / WHATSAPP_PHONE_NUMBER_ID.
+# No envia ningun WhatsApp. Usa unicamente secrets.SUPABASE_ACCESS_TOKEN (nunca se imprime).
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout leads-outbound-v1-preview
+        uses: actions/checkout@v4
+        with:
+          ref: leads-outbound-v1-preview
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Pruebas (si alguna falla, no se despliega nada)
+        run: |
+          bash supabase/functions/outbound-whatsapp-send/test/run-tests.sh
+          bash supabase/functions/whatsapp-webhook/test/run-local.sh | tee /tmp/webhook-tests.txt
+          ! grep -q "^FAIL" /tmp/webhook-tests.txt
+
+      - name: Configurar secretos OUTBOUND_* (modo PRUEBA, plantilla NO aprobada)
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+        run: |
+          npx --yes supabase@latest secrets set \
+            OUTBOUND_WHATSAPP_ENABLED=true \
+            OUTBOUND_WHATSAPP_TEST_ONLY=true \
+            OUTBOUND_TEMPLATE_NAME=trade_up_sirios_intro \
+            OUTBOUND_TEMPLATE_LANGUAGE=es \
+            OUTBOUND_TEMPLATE_APPROVED=false \
+            --project-ref gzimllusbxjorbsbtsse
+
+      - name: Deploy outbound-whatsapp-send (mantiene verify_jwt=true)
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+        run: npx --yes supabase@latest functions deploy outbound-whatsapp-send --project-ref gzimllusbxjorbsbtsse
+
+      - name: Deploy whatsapp-webhook (publico para Meta con no-verify-jwt; seguridad HMAC y verify token intactas)
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+        run: npx --yes supabase@latest functions deploy whatsapp-webhook --project-ref gzimllusbxjorbsbtsse --no-verify-jwt
