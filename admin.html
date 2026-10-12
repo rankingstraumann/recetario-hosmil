@@ -5357,8 +5357,18 @@ function prospectosInvError(e) {
   var m = String((e && e.message) || ''), k = Object.keys(PROSP_CONS_ERR).filter(function (c) { return m.indexOf(c) >= 0; })[0];
   return k ? PROSP_CONS_ERR[k] : 'No se pudo completar la operación. No se cambió nada.';
 }
+// URL PUBLICA para links de consentimiento (cliente externo, sin login).
+// NO usar window.location.origin: el admin/preview puede estar protegido por Vercel Authentication.
+// Unico lugar a cambiar al pasar a produccion o a otro dominio publico. Sin "/" final.
+// Requiere que consentimiento-whatsapp.html este desplegado en ese dominio (rama main).
+var CONSENT_PUBLIC_BASE_URL = 'https://recetario-hosmil.vercel.app';
+function consentBaseUrlValida() {
+  var b = String(CONSENT_PUBLIC_BASE_URL || '');
+  return /^https:\/\/[a-z0-9.-]+$/i.test(b) && !/-git-|localhost|127\.0\.0\.1/i.test(b);
+}
 async function prospectosInvGenerar() {
   var C = prospectosCons; if (!C.id || C.generando) return;
+  if (!consentBaseUrlValida()) { C.errorInv = 'Falta configurar la URL pública de consentimiento (CONSENT_PUBLIC_BASE_URL). No se generó ningún link.'; prospectosConsPintar(); return; }
   var p = prospectosDatos.filter(function (x) { return x.id === C.id; })[0]; if (!p) return;
   var hay = prospectoInvDe(p.id).some(function (i) { return prospectoInvEstado(i) === 'pendiente'; });
   var txt = 'Generar un link personal de consentimiento WhatsApp para:\n' + (p.full_name || p.clinic_name || p.external_customer_id || 'este prospecto') + '\n\nEl link es de un solo uso y vence en 14 días' + (hay ? '. El link vigente anterior quedará revocado' : '') + '.\nSe mostrará UNA sola vez (no queda guardado). No se envía automáticamente por ningún canal ni se enviará ningún WhatsApp.\n\n¿Generar link?';
@@ -5367,7 +5377,7 @@ async function prospectosInvGenerar() {
   try {
     var r = await sb.rpc('create_consent_invitation', { p_prospect_id: C.id, p_ttl_days: 14 });
     if (r.error) throw r.error;
-    C.link = { url: window.location.origin + '/consentimiento-whatsapp.html?t=' + encodeURIComponent(r.data.token), vence: r.data.expires_at };
+    C.link = { url: CONSENT_PUBLIC_BASE_URL + '/consentimiento-whatsapp.html?t=' + encodeURIComponent(r.data.token), vence: r.data.expires_at };
     await prospectosInvRecargar();
   } catch (e) { C.errorInv = prospectosInvError(e); }
   C.generando = false; prospectosConsPintar();
