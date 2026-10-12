@@ -1,6 +1,7 @@
 // FAKE in-memory db para pruebas locales (misma interfaz que db.ts real)
 import type { Ctx, Fields } from './engine.ts';
-export const T: any = { sessions: [], leads: [], messages: [], acts: [], prospects: [] };
+import { pickReplyTarget } from './reply.ts';
+export const T: any = { sessions: [], leads: [], messages: [], acts: [], prospects: [], sends: [] };
 let seq = 1;
 const uid = () => 'id-' + (seq++);
 function score(l: any) {
@@ -17,7 +18,15 @@ const clone = (x: any) => (x ? JSON.parse(JSON.stringify(x)) : x);
 export function makeDb() {
   return {
     async findInbound(pid: string) { const m = T.messages.find((x: any) => x.provider_message_id === pid); return m ? clone(m) : null; },
-    async markProspectReplied(phone: string) { T.prospects.filter((p: any) => p.phone_e164 === phone && p.outreach_status === 'contacted').forEach((p: any) => (p.outreach_status = 'replied')); },
+    async markProspectReplied(phone: string) {
+      const cand = T.prospects.filter((p: any) => p.phone_e164 === phone && p.outreach_status === 'contacted');
+      const ids = cand.map((p: any) => p.id);
+      const sent = ids.length > 1 ? T.sends.filter((x: any) => x.status === 'sent' && ids.includes(x.prospect_id)).map((x: any) => ({ prospect_id: x.prospect_id, sent_at: x.sent_at })) : [];
+      const t = pickReplyTarget(ids, sent);
+      if (t.kind !== 'one') return t.kind === 'none' ? 'none' : 'ambiguous';
+      const row = T.prospects.find((p: any) => p.id === t.id && p.outreach_status === 'contacted'); if (row) row.outreach_status = 'replied';
+      return 'updated';
+    },
     async getActiveSession(phone: string) { return clone(T.sessions.find((s: any) => s.phone_e164 === phone && !['completed','expired','handed_off'].includes(s.status)) || null); },
     async getLatestSession(phone: string) { const a = T.sessions.filter((s: any) => s.phone_e164 === phone); return clone(a[a.length - 1] || null); },
     async createSession(phone: string, ctx: Ctx, leadId: string | null, nowIso: string) {

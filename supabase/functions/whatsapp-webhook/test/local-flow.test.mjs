@@ -122,4 +122,36 @@ ok('O7 el bot existente responde igual (sesion + pregunta Q1), sin motor duplica
 await send(PN, null, { text: 'hola' }); await send(PP, null, { text: 'hola' });
 ok('O7 pending y opted_out NO cambian por una respuesta entrante', T.prospects[1].outreach_status === 'pending' && T.prospects[2].outreach_status === 'opted_out');
 ok('O7 consentimiento intacto', T.prospects.every(p => p.id === 'p3' ? p.whatsapp_consent === 'no' : p.whatsapp_consent === 'yes'));
+// OUTBOUND 7 (correccion): resolucion CONSERVADORA — nunca marca varios prospectos por telefono compartido
+import { pickReplyTarget } from './reply.ts';
+const logs = []; const origLog = console.log; const cap = (...a) => { logs.push(a.join(' ')); }; console.log = cap;
+const okR = (n, c) => { console.log = origLog; ok(n, c); console.log = cap; };
+const at = (m) => new Date(Date.UTC(2026, 9, 11, 12, m)).toISOString();
+const S1 = '+56900002001', S2 = '+56900002002', S3 = '+56900002003', S4 = '+56900002004', S5 = '+56900002005';
+T.prospects.push(
+  { id: 'a1', phone_e164: S1, outreach_status: 'contacted', whatsapp_consent: 'yes' },
+  { id: 'b1', phone_e164: S2, outreach_status: 'contacted', whatsapp_consent: 'yes' }, { id: 'b2', phone_e164: S2, outreach_status: 'contacted', whatsapp_consent: 'yes' }, { id: 'b3', phone_e164: S2, outreach_status: 'pending', whatsapp_consent: 'yes' },
+  { id: 'c1', phone_e164: S3, outreach_status: 'contacted', whatsapp_consent: 'yes' }, { id: 'c2', phone_e164: S3, outreach_status: 'contacted', whatsapp_consent: 'yes' },
+  { id: 'd1', phone_e164: S4, outreach_status: 'failed', whatsapp_consent: 'yes' }, { id: 'd2', phone_e164: S4, outreach_status: 'converted', whatsapp_consent: 'yes' }, { id: 'd3', phone_e164: S4, outreach_status: 'opted_out', whatsapp_consent: 'no' }, { id: 'd4', phone_e164: S4, outreach_status: 'pending', whatsapp_consent: 'yes' },
+  { id: 'e1', phone_e164: S5, outreach_status: 'contacted', whatsapp_consent: 'yes' }, { id: 'e2', phone_e164: S5, outreach_status: 'contacted', whatsapp_consent: 'yes' });
+T.sends.push({ prospect_id: 'b2', status: 'sent', sent_at: at(10) }, { prospect_id: 'b1', status: 'failed', sent_at: at(30) }, { prospect_id: 'b3', status: 'sent', sent_at: at(40) },
+  { prospect_id: 'e1', status: 'sent', sent_at: at(5) }, { prospect_id: 'e2', status: 'sent', sent_at: at(5) });
+const st = (id) => T.prospects.find((p) => p.id === id).outreach_status;
+await send(S1, null, { text: 'hola' });
+okR('R1 1 candidato contacted -> solo ese pasa a replied', st('a1') === 'replied');
+await send(S2, null, { text: 'hola' });
+okR('R2 2 prospectos mismo telefono, solo b2 con envio sent -> cambia SOLO b2 (b1 contacted y b3 pending intactos)', st('b2') === 'replied' && st('b1') === 'contacted' && st('b3') === 'pending');
+logs.length = 0;
+await send(S3, null, { text: 'hola' });
+okR('R3 2 candidatos sin evidencia de envio -> NINGUNO cambia', st('c1') === 'contacted' && st('c2') === 'contacted');
+okR('R3b log tecnico prospect_replied_ambiguous (sin telefono ni nombre)', logs.some((l) => l.includes('prospect_replied_ambiguous')) && !logs.filter((l) => l.includes('prospect_replied_ambiguous')).some((l) => /5690000|a1|c1/.test(l)));
+await send(S4, null, { text: 'hola' });
+okR('R4 0 candidatos (failed/converted/opted_out/pending) -> ninguno cambia', st('d1') === 'failed' && st('d2') === 'converted' && st('d3') === 'opted_out' && st('d4') === 'pending');
+logs.length = 0;
+await send(S5, null, { text: 'hola' });
+okR('R5 empate exacto de envios entre dos prospectos -> ambiguo, ninguno cambia', st('e1') === 'contacted' && st('e2') === 'contacted' && logs.some((l) => l.includes('prospect_replied_ambiguous')));
+okR('R6 consentimiento intacto en todos', T.prospects.every((p) => (p.id === 'd3' || p.id === 'p3') ? p.whatsapp_consent === 'no' : p.whatsapp_consent === 'yes'));
+const n = (r) => JSON.stringify(r);
+okR('R7 pickReplyTarget puro: none / unico / mas reciente / sin evidencia / ids duplicados', n(pickReplyTarget([], [])) === '{"kind":"none"}' && pickReplyTarget(['x'], []).kind === 'one' && pickReplyTarget(['x', 'y'], [{ prospect_id: 'x', sent_at: at(1) }, { prospect_id: 'y', sent_at: at(9) }]).id === 'y' && pickReplyTarget(['x', 'y'], []).kind === 'ambiguous' && pickReplyTarget(['x', 'x'], []).kind === 'one' && pickReplyTarget(['x', 'y'], [{ prospect_id: 'z', sent_at: at(1) }]).kind === 'ambiguous');
+console.log = origLog;
 console.log(`\n${results.filter(Boolean).length}/${results.length} PASS`);

@@ -1,6 +1,7 @@
 // db.ts — Acceso a Supabase con service_role (solo dentro de la Edge Function; la key la inyecta Supabase).
 import { createClient } from 'npm:@supabase/supabase-js@2';
 import type { Ctx, Fields } from './engine.ts';
+import { pickReplyTarget, type SentRow } from './reply.ts';
 
 export type Session = { id: string; phone_e164: string; lead_id: string | null; current_step: string; status: string; last_message_at: string; context: Ctx };
 export type Lead = { id: string; status: string; updated_at: string; high_intent_override: boolean; score: number; temperature: string };
@@ -19,10 +20,24 @@ export function makeDb() {
       if (error) fail('findInbound', error);
       return data as { id: number; created_at: string; metadata: any } | null;
     },
-    /** OUTBOUND 7: respuesta entrante de un prospecto ya contactado => replied. Solo contacted->replied; no toca consentimiento ni crea nada. */
-    async markProspectReplied(phone: string) {
-      const { error } = await sb.from('digital_prospects').update({ outreach_status: 'replied' }).eq('phone_e164', phone).eq('outreach_status', 'contacted');
-      if (error) fail('markProspectReplied', error);
+    /** OUTBOUND 7: respuesta entrante de un prospecto contactado => replied. CONSERVADOR: nunca actualiza por telefono en bloque.
+     *  Candidatos = phone exacto + contacted; 1 => ese; >1 => el del envio 'sent' mas reciente (digital_outbound_sends); si no es inequivoco => ninguno. */
+    async markProspectReplied(phone: string): Promise<'updated' | 'none' | 'ambiguous'> {
+      const c = await sb.from('digital_prospects').select('id').eq('phone_e164', phone).eq('outreach_status', 'contacted').limit(50);
+      if (c.error) fail('replyCandidates', c.error);
+      const ids = ((c.data || []) as { id: string }[]).map((r) => r.id);
+      let sent: SentRow[] = [];
+      if (ids.length > 1) {
+        const s = await sb.from('digital_outbound_sends').select('prospect_id,sent_at').eq('status', 'sent').in('prospect_id', ids).order('sent_at', { ascending: false }).limit(50);
+        if (s.error) fail('replySends', s.error);
+        sent = (s.data || []) as SentRow[];
+      }
+      const t = pickReplyTarget(ids, sent);
+      if (t.kind !== 'one') return t.kind === 'none' ? 'none' : 'ambiguous';
+      // UN solo prospecto, por id (nunca por telefono); la condicion contacted evita pisar otro estado
+      const u = await sb.from('digital_prospects').update({ outreach_status: 'replied' }).eq('id', t.id).eq('outreach_status', 'contacted');
+      if (u.error) fail('markProspectReplied', u.error);
+      return 'updated';
     },
     async getActiveSession(phone: string) {
       const { data, error } = await sb.from('digital_lead_sessions').select('*').eq('phone_e164', phone)
