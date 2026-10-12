@@ -4630,6 +4630,17 @@ var leadsActividades = [];
 
 var LEADS_NEED = { renew: 'Renovar', trade_up: 'Trade Up', first_scanner: 'Primer scanner', digital_flow: 'Mejorar flujo digital', know_sirios: 'Conocer SIRIOS', information_only: 'Solo información', other: 'Otro' };
 var LEADS_PLAZO = { now: 'Ahora', '1_3_months': '1–3 meses', '3_6_months': '3–6 meses', later: 'Más adelante', evaluating: 'Evaluando' };
+// ---- Outbound 9C: datos comerciales del journey SIRIOS (solo lectura; NULL en leads antiguos/Inbound => no se muestran) ----
+var LEADS_PERFIL = { owner_partner: 'Dueño/a o socio/a', clinician: 'Clínico/a', postgraduate: 'Postgrado / formación', explorer: 'Explorando' };
+var LEADS_RUTA = { trade_up: 'Trade Up', first_scanner: 'Primer scanner', renewal_workflow: 'Renovación / flujo digital', postgraduate_influencer: 'Postgrado / influenciador', exploration: 'Exploración' };
+var LEADS_INTERES = { sirios: 'SIRIOS', sirios_x3: 'SIRIOS X3', compare: 'Comparar ambos', undecided: 'Sin definir' };
+var LEADS_CTA = { request_evaluation: 'Evaluación comercial', trade_up_evaluation: 'Evaluación Trade Up', demo: 'Demostración', specialist: 'Hablar con especialista', financing: 'Financiamiento',
+  share_clinic: 'Compartir con clínica', compare: 'Comparar productos', learn_sirios: 'Conocer SIRIOS', learn_sirios_x3: 'Conocer SIRIOS X3', information: 'Información' };
+function leadsComercial(l) {   // [[etiqueta, texto]] solo de campos presentes y conocidos; nunca "null" ni valores tecnicos
+  var d = [['Perfil', LEADS_PERFIL, l && l.customer_profile], ['Ruta', LEADS_RUTA, l && l.commercial_route], ['Interés', LEADS_INTERES, l && l.product_interest], ['CTA', LEADS_CTA, l && l.cta_selected]], out = [];
+  d.forEach(function (x) { if (x[2] && Object.prototype.hasOwnProperty.call(x[1], x[2])) out.push([x[0], x[1][x[2]]]); });
+  return out;
+}
 var LEADS_TEMP = { hot: 'HOT', warm: 'Tibio', cold: 'Frío' };
 var LEADS_ESTADO = { nuevo: 'Nuevo', assigned: 'Asignado', contacted: 'Contactado', demo: 'Demo', quote: 'Cotización', won: 'Ganado', lost: 'Perdido' };
 
@@ -4956,6 +4967,7 @@ function prospectosHistEvento(ev) {
     t = 'Convertido a lead'; det.push('Lead ' + String(d.id || '').slice(0, 8));
     det.push('Score ' + (d.score === null || d.score === undefined ? '—' : d.score) + ' · ' + (LEADS_TEMP[d.temperature] || d.temperature || '—'));
     det.push('Estado del lead: ' + (LEADS_ESTADO[d.status] || d.status || '—') + (d.is_test ? ' · PRUEBA' : ''));
+    leadsComercial({ customer_profile: d.customer_profile, commercial_route: d.commercial_route, product_interest: d.product_interest, cta_selected: d.cta_selected }).forEach(function (r) { det.push(r[0] + ': ' + r[1]); });
   } else t = k;
   return { t: t, det: det, cat: PROSP_HIST_CAT[k] || ['#a1a1aa', ''] };
 }
@@ -5882,6 +5894,7 @@ async function leadsAbrir(id, conservar) {
       '<div class="k">Plazo</div><div>' + lEsc(LEADS_PLAZO[l.purchase_timeline] || '—') + '</div>' +
       '<div class="k">Demo</div><div>' + leadsSiNo(l.wants_demo) + '</div>' +
       '<div class="k">Cotización</div><div>' + leadsSiNo(l.wants_quote) + '</div>' +
+      leadsComercial(l).map(function (r) { return '<div class="k">' + r[0] + '</div><div>' + lEsc(r[1]) + '</div>'; }).join('') +
       '<div class="k">Ingreso</div><div>' + lEsc(leadsFechaCorta(l.created_at)) + '</div>' +
     '</div>' +
     '<h4>Resumen IA</h4><div class="ld-box">' + lEsc(l.ai_summary || 'Sin resumen todavía.') + '</div>' +
