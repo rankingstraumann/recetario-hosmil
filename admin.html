@@ -4843,6 +4843,8 @@ function prospectoElegibilidad(p) {
   if (prospectoListo(p)) return { ok: true, cls: 'ok', txt: 'Listo para contactar' };
   if (p.whatsapp_eligible === true) {
     if (p.outreach_status === 'failed') return { ok: false, cls: 'unk', txt: 'Elegible, pero el último envío falló' };
+    if (p.outreach_status === 'pending') return { ok: false, cls: 'neu', txt: p.is_test === true ? 'Elegible en prueba · sin envío' : 'Elegible, pendiente de contacto' };
+    if (p.outreach_status === 'replied') return { ok: false, cls: 'neu', txt: 'Elegible, ya respondió' };
     return { ok: false, cls: 'neu', txt: 'Elegible, ya contactado' };
   }
   if (!p.phone_e164) return { ok: false, cls: 'no', txt: 'Teléfono inválido: no elegible' };
