@@ -177,3 +177,29 @@ Outbound 9 debe sentirse como **una experiencia de descubrimiento y evaluación 
 
 ## Fuera de alcance de este documento (se decide al desarrollar)
 Campos/migraciones (`customer_profile`, `commercial_route`, `product_interest`, plazo, CTA), cambios de scoring, plantilla V2 con imagen, creación de plantillas en Meta, y cualquier habilitación de contacto real. Cada uno requerirá su propio diagnóstico y autorización.
+
+---
+
+## OUTBOUND 9A — motor conversacional implementado, NO desplegado
+
+**Estado:** implementado y probado localmente (69 pruebas del journey + 50 de Inbound/Outbound 7). **No desplegado, sin migración, sin envíos.** El journey no se activa solo: en 9A únicamente se inyecta en pruebas un prospecto TEST ya resuelto; la activación real es 9B.
+
+**Arquitectura**
+- Mismo `whatsapp-webhook` y mismo motor; **no hay un segundo bot**. El journey se distingue por `session.context.journey = 'outbound_sirios'`. Sin ese valor, el flujo es Inbound V1, sin cambios (50/50 de sus pruebas).
+- `outbound-sirios.ts` (módulo nuevo, puro y determinístico: sin IA, sin red, sin I/O). `engine.ts` solo suma tipos (`journey`, estado `o`, campos `customer_profile`, `commercial_route`, `product_interest`, `cta_selected`). `index.ts` suma una rama que delega en `outboundTurn` y conserva el journey si la sesión expira (72 h).
+- Sin migración: todo vive en `session.context` (`fields` + `o`). Reutiliza `q1`–`q5` (`q1b` queda solo para Inbound).
+- Lead: se crea/actualiza solo al completar el journey, con los campos actuales (`uses_intraoral_scanner`, `current_scanner`, `need`, `purchase_timeline`, `wants_demo`, `wants_quote`, contacto). Los campos nuevos **no** se escriben en `digital_leads`. `high_intent` queda **solo en el contexto**: no se propaga a `high_intent_override`, así que el scoring no cambia (se reevalúa en 9B).
+
+**Flujo (planificador determinístico, máximo 5 preguntas distintas)**
+Apertura (no cuenta como pregunta; sin «soy el asistente digital»; 36 cuotas una vez) → `q1` perfil → `q2` situación digital → `q3` necesidad/ruta →
+- ruta `trade_up`/`renewal_workflow` con escáner declarado y modelo desconocido: `q4` = escáner actual, `q5` = CTA (sin timing);
+- resto: `q4` = CTA; `q5` = solo los datos de contacto faltantes (una sola pregunta) o, si no faltan, timing.
+- Nunca se crea una pregunta artificial; si el presupuesto se agota, se cierra. Repetir la pregunta pendiente tras un saludo o una consulta no consume presupuesto.
+- Datos del prospecto (nombre, clínica, comuna) se prellenan y no se piden de nuevo; postgrado no requiere clínica. «No estoy seguro» no inventa true/false.
+
+**Texto libre / intención (solo journey outbound):** producto (`sirios` solo si se escribe expresamente; `sirios_x3`; `compare`), demo, cotización/evaluación, Trade Up, especialista, «ahora/este mes» y financiamiento fijan `cta_selected` y `high_intent` con una razón fija (no se repite el texto del cliente).
+**Financiamiento:** ante «cuotas», «tasa», «cuánto queda la cuota», etc. responde solo «Las condiciones dependen de la evaluación comercial de cada caso…», registra `cta_selected=financing` + `high_intent` y retoma la pregunta pendiente. No inventa tasas, CAE, cuotas, precios ni aprobación.
+**Cierres:** listos en código por ruta (Trade Up, primer scanner, renovación, postgrado según CTA, exploración suave); inactivos en producción hasta 9B.
+**Seguridad de teléfono:** `resolveOutboundProspect` reutiliza `pickReplyTarget` (reply.ts): solo asocia un prospecto si es inequívoco; ambiguo/ninguno ⇒ no se elige ninguno.
+
+**Pendiente para 9B (no hecho):** activación real del journey desde el prospecto resuelto, reevaluación de scoring con las nuevas señales, plantilla V2, cualquier envío real.

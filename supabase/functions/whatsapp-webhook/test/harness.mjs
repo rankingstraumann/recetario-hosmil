@@ -5,7 +5,9 @@ process.env.WHATSAPP_APP_SECRET = 'sec'; process.env.WHATSAPP_VERIFY_TOKEN = 'vt
 process.env.LEADS_BOT_ENABLED = 'true'; process.env.WHATSAPP_LEADS_IS_TEST = 'true'; process.env.ANTHROPIC_API_KEY = 'k';
 // LLM simulado (reglas) vía fetch a api.anthropic.com
 let llmDown = false;
+export const net = { llm: 0, meta: 0, other: 0 };
 globalThis.fetch = async (url, init) => {
+  if (String(url).includes('anthropic')) net.llm++; else if (/facebook|graph\./.test(String(url))) net.meta++; else net.other++;
   if (!String(url).includes('anthropic')) throw new Error('unexpected fetch');
   if (llmDown) return new Response('x', { status: 529 });
   const t = JSON.parse(JSON.parse(init.body).messages[0].content).mensaje.toLowerCase();

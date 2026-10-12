@@ -17,10 +17,19 @@ export interface Fields {
   commune?: string;
   high_intent?: boolean;
   high_intent_reason?: string;
+  // OUTBOUND 9A (journey outbound_sirios): viven SOLO en session.context.fields; no se persisten en digital_leads.
+  customer_profile?: string;    // owner_partner | clinician | postgraduate | explorer
+  commercial_route?: string;    // trade_up | first_scanner | renewal_workflow | postgraduate_influencer | exploration
+  product_interest?: string;    // sirios | sirios_x3 | compare | undecided
+  cta_selected?: string;        // request_evaluation | trade_up_evaluation | demo | specialist | financing | share_clinic | compare | learn_sirios | learn_sirios_x3 | information
 }
+
+export type Journey = 'inbound' | 'outbound_sirios';
 
 export interface Ctx {
   fields: Fields;
+  journey?: Journey;     // ausente = inbound (Inbound V1 no cambia). outbound_sirios = OUTBOUND 9A (ver outbound-sirios.ts)
+  o?: OutState;          // estado del journey outbound_sirios (solo se usa con journey='outbound_sirios')
   pending?: Step;        // última pregunta enviada
   greeted?: boolean;
   first_turn?: boolean;  // no evaluar fuera-de-flujo en el primer turno
@@ -30,6 +39,15 @@ export interface Ctx {
   q5_asks?: number;
   llm_calls?: number;
   msg_count?: number;
+}
+
+export interface OutState {
+  opened?: boolean;          // apertura ya enviada
+  asked: string[];           // tipos de pregunta ya formulados (maximo 5; una repeticion de la misma no cuenta)
+  done: string[];            // tipos de pregunta resueltos
+  pending_kind?: string;     // pregunta pendiente
+  route_msg?: boolean;       // mensaje contextual de la ruta ya enviado
+  prospect_id?: string;      // prospecto resuelto de forma inequivoca (inyectado; 9B)
 }
 
 export const MAX_Q5_ASKS = 3;

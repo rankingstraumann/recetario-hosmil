@@ -5,6 +5,7 @@ import {
   leadReady, plainFallback, questionFor, strongIntent, trivialMessage, type Ctx, type Fields, type Out, type Step,
 } from './engine.ts';
 import { extractWithLlm } from './extract.ts';
+import { leadFieldsOut, outboundSummary, outboundTurn } from './outbound-sirios.ts';
 import { buildSummary } from './summary.ts';
 import { sendMessage, type WaCfg } from './whatsapp.ts';
 import { leadColumns, makeDb, type Db, type Lead, type Session } from './db.ts';
@@ -64,7 +65,9 @@ async function resolve(db: Db, phone: string, nowMs: number): Promise<Decision> 
     // CASO B: expira y retoma datos en una sesión nueva (mismo lead si existe)
     await db.updateSession(active.id, { status: 'expired' });
     const prev: Ctx = active.context || { fields: {} };
-    const ctx: Ctx = { fields: { ...(prev.fields || {}) }, greeted: true, first_turn: true, resumed: true, llm_calls: 0, msg_count: 0 };
+    const ctx: Ctx = prev.journey === 'outbound_sirios'
+      ? { ...prev, fields: { ...(prev.fields || {}) }, first_turn: true, resumed: true }   // OUTBOUND 9A: conserva el journey y su estado
+      : { fields: { ...(prev.fields || {}) }, greeted: true, first_turn: true, resumed: true, llm_calls: 0, msg_count: 0 };
     const s = await db.createSession(phone, ctx, active.lead_id, nowIso);
     return { kind: 'flow', session: s, resumed: true };
   }
@@ -80,7 +83,9 @@ async function resolve(db: Db, phone: string, nowMs: number): Promise<Decision> 
   }
   if (last && last.status === 'expired' && last.lead_id) {
     const prev: Ctx = last.context || { fields: {} };
-    const ctx: Ctx = { fields: { ...(prev.fields || {}) }, greeted: true, first_turn: true, resumed: true, llm_calls: 0, msg_count: 0 };
+    const ctx: Ctx = prev.journey === 'outbound_sirios'
+      ? { ...prev, fields: { ...(prev.fields || {}) }, first_turn: true, resumed: true }
+      : { fields: { ...(prev.fields || {}) }, greeted: true, first_turn: true, resumed: true, llm_calls: 0, msg_count: 0 };
     return { kind: 'flow', session: await db.createSession(phone, ctx, last.lead_id, nowIso), resumed: true };
   }
   const s = await db.createSession(phone, { fields: {}, first_turn: true, llm_calls: 0, msg_count: 0 }, null, nowIso);
@@ -185,6 +190,32 @@ async function handleMessage(db: Db, wa: WaCfg, sim: Sim, m: any): Promise<strin
     await db.updateSession(session.id, { last_message_at: new Date(nowMs).toISOString(), context: ctx });
     await done(leadId);
     return ok ? 'unsupported' : 'unsupported_send_failed';
+  }
+
+  // ===== OUTBOUND 9A: journey outbound_sirios (mismo webhook/motor; se activa SOLO por session.context.journey; Inbound V1 no pasa por aqui) =====
+  if (ctx.journey === 'outbound_sirios') {
+    const turn = outboundTurn(ctx, { text, interactiveId: inb.interactiveId });
+    ctx = turn.ctx; ctx.first_turn = false;
+    const nowIsoO = new Date(nowMs).toISOString();
+    if (turn.done) {
+      const lf = leadFieldsOut(ctx.fields);   // 9A: la intencion fuerte NO se propaga al scoring; queda en el contexto
+      let leadO: Lead | null = null;
+      if (!leadId) {
+        leadO = await db.createLead(phone, lf, env('WHATSAPP_LEADS_IS_TEST') !== 'false');
+        leadId = leadO.id;
+        await db.linkMessages(session.id, leadId);
+        await db.addActivity(leadId, 'whatsapp_lead_created', { session_id: session.id, is_test: env('WHATSAPP_LEADS_IS_TEST') !== 'false', journey: 'outbound_sirios' });
+      }
+      leadO = await db.updateLead(leadId, { ...leadColumns(lf), ai_summary: outboundSummary(ctx.fields) });
+      await db.addActivity(leadId, 'whatsapp_conversation_completed', { temperature: leadO.temperature, score: leadO.score, session_id: session.id, journey: 'outbound_sirios' });
+    }
+    await deliver(db, wa, sim, phone, turn.outs, { sessionId: session.id, leadId }, turn.done ? 'final' : 'question');
+    await db.updateSession(session.id, {
+      status: turn.done ? 'completed' : String(turn.step), current_step: turn.done ? 'done' : String(turn.step), last_message_at: nowIsoO, context: ctx, lead_id: leadId,
+    });
+    await done(leadId);
+    log({ ev: 'processed_outbound', phone: mask(phone), step: turn.step, route: ctx.fields.commercial_route });
+    return `outbound_${turn.step}`;
   }
 
   const pending: Step = ctx.pending ?? 'q1';
