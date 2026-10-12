@@ -132,6 +132,9 @@ async function handleMessage(db: Db, wa: WaCfg, sim: Sim, m: any): Promise<strin
     await db.updateMessage(ex.id, { metadata: { ...md, attempts } });
   }
 
+  // OUTBOUND 7: si el remitente es un prospecto contactado por plantilla => replied (el bot sigue igual). Best-effort: nunca rompe el flujo.
+  try { await db.markProspectReplied(phone); } catch (_e) { log({ ev: 'prospect_replied_failed' }); }
+
   const inb = readInbound(m);
   const text = inb.text.slice(0, MAX_TEXT);
   const dec = await resolve(db, phone, nowMs);

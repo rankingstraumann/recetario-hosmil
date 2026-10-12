@@ -19,6 +19,11 @@ export function makeDb() {
       if (error) fail('findInbound', error);
       return data as { id: number; created_at: string; metadata: any } | null;
     },
+    /** OUTBOUND 7: respuesta entrante de un prospecto ya contactado => replied. Solo contacted->replied; no toca consentimiento ni crea nada. */
+    async markProspectReplied(phone: string) {
+      const { error } = await sb.from('digital_prospects').update({ outreach_status: 'replied' }).eq('phone_e164', phone).eq('outreach_status', 'contacted');
+      if (error) fail('markProspectReplied', error);
+    },
     async getActiveSession(phone: string) {
       const { data, error } = await sb.from('digital_lead_sessions').select('*').eq('phone_e164', phone)
         .not('status', 'in', '(completed,expired,handed_off)').maybeSingle();

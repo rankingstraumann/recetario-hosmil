@@ -113,4 +113,13 @@ await send(J, null, { text: 'hola' }); await send(J, null, { type: 'interactive'
 const rj = await send(J, null, { type: 'interactive', ...reply('q2:renew'), headers: {'x-sim-fail-send':'1'} });
 const lj = lead(J);
 ok('fallo de envío: 200, error guardado, actividad, lead intacto', rj.status===200 && T.messages.some(m=>m.lead_id===lj.id && m.direction==='outbound' && m.metadata.error) && T.acts.some(a=>a.lead_id===lj.id && a.event_type==='whatsapp_send_failed'));
+// OUTBOUND 7: respuesta entrante de un prospecto contactado -> replied + el bot existente sigue igual (mismo motor)
+const PR = '+56900001020', PN = '+56900001021', PP = '+56900001022';
+T.prospects.push({ id: 'p1', phone_e164: PR, outreach_status: 'contacted', whatsapp_consent: 'yes' }, { id: 'p2', phone_e164: PN, outreach_status: 'pending', whatsapp_consent: 'yes' }, { id: 'p3', phone_e164: PP, outreach_status: 'opted_out', whatsapp_consent: 'no' });
+const rr = await send(PR, null, { text: 'hola' });
+ok('O7 respuesta de prospecto contactado -> replied', T.prospects[0].outreach_status === 'replied');
+ok('O7 el bot existente responde igual (sesion + pregunta Q1), sin motor duplicado', rr.status === 200 && T.sessions.some(s => s.phone_e164 === PR) && lastOut(PR).length > 0);
+await send(PN, null, { text: 'hola' }); await send(PP, null, { text: 'hola' });
+ok('O7 pending y opted_out NO cambian por una respuesta entrante', T.prospects[1].outreach_status === 'pending' && T.prospects[2].outreach_status === 'opted_out');
+ok('O7 consentimiento intacto', T.prospects.every(p => p.id === 'p3' ? p.whatsapp_consent === 'no' : p.whatsapp_consent === 'yes'));
 console.log(`\n${results.filter(Boolean).length}/${results.length} PASS`);
