@@ -293,6 +293,7 @@ function construirTabsPrincipales(activo) {
   if (esSuperAdmin()) tabs.push({ id: 'dashboard', icono: '📊', label: 'Dashboard Recetario', onclick: "vistaActiva='dashboard';renderDashboardPiloto()" });
   tabs.push({ id: 'matriz', icono: '🏛️', label: 'Matriz Institucional', onclick: "vistaActiva='matriz';cargarMatrizResumen()" });
   if (puedeVerDashboardCotizador()) tabs.push({ id: 'dashboardCotizador', icono: '📈', label: 'Dashboard Cotizador', onclick: "vistaActiva='dashboardCotizador';renderDashboardCotizador()" });
+  if (typeof leadsAcceso !== 'undefined' && leadsAcceso) tabs.push({ id: 'leads', icono: '🎯', label: 'Leads Digital', onclick: "vistaActiva='leads';renderLeadsDigital()" }); // COMPLEMENTO Leads Digital
 
   var html = '<div class="view-tabs">';
   tabs.forEach(function (t) {
@@ -572,6 +573,10 @@ function renderVistaActiva() {
     renderDashboardPiloto();
   } else if (vistaActiva === 'matriz') {
     renderMatrizInstitucional();
+  } else if (vistaActiva === 'leads') {
+    // COMPLEMENTO Leads Digital: no sacar al usuario de su vista por un refresh de cotizaciones,
+    // y no reconstruir los controles (se perderia el foco del buscador) si la vista ya esta pintada.
+    if (document.getElementById('leads-resultados')) { leadsPintar(); } else if (document.getElementById('prospectos-resultados')) { prospectosPintar(); } else { renderLeadsDigital(); }
   } else {
     renderDashboard();
   }
@@ -4601,12 +4606,1394 @@ function segImpPintar() {
   });
 }
 
+// ============================================================
+// COMPLEMENTO — Leads Digital (V1, aislado)
+// Pestaña privada para el lead admin (Daniel). El acceso se decide con la RPC
+// is_lead_admin() y se refuerza con RLS en Supabase: ocultar la pestaña es solo
+// comodidad, no seguridad. Las escrituras van SOLO por RPC (assign_digital_lead,
+// update_digital_lead_notes). No toca cotizaciones ni ninguna otra vista.
+// ============================================================
+var leadsAcceso = false;
+var leadsDatos = [];
+var leadsAsignados = [];
+var leadsCargado = false;
+var leadsCargando = false;
+var leadsError = null;   // bloqueante: solo si NUNCA se pudo cargar
+var leadsAviso = null;   // no bloqueante: una recarga fallo, se conserva lo ultimo bueno
+var leadsModoCarga = null; // true=incluye pruebas, false=solo reales (lo que representan leadsDatos)
+var leadsStale = false;
+var leadsChannel = null;
+var leadsTimer = null;
+var leadsFiltro = { q: '', temp: '', estado: '', asig: '', prueba: null };
+var leadsDetalleId = null;
+var leadsActividades = [];
+
+var LEADS_NEED = { renew: 'Renovar', trade_up: 'Trade Up', first_scanner: 'Primer scanner', digital_flow: 'Mejorar flujo digital', know_sirios: 'Conocer SIRIOS', information_only: 'Solo información', other: 'Otro' };
+var LEADS_PLAZO = { now: 'Ahora', '1_3_months': '1–3 meses', '3_6_months': '3–6 meses', later: 'Más adelante', evaluating: 'Evaluando' };
+// ---- Outbound 9C: datos comerciales del journey SIRIOS (solo lectura; NULL en leads antiguos/Inbound => no se muestran) ----
+var LEADS_PERFIL = { owner_partner: 'Dueño/a o socio/a', clinician: 'Clínico/a', postgraduate: 'Postgrado / formación', explorer: 'Explorando' };
+var LEADS_RUTA = { trade_up: 'Trade Up', first_scanner: 'Primer scanner', renewal_workflow: 'Renovación / flujo digital', postgraduate_influencer: 'Postgrado / influenciador', exploration: 'Exploración' };
+var LEADS_INTERES = { sirios: 'SIRIOS', sirios_x3: 'SIRIOS X3', compare: 'Comparar ambos', undecided: 'Sin definir' };
+var LEADS_CTA = { request_evaluation: 'Evaluación comercial', trade_up_evaluation: 'Evaluación Trade Up', demo: 'Demostración', specialist: 'Hablar con especialista', financing: 'Financiamiento',
+  share_clinic: 'Compartir con clínica', compare: 'Comparar productos', learn_sirios: 'Conocer SIRIOS', learn_sirios_x3: 'Conocer SIRIOS X3', information: 'Información' };
+function leadsComercial(l) {   // [[etiqueta, texto]] solo de campos presentes y conocidos; nunca "null" ni valores tecnicos
+  var d = [['Perfil', LEADS_PERFIL, l && l.customer_profile], ['Ruta', LEADS_RUTA, l && l.commercial_route], ['Interés', LEADS_INTERES, l && l.product_interest], ['CTA', LEADS_CTA, l && l.cta_selected]], out = [];
+  d.forEach(function (x) { if (x[2] && Object.prototype.hasOwnProperty.call(x[1], x[2])) out.push([x[0], x[1][x[2]]]); });
+  return out;
+}
+var LEADS_TEMP = { hot: 'HOT', warm: 'Tibio', cold: 'Frío' };
+var LEADS_ESTADO = { nuevo: 'Nuevo', assigned: 'Asignado', contacted: 'Contactado', demo: 'Demo', quote: 'Cotización', won: 'Ganado', lost: 'Perdido' };
+
+function lEsc(s) {
+  if (s === undefined || s === null) return '';
+  return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+// Estados previos a la derivación se muestran como "Nuevo".
+function leadsEstadoClave(s) {
+  return ['new', 'qualifying', 'cold', 'warm', 'hot'].indexOf(s) >= 0 ? 'nuevo' : s;
+}
+function leadsFechaCorta(iso) {
+  if (!iso) return '—';
+  return new Date(iso).toLocaleString('es-CL', { timeZone: 'America/Santiago', day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' });
+}
+function leadsDiaSantiago(iso) {
+  return new Date(iso).toLocaleDateString('en-CA', { timeZone: 'America/Santiago' });
+}
+function leadsScannerTxt(l) {
+  if (l.uses_intraoral_scanner === true) return l.current_scanner || 'Sí (sin modelo)';
+  if (l.uses_intraoral_scanner === false) return 'Sin scanner';
+  return '—';
+}
+function leadsSiNo(v) { return v === true ? 'Sí' : (v === false ? 'No' : '—'); }
+
+function leadsInyectarEstilos() {
+  if (document.getElementById('leads-estilos')) return;
+  var st = document.createElement('style');
+  st.id = 'leads-estilos';
+  st.textContent =
+    '.ld-temp{display:inline-block;font-size:11px;font-weight:800;border-radius:6px;padding:2px 8px;letter-spacing:.03em}' +
+    '.ld-temp.hot{background:#fee2e2;color:#991b1b}.ld-temp.warm{background:#fef3c7;color:#92400e}.ld-temp.cold{background:#e0f2fe;color:#075985}' +
+    '.ld-test{display:inline-block;font-size:9px;font-weight:800;background:#f4f4f5;color:#71717a;border:1px solid #e4e4e7;border-radius:4px;padding:1px 5px;margin-left:6px;vertical-align:middle}' +
+    '.ld-bar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;background:#fff;border:1px solid var(--border);border-radius:12px;padding:10px 12px;margin-bottom:14px}' +
+    '.ld-bar input[type=search]{flex:1 1 220px;min-width:180px;border:1px solid #d4d4d8;border-radius:8px;padding:8px 10px;font-size:13px}' +
+    '.ld-bar label.ld-chk{font-size:12px;color:var(--muted);display:flex;align-items:center;gap:5px;cursor:pointer}' +
+    '.ld-wrap{overflow-x:auto;border:1px solid var(--border);border-radius:12px;background:#fff}' +
+    '.ld-wrap table{border:none;border-radius:0;min-width:980px}' +
+    '.ld-wrap tbody tr{cursor:default}' +
+    'main.leads-main{max-width:1380px}' +
+    '.ld-wrap .pr-tabla{min-width:1180px}' +
+    '.pr-tabla th,.pr-tabla td{padding:8px 10px;vertical-align:top}' +
+    '.pr-tabla td{font-size:12px}' +
+    '.pr-tabla .pr-c-ori{min-width:130px;overflow-wrap:break-word}' +
+    '.pr-tabla .pr-c-est{min-width:105px}' +
+    '.pr-tabla .pr-c-imp{min-width:100px}' +
+    '.pr-tabla .pr-c-tel{min-width:112px;white-space:nowrap}' +
+    '.pr-tabla .pr-acc{position:sticky;right:0;z-index:2;background:#fff;box-shadow:-6px 0 8px -6px rgba(0,0,0,.25);min-width:180px;white-space:normal}' +
+    '.pr-tabla thead .pr-acc{z-index:3;background:#f4f4f5}' +
+    '.pr-tabla .pr-acc .ld-btn{display:block;width:100%;margin:0 0 4px 0;white-space:normal}' +
+    '.dash-grid.ld-cards{grid-template-columns:repeat(6,1fr);gap:10px}.ld-cards .dash-card{padding:14px 14px}' +
+    '@media(max-width:900px){.dash-grid.ld-cards{grid-template-columns:repeat(3,1fr)}}@media(max-width:520px){.dash-grid.ld-cards{grid-template-columns:repeat(2,1fr)}}' +
+    '.ld-btn{white-space:nowrap}' +
+    '.ld-btn{border:1px solid var(--border);background:#fff;border-radius:8px;padding:6px 12px;font-size:12px;font-weight:600;cursor:pointer;color:var(--ink)}' +
+    '.ld-btn.primary{background:var(--red);color:#fff;border-color:var(--red)}.ld-btn.primary:hover{background:var(--red-dark)}' +
+    '.ld-btn:disabled{opacity:.55;cursor:not-allowed}' +
+    '.ld-overlay{position:fixed;inset:0;background:rgba(24,24,27,.35);z-index:900}' +
+    '.ld-drawer{position:fixed;top:0;right:0;bottom:0;width:min(460px,100vw);background:#fff;z-index:901;box-shadow:-12px 0 32px rgba(0,0,0,.12);overflow-y:auto;padding:20px 20px 40px}' +
+    '.ld-drawer h2{margin:0 0 2px;font-size:18px}.ld-drawer h4{margin:18px 0 8px;font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted)}' +
+    '.ld-kv{display:grid;grid-template-columns:130px 1fr;gap:6px 10px;font-size:13px}.ld-kv .k{color:var(--muted)}' +
+    '.ld-box{background:#fafafa;border:1px solid var(--border);border-radius:10px;padding:10px 12px;font-size:13px;line-height:1.45}' +
+    '.ld-drawer textarea,.ld-drawer select,.ld-drawer input[type=text]{width:100%;border:1px solid #d4d4d8;border-radius:8px;padding:8px 10px;font-size:13px;font-family:inherit}' +
+    '.ld-msg{font-size:12px;margin-top:8px;min-height:16px}.ld-msg.ok{color:#047857}.ld-msg.err{color:#b91c1c}' +
+    '.ld-hist{list-style:none;margin:0;padding:0}.ld-hist li{font-size:12px;padding:7px 0;border-bottom:1px solid #f4f4f5}.ld-hist .t{color:var(--muted);font-size:11px}';
+  document.head.appendChild(st);
+}
+
+// ---- Acceso (decide la RPC; RLS lo refuerza) ----
+async function leadsCargarAcceso() {
+  var ok = false;
+  try {
+    var r = await sb.rpc('is_lead_admin');
+    ok = !r.error && r.data === true;
+  } catch (e) { ok = false; }
+  leadsAcceso = ok;
+  if (ok) { leadsSuscribir(); } else { leadsDesuscribir(); }
+}
+function leadsLimpiar() {
+  leadsAcceso = false; leadsDatos = []; leadsAsignados = []; leadsCargado = false; leadsCargando = false;
+  leadsError = null; leadsAviso = null; leadsModoCarga = null; leadsStale = false; leadsDetalleId = null; leadsActividades = [];
+  leadsFiltro = { q: '', temp: '', estado: '', asig: '', prueba: null };
+  prospectosLimpiar();
+  leadsDesuscribir();
+}
+
+// ---- Realtime (solo digital_leads) ----
+var leadsRtReintento = null;   // temporizador de re-suscripcion
+var leadsRtIntentos = 0;
+var leadsRtYaConectado = false; // true tras el primer SUBSCRIBED (para recarga de recuperacion al reconectar)
+var leadsPendiente = false;    // llego un evento mientras habia una carga en curso
+function leadsRtLog(msg) { try { console.log('[Leads RT] ' + msg); } catch (x) {} }
+function leadsSuscribir() {
+  if (leadsChannel) return; // un solo canal por sesion
+  try {
+    var ch = sb.channel('digital-leads-cambios');
+    leadsChannel = ch;
+    leadsRtLog('creando canal');
+    ch.on('postgres_changes', { event: '*', schema: 'public', table: 'digital_leads' }, function (payload) {
+        leadsRtLog('evento ' + (payload && payload.eventType)); // solo el tipo; sin datos del lead
+        if (leadsTimer) clearTimeout(leadsTimer);
+        leadsTimer = setTimeout(function () {
+          if (vistaActiva === 'leads') { leadsCargar(true); } else { leadsStale = true; }
+        }, 300);
+      })
+      .subscribe(function (status) {
+        if (leadsChannel !== ch) return; // canal obsoleto
+        leadsRtLog('estado ' + status);
+        if (status === 'SUBSCRIBED') {
+          leadsRtIntentos = 0;
+          // Al reconectar, recupera lo que pudo perderse mientras el canal estuvo caido.
+          if (leadsRtYaConectado) { if (vistaActiva === 'leads') { leadsCargar(true); } else { leadsStale = true; } }
+          leadsRtYaConectado = true;
+        } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') {
+          leadsRtReprogramar(ch);
+        }
+      });
+  } catch (e) { leadsRtLog('error al crear canal'); leadsChannel = null; leadsRtReprogramar(null); }
+}
+// Desecha el canal caido y crea UNO nuevo (con espera creciente, max 30 s). La carga manual sigue funcionando.
+function leadsRtReprogramar(ch) {
+  if (!leadsAcceso) return;
+  if (ch && leadsChannel === ch) { try { sb.removeChannel(ch); } catch (e) {} leadsChannel = null; }
+  if (leadsRtReintento) return;
+  leadsRtIntentos++;
+  var espera = Math.min(30000, 1000 * Math.pow(2, Math.min(leadsRtIntentos, 5)));
+  leadsRtLog('reintento en ' + Math.round(espera / 1000) + ' s');
+  leadsRtReintento = setTimeout(function () { leadsRtReintento = null; if (leadsAcceso) leadsSuscribir(); }, espera);
+}
+function leadsDesuscribir() {
+  if (leadsTimer) { clearTimeout(leadsTimer); leadsTimer = null; }
+  if (leadsRtReintento) { clearTimeout(leadsRtReintento); leadsRtReintento = null; }
+  leadsRtIntentos = 0; leadsRtYaConectado = false;
+  if (leadsChannel) { var c = leadsChannel; leadsChannel = null; try { sb.removeChannel(c); } catch (e) {} }
+}
+// Al volver a la pestana (o recuperar red) verifica el canal y refresca: los navegadores suspenden pestanas en segundo plano.
+function leadsRtVerificar() {
+  if (!leadsAcceso) return;
+  if (!leadsChannel || leadsChannel.state !== 'joined') {
+    leadsRtLog('canal no activo al volver (' + (leadsChannel ? leadsChannel.state : 'sin canal') + '), recreando');
+    leadsDesuscribir(); leadsSuscribir();
+  }
+  if (leadsCargado) { if (vistaActiva === 'leads') { leadsCargar(true); } else { leadsStale = true; } }
+}
+document.addEventListener('visibilitychange', function () { if (document.visibilityState === 'visible') leadsRtVerificar(); });
+window.addEventListener('online', leadsRtVerificar);
+
+
+// =====================================================================
+// PROSPECTOS (Outbound 1 - fundacion). Solo lectura. NO envia nada por WhatsApp.
+// Los prospectos NO cuentan en ningun contador de Leads: viven en digital_prospects hasta ser convertidos.
+// =====================================================================
+var leadsSubvista = 'leads'; // 'leads' | 'prospectos'
+var prospectosDatos = [];
+var prospectosImports = [];
+var prospectosInvit = [];   // invitaciones de consentimiento (estado/fechas; sin token)
+var prospectosCargado = false;
+var prospectosCargando = false;
+var prospectosError = null;
+var prospectosFiltro = { q: '', origen: '', consent: '', estado: '', lote: '', prueba: null };
+var PROSP_ESTADO = { pending: 'Pendiente', contacted: 'Contactado', replied: 'Respondió', opted_out: 'No contactar (baja)', failed: 'Falló', converted: 'Convertido' };
+var PROSP_CONSENT = { yes: 'Autorizado', no: 'No autorizado', unknown: 'Sin definir' };
+// Almacenamiento: yes=granted, no=denied, unknown. Fuentes de consentimiento (lista cerrada; la valida la RPC).
+var PROSP_CONS_FUENTE = { formulario_web: 'Formulario web', correo_electronico: 'Correo electrónico', whatsapp_optin: 'Opt-in por WhatsApp', telefono_registrado: 'Llamada telefónica registrada', presencial: 'Presencial / firmado', evento: 'Evento o capacitación', otro: 'Otro (detallar en la nota)' };
+
+function prospectosLimpiar() {
+  leadsSubvista = 'leads'; prospectosDatos = []; prospectosImports = []; prospectosInvit = []; prospectosCargado = false; prospectosCargando = false;
+  prospectosError = null; prospectosFiltro = { q: '', origen: '', consent: '', estado: '', lote: '', prueba: null };
+  prospectosImp = { abierto: false, analizando: false, error: null, res: null, filtro: '', file: null, confirmando: false, resultado: null, modo: 'test' };
+  prospectosEnr = prospectosEnrNuevo();
+  prospectosCons = prospectosConsNuevo();
+}
+function prospectosInyectarEstilos() {
+  if (document.getElementById('prospectos-estilos')) return;
+  var st = document.createElement('style');
+  st.id = 'prospectos-estilos';
+  st.textContent =
+    '.ld-subtabs{display:flex;gap:6px;margin:0 0 14px}' +
+    '.ld-subtab{border:1px solid var(--border);background:#fff;border-radius:8px;padding:7px 16px;font-size:13px;font-weight:700;cursor:pointer;color:var(--muted)}' +
+    '.ld-subtab.activa{background:var(--red);border-color:var(--red);color:#fff}' +
+    '.pr-badge{display:inline-block;font-size:11px;font-weight:800;border-radius:6px;padding:2px 8px}' +
+    '.pr-badge.ok{background:#dcfce7;color:#166534}.pr-badge.no{background:#fee2e2;color:#991b1b}.pr-badge.unk{background:#fef3c7;color:#92400e}.pr-badge.neu{background:#f4f4f5;color:#52525b}' +
+    '.pr-elig{font-size:11px;margin-top:3px}.pr-elig.ok{color:#166534}.pr-elig.no{color:#991b1b}.pr-elig.unk{color:#92400e}' +
+    '.pr-badge.dup{background:#ede9fe;color:#5b21b6}.pr-chip{border:1px solid var(--border);background:#fff;border-radius:999px;padding:4px 12px;font-size:12px;font-weight:700;cursor:pointer;color:var(--muted)}.pr-chip.activa{background:#18181b;border-color:#18181b;color:#fff}.pr-imp{background:#fff;border:1px solid var(--border);border-radius:12px;padding:14px 16px;margin-bottom:14px}.pr-imp .aviso{background:#fef3c7;border:1px solid #fde68a;border-radius:8px;padding:8px 12px;font-size:12px;font-weight:700;color:#92400e;margin:8px 0}.pr-p{font-size:11px;line-height:1.35}.pr-p.invalid{color:#991b1b}.pr-p.duplicate{color:#5b21b6}.pr-p.warning{color:#92400e}' +
+    '.pr-nota{background:#f0f9ff;border:1px solid #bae6fd;border-radius:10px;padding:8px 12px;margin-bottom:12px;font-size:12px;color:#075985}';
+  document.head.appendChild(st);
+}
+function prospectosSubtabsHtml() {
+  prospectosInyectarEstilos();
+  return '<div class="ld-subtabs">' +
+    '<button class="ld-subtab' + (leadsSubvista === 'leads' ? ' activa' : '') + '" data-subvista="leads">Leads</button>' +
+    '<button class="ld-subtab' + (leadsSubvista === 'prospectos' ? ' activa' : '') + '" data-subvista="prospectos">Prospectos</button>' +
+    '</div>';
+}
+function prospectosEnlazarSubtabs() {
+  document.querySelectorAll('.ld-subtab').forEach(function (b) {
+    b.addEventListener('click', function () {
+      var nueva = b.getAttribute('data-subvista');
+      if (nueva === leadsSubvista) return;
+      leadsSubvista = nueva;
+      renderLeadsDigital();
+    });
+  });
+}
+// Elegibilidad: UNA sola fuente de verdad en la base -> columna generada digital_prospects.whatsapp_eligible
+// (consent=yes + telefono E.164 valido + estado no opted_out/converted). La UI NO la recalcula.
+function prospectoElegible(p) { return p.whatsapp_eligible === true; }
+// "Listo para contactar" = columna generada contact_ready (REAL + movil +569 + consent granted + outreach pending). La UI no la recalcula.
+function prospectoListo(p) { return p.contact_ready === true; }
+// Solo texto explicativo (no decide nada).
+// ---- Outbound 7: envio inicial por plantilla, SOLO prospectos de PRUEBA (el servidor decide y rechaza los reales) ----
+// Prospecto REAL: boton deshabilitado como siempre. PRUEBA con consentimiento autorizado: "Enviar plantilla de prueba" (deshabilitado si no esta pendiente / sin movil +569).
+function prospectoBotonContacto(p) {
+  if (p.is_test === true && p.whatsapp_consent === 'yes') {
+    var ok = p.outreach_status === 'pending' && /^\+569[0-9]{8}$/.test(p.phone_e164 || '');
+    var why = p.outreach_status !== 'pending' ? 'Solo prospectos en estado Pendiente.' : 'Requiere móvil +569 válido.';
+    return '<button class="ld-btn" data-prenv="' + lEsc(p.id) + '"' + (ok ? '' : ' disabled title="' + lEsc(why) + '"') + '>Enviar plantilla de prueba</button>';
+  }
+  return '<button class="ld-btn" disabled title="Prospectos reales: envío no habilitado. No envía nada.">Contactar por WhatsApp</button>';
+}
+var prospectosEnv = { id: null, fase: null, chk: null, enviando: false, res: null, err: null };
+function prospectosEnvCerrar() { var m = document.getElementById('pr-env-modal'); if (m) m.remove(); prospectosEnv = { id: null, fase: null, chk: null, enviando: false, res: null, err: null }; }
+function prospectosEnvPintar() {
+  var E = prospectosEnv, p = prospectosDatos.filter(function (x) { return String(x.id) === String(E.id); })[0]; if (!p) return;
+  var m = document.getElementById('pr-env-modal');
+  if (!m) { m = document.createElement('div'); m.id = 'pr-env-modal'; m.setAttribute('role', 'dialog'); m.setAttribute('aria-modal', 'true');
+    m.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:50;display:flex;align-items:center;justify-content:center;padding:16px'; document.body.appendChild(m); }
+  var c = E.chk || {}, simul = c.mode === 'dry_run';
+  var cuerpo;
+  if (E.fase === 'cargando') cuerpo = '<p>Verificando configuración…</p>';
+  else if (E.fase === 'resultado') {
+    var r = E.res || {};
+    cuerpo = r.ok === true && r.status === 'sent' ? '<div style="background:#dcfce7;border:1px solid #86efac;border-radius:8px;padding:10px;font-size:13px"><strong>Enviado.</strong> Meta aceptó el mensaje.' + (r.provider_message_id ? '<br>ID de mensaje: <code>' + lEsc(r.provider_message_id) + '</code>' : '') + '<br>El prospecto pasó a «Contactado».</div>'
+      : r.ok === true && r.status === 'dry_run' ? '<div style="background:#e0f2fe;border:1px solid #7dd3fc;border-radius:8px;padding:10px;font-size:13px"><strong>Simulación registrada.</strong> No se envió nada a WhatsApp y el prospecto sigue Pendiente.</div>'
+      : '<div style="background:#fee2e2;border:1px solid #fca5a5;border-radius:8px;padding:10px;font-size:13px"><strong>Falló.</strong> ' + lEsc(r.message || 'No se pudo enviar.') + (r.error_code ? '<br>Código: <code>' + lEsc(r.error_code) + '</code>' : '') + '</div>';
+  } else if (E.err) cuerpo = '<div style="background:#fee2e2;border:1px solid #fca5a5;border-radius:8px;padding:10px;font-size:13px">' + lEsc(E.err) + '</div>';
+  else cuerpo = '<div style="background:#fef3c7;border:1px solid #fcd34d;border-radius:8px;padding:8px 10px;font-size:12px;margin-bottom:10px"><strong>PRUEBA</strong> · ' + (simul ? 'modo SIMULACIÓN: no se enviará nada a WhatsApp.' : 'se enviará un WhatsApp real a este número de prueba.') + '</div>' +
+    '<table style="font-size:13px;border-collapse:collapse"><tr><td style="color:var(--muted);padding:2px 10px 2px 0">Nombre</td><td><strong>' + lEsc(p.full_name || p.clinic_name || '—') + '</strong></td></tr>' +
+    '<tr><td style="color:var(--muted);padding:2px 10px 2px 0">Teléfono</td><td>' + lEsc(p.phone_e164 || '—') + '</td></tr>' +
+    '<tr><td style="color:var(--muted);padding:2px 10px 2px 0">Plantilla</td><td><code>' + lEsc(c.template_name || '') + '</code> (' + lEsc(c.template_language || '') + ')</td></tr></table>' +
+    '<p style="font-size:12px;color:var(--muted);margin:10px 0 0">Un solo mensaje, sin reintentos. Si Meta lo acepta, el prospecto pasa a «Contactado».</p>';
+  var confirmar = E.fase === 'confirmar' && !E.err;
+  m.innerHTML = '<div style="background:#fff;border-radius:12px;max-width:440px;width:100%;padding:18px;box-shadow:0 10px 40px rgba(0,0,0,.3)"><h3 style="margin:0 0 10px;font-size:16px">Enviar plantilla de prueba</h3>' + cuerpo +
+    '<div style="display:flex;gap:8px;justify-content:flex-end;margin-top:14px">' +
+    (confirmar ? '<button class="ld-btn" id="pr-env-cancel">Cancelar</button><button class="ld-btn primary" id="pr-env-ok"' + (E.enviando ? ' disabled' : '') + '>' + (E.enviando ? 'Enviando…' : (simul ? 'Simular envío' : 'Enviar')) + '</button>'
+      : '<button class="ld-btn" id="pr-env-cancel"' + (E.enviando ? ' disabled' : '') + '>Cerrar</button>') + '</div></div>';
+  var cb = document.getElementById('pr-env-cancel'); if (cb) cb.onclick = prospectosEnvCerrar;
+  var ok = document.getElementById('pr-env-ok'); if (ok) ok.onclick = prospectosEnvEnviar;
+}
+async function prospectosEnvInvocar(body) {
+  var r = await sb.functions.invoke('outbound-whatsapp-send', { body: body });
+  if (r.error) {
+    var j = null; try { if (r.error.context && r.error.context.json) j = await r.error.context.json(); } catch (x) {}
+    return { ok: false, message: (j && j.message) || 'No se pudo completar la solicitud.', error_code: j && j.error, httpError: true };
+  }
+  return r.data || { ok: false, message: 'Respuesta inesperada.' };
+}
+async function prospectosEnvAbrir(id) {
+  if (prospectosEnv.id) return;
+  prospectosEnv = { id: id, fase: 'cargando', chk: null, enviando: false, res: null, err: null }; prospectosEnvPintar();
+  try {
+    var c = await prospectosEnvInvocar({ action: 'check' });
+    if (c.ok !== true) prospectosEnv.err = c.message || 'No se pudo verificar la configuración.';
+    else if (c.enabled !== true) prospectosEnv.err = 'El envío de WhatsApp está deshabilitado (kill switch apagado). No se puede enviar.';
+    else if (c.test_only !== true) prospectosEnv.err = 'Esta versión solo permite modo PRUEBA.';
+    else if (c.template_configured !== true) prospectosEnv.err = 'La plantilla no está configurada (OUTBOUND_TEMPLATE_NAME / OUTBOUND_TEMPLATE_LANGUAGE). No se enviará nada.';
+    else prospectosEnv.chk = c;
+  } catch (e) { prospectosEnv.err = 'No se pudo verificar la configuración.'; }
+  prospectosEnv.fase = 'confirmar'; prospectosEnvPintar();
+}
+async function prospectosEnvEnviar() {
+  var E = prospectosEnv; if (!E.id || E.enviando || E.fase !== 'confirmar' || !E.chk) return;   // anti doble clic en el cliente (el servidor tambien lo impide)
+  E.enviando = true; prospectosEnvPintar();
+  try { E.res = await prospectosEnvInvocar({ action: 'send', prospect_id: E.id }); } catch (e) { E.res = { ok: false, message: 'No se pudo completar la solicitud.' }; }
+  E.enviando = false; E.fase = 'resultado'; prospectosEnvPintar();
+  try { await prospectosCargar(); } catch (x) {}
+}
+
+// ---- Outbound 8: historial por prospecto. SOLO LECTURA (RPC get_prospect_timeline; Lead Admin). Sin acciones de escritura. ----
+var prospectosHist = { id: null };
+var PROSP_HIST_CONS = { granted: 'Autorizado', denied: 'No autorizado', unknown: 'Sin definir' };
+var PROSP_HIST_ENVIO = { sending: 'En curso', dry_run: 'Simulación (no se envió nada)', sent: 'Enviado', failed: 'Falló' };
+var PROSP_HIST_CAMPO = { full_name: 'Contacto', phone_raw: 'Teléfono', phone_e164: 'Móvil', email: 'Correo' };
+var PROSP_HIST_CAT = { import: ['#a1a1aa', 'Importación'], enrichment: ['#a1a1aa', 'Enriquecimiento'], consent: ['#16a34a', 'Consentimiento'], invitation_created: ['#16a34a', 'Consentimiento'], invitation_used: ['#16a34a', 'Consentimiento'],
+  send: ['#2563eb', 'Envío'], reply: ['#d97706', 'Respuesta'], conversion: ['#9a1b1b', 'Conversión'] };
+function histFecha(iso) {
+  if (!iso) return '—';
+  return new Date(iso).toLocaleString('es-CL', { timeZone: 'America/Santiago', day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+}
+function prospectosHistEvento(ev) {
+  var d = ev.data || {}, t = '', det = [], k = ev.kind;
+  if (k === 'import') {
+    var modo = (d.batch_is_test === null || d.batch_is_test === undefined) ? d.prospect_is_test : d.batch_is_test;
+    t = d.filename ? 'Importación' : 'Prospecto creado';
+    if (d.filename) det.push('Archivo: ' + d.filename);
+    det.push('Modo: ' + (modo ? 'PRUEBA' : 'REAL'));
+    var og = [d.source, d.source_detail].filter(Boolean).join(' · '); if (og) det.push('Origen: ' + og);
+  } else if (k === 'enrichment') {
+    t = 'Enriquecimiento de datos';
+    var fl = (d.fields || []).map(function (f) { return PROSP_HIST_CAMPO[f] || f; }); det.push('Campos completados: ' + (fl.length ? fl.join(', ') : '—'));
+    if (d.filename) det.push('Archivo: ' + d.filename);
+  } else if (k === 'consent') {
+    t = 'Consentimiento: ' + (PROSP_HIST_CONS[d.previous_state] || d.previous_state) + ' → ' + (PROSP_HIST_CONS[d.new_state] || d.new_state);
+    if (d.source) det.push('Fuente: ' + (PROSP_CONS_FUENTE[d.source] || d.source));
+    if (d.consent_date) det.push('Fecha del consentimiento: ' + String(d.consent_date).slice(0, 10).split('-').reverse().join('-'));
+    if (d.note) det.push('Nota: ' + d.note);
+    if (d.changed_by_email) det.push('Por: ' + d.changed_by_email);
+  } else if (k === 'invitation_created') {
+    var est = d.status === 'accepted' ? 'aceptada' : d.status === 'rejected' ? 'rechazada' : d.status === 'revoked' ? 'revocada' : (d.expired ? 'vencida' : 'pendiente');
+    t = 'Link de consentimiento generado'; det.push('Estado actual: ' + est); if (d.expires_at) det.push('Vence: ' + histFecha(d.expires_at));
+    if (d.created_by_email) det.push('Por: ' + d.created_by_email);
+  } else if (k === 'invitation_used') {
+    t = 'Link de consentimiento respondido (usado)'; det.push('Decisión del cliente: ' + (d.decision === 'granted' ? 'Autorizó' : d.decision === 'denied' ? 'Rechazó' : '—'));
+    if (d.text_version) det.push('Texto: ' + d.text_version); if (d.channel) det.push('Canal: ' + d.channel);
+  } else if (k === 'send') {
+    t = 'Plantilla ' + (d.template_name || '') + ' (' + (d.template_language || '') + '): ' + (PROSP_HIST_ENVIO[d.status] || d.status);
+    if (d.requested_by_email) det.push('Solicitó: ' + d.requested_by_email);
+    if (d.completed_at) det.push('Completado: ' + histFecha(d.completed_at));
+    if (d.provider_message_id) det.push('ID de mensaje: ' + d.provider_message_id);
+    if (d.error_code || d.error_message) det.push('Error: ' + [d.error_code, d.error_message].filter(Boolean).join(' · '));
+  } else if (k === 'reply') {
+    t = 'Respuesta del cliente'; det.push('Primer mensaje recibido después del envío (se une por teléfono).');
+    if (d.shared_phone) det.push('Aviso: otro prospecto comparte este teléfono.');
+  } else if (k === 'conversion') {
+    t = 'Convertido a lead'; det.push('Lead ' + String(d.id || '').slice(0, 8));
+    det.push('Score ' + (d.score === null || d.score === undefined ? '—' : d.score) + ' · ' + (LEADS_TEMP[d.temperature] || d.temperature || '—'));
+    det.push('Estado del lead: ' + (LEADS_ESTADO[d.status] || d.status || '—') + (d.is_test ? ' · PRUEBA' : ''));
+    leadsComercial({ customer_profile: d.customer_profile, commercial_route: d.commercial_route, product_interest: d.product_interest, cta_selected: d.cta_selected }).forEach(function (r) { det.push(r[0] + ': ' + r[1]); });
+  } else t = k;
+  return { t: t, det: det, cat: PROSP_HIST_CAT[k] || ['#a1a1aa', ''] };
+}
+function prospectosHistCerrar() { var m = document.getElementById('pr-hist-modal'); if (m) m.remove(); prospectosHist = { id: null }; }
+function prospectosHistVerLead(id) { prospectosHistCerrar(); leadsSubvista = 'leads'; leadsDetalleId = id; renderLeadsDigital(); }
+function prospectosHistPintar(estado, data, msg) {
+  var p = prospectosDatos.filter(function (x) { return String(x.id) === String(prospectosHist.id); })[0]; if (!p) return;
+  var m = document.getElementById('pr-hist-modal');
+  if (!m) { m = document.createElement('div'); m.id = 'pr-hist-modal'; m.setAttribute('role', 'dialog'); m.setAttribute('aria-modal', 'true');
+    m.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:50;display:flex;align-items:center;justify-content:center;padding:16px'; document.body.appendChild(m); }
+  var cuerpo;
+  if (estado === 'cargando') cuerpo = '<p>Cargando historial…</p>';
+  else if (estado === 'error') cuerpo = '<div style="background:#fee2e2;border:1px solid #fca5a5;border-radius:8px;padding:10px;font-size:13px">' + lEsc(msg) + '</div>';
+  else {
+    var pr = data.prospect || {}, evs = data.events || [];
+    var chips = '<div style="display:flex;flex-wrap:wrap;gap:8px;font-size:12px;margin-bottom:10px">' +
+      '<span class="pr-badge ' + (pr.whatsapp_consent === 'yes' ? 'ok' : pr.whatsapp_consent === 'no' ? 'no' : 'unk') + '">Consentimiento: ' + lEsc(PROSP_CONSENT[pr.whatsapp_consent] || pr.whatsapp_consent) + '</span>' +
+      '<span class="pr-badge unk">Estado: ' + lEsc(PROSP_ESTADO[pr.outreach_status] || pr.outreach_status) + '</span>' +
+      (pr.is_test ? '<span class="ld-test">PRUEBA</span>' : '<span class="pr-badge neu">REAL</span>') +
+      (pr.last_outreach_at ? '<span style="color:var(--muted)">Último contacto: ' + lEsc(histFecha(pr.last_outreach_at)) + '</span>' : '') + '</div>';
+    var filas = evs.map(function (ev) {
+      var x = prospectosHistEvento(ev);
+      return '<tr style="border-top:1px solid #f4f4f5"><td style="white-space:nowrap;vertical-align:top;padding:7px 10px 7px 0;font-size:12px;color:var(--muted)">' + lEsc(histFecha(ev.ts)) + '</td>' +
+        '<td style="vertical-align:top;padding:7px 10px 7px 8px;border-left:4px solid ' + x.cat[0] + ';min-width:150px"><div style="font-size:10px;text-transform:uppercase;letter-spacing:.04em;color:' + x.cat[0] + '">' + lEsc(x.cat[1]) + '</div><strong style="font-size:13px">' + lEsc(x.t) + '</strong></td>' +
+        '<td style="vertical-align:top;padding:7px 0;font-size:12px">' + x.det.map(function (l) { return '<div>' + lEsc(l) + '</div>'; }).join('') +
+        (ev.kind === 'conversion' && data.lead && data.lead.id ? '<div style="margin-top:4px"><button class="ld-btn" data-hist-lead="' + lEsc(data.lead.id) + '">Abrir lead</button></div>' : '') + '</td></tr>';
+    }).join('');
+    cuerpo = chips + '<table style="width:100%;border-collapse:collapse"><thead><tr style="font-size:11px;text-transform:uppercase;color:var(--muted);text-align:left"><th style="padding:4px 10px 4px 0">Fecha</th><th style="padding:4px 10px 4px 8px">Evento</th><th>Detalle</th></tr></thead><tbody>' +
+      (filas || '<tr><td colspan="3" style="padding:12px 0;color:var(--muted)">Sin actividad registrada.</td></tr>') + '</tbody></table>' +
+      '<p style="font-size:11px;color:var(--muted);margin:10px 0 0">Solo lectura. No se muestran tokens, IP, user-agent ni datos técnicos.</p>';
+  }
+  m.innerHTML = '<div style="background:#fff;border-radius:12px;max-width:920px;width:100%;max-height:88vh;overflow:auto;padding:18px;box-shadow:0 10px 40px rgba(0,0,0,.3)">' +
+    '<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;margin-bottom:10px"><h3 style="margin:0;font-size:16px">Historial · ' + lEsc(p.full_name || p.clinic_name || '—') + '</h3><button class="ld-btn" id="pr-hist-cerrar">Cerrar</button></div>' + cuerpo + '</div>';
+  document.getElementById('pr-hist-cerrar').onclick = prospectosHistCerrar;
+  m.onclick = function (e) { if (e.target === m) prospectosHistCerrar(); };
+  m.querySelectorAll('[data-hist-lead]').forEach(function (b) { b.onclick = function () { prospectosHistVerLead(b.getAttribute('data-hist-lead')); }; });
+}
+async function prospectosHistAbrir(id) {
+  if (prospectosHist.id) return;
+  prospectosHist = { id: id }; prospectosHistPintar('cargando');
+  try {
+    var r = await sb.rpc('get_prospect_timeline', { p_prospect_id: id });
+    if (r.error) throw r.error;
+    if (prospectosHist.id !== id) return;
+    prospectosHistPintar('ok', r.data || {});
+  } catch (e) {
+    var t = String((e && (e.message || e.code)) || '');
+    var msg = /PGRST202|Could not find the function|get_prospect_timeline/.test(t) && !/NO_AUTORIZADO/.test(t) ? 'El historial aún no está disponible en la base (falta aplicar la migración 015).'
+      : /NO_AUTORIZADO|42501/.test(t) ? 'No tienes permiso para ver el historial.' : /PROSPECTO_NO_ENCONTRADO/.test(t) ? 'Prospecto no encontrado.' : 'No se pudo cargar el historial.';
+    if (prospectosHist.id === id) prospectosHistPintar('error', null, msg);
+  }
+}
+
+function prospectoElegibilidad(p) {
+  if (prospectoListo(p)) return { ok: true, cls: 'ok', txt: 'Listo para contactar' };
+  if (p.whatsapp_eligible === true) {
+    if (p.outreach_status === 'failed') return { ok: false, cls: 'unk', txt: 'Elegible, pero el último envío falló' };
+    if (p.outreach_status === 'pending') return { ok: false, cls: 'neu', txt: p.is_test === true ? 'Elegible en prueba · sin envío' : 'Elegible, pendiente de contacto' };
+    if (p.outreach_status === 'replied') return { ok: false, cls: 'neu', txt: 'Elegible, ya respondió' };
+    return { ok: false, cls: 'neu', txt: 'Elegible, ya contactado' };
+  }
+  if (!p.phone_e164) return { ok: false, cls: 'no', txt: 'Teléfono inválido: no elegible' };
+  if (p.outreach_status === 'opted_out') return { ok: false, cls: 'no', txt: 'Se dio de baja: no contactar' };
+  if (p.outreach_status === 'converted') return { ok: false, cls: 'neu', txt: 'Ya convertido a lead' };
+  if (p.whatsapp_consent === 'no') return { ok: false, cls: 'no', txt: 'Sin consentimiento: no contactar' };
+  return { ok: false, cls: 'unk', txt: 'Consentimiento por resolver: no contactar' };
+}
+function prospectosBase() {
+  return prospectosDatos.filter(function (p) { return prospectosFiltro.prueba === true || !p.is_test; });
+}
+// Modo del lote: columna is_test (la fuente de verdad); metadata.is_test solo como respaldo de lotes antiguos.
+function prospectosImpEsPrueba(i) { return i.is_test === false ? false : (i.is_test === true ? true : !!(i.metadata && i.metadata.is_test)); }
+function prospectosBarraHtml() {
+  var base = prospectosBase();
+  var orig = {}; base.forEach(function (p) { if (p.source) orig[p.source] = 1; });
+  var sel = function (v, a) { return v === a ? ' selected' : ''; };
+  var imps = prospectosImports.filter(function (i) { return prospectosFiltro.prueba === true || !prospectosImpEsPrueba(i); });
+  return '<div class="ld-bar">' +
+    '<input type="search" id="pr-q" placeholder="Buscar nombre, clínica, comuna, teléfono o correo" value="' + lEsc(prospectosFiltro.q) + '">' +
+    '<select id="pr-origen"><option value="">Origen: todos</option>' + Object.keys(orig).sort().map(function (o) { return '<option value="' + lEsc(o) + '"' + sel(o, prospectosFiltro.origen) + '>' + lEsc(o) + '</option>'; }).join('') + '</select>' +
+    '<select id="pr-consent"><option value="">Consentimiento: todos</option>' + Object.keys(PROSP_CONSENT).map(function (k) { return '<option value="' + k + '"' + sel(k, prospectosFiltro.consent) + '>' + PROSP_CONSENT[k] + '</option>'; }).join('') + '</select>' +
+    '<select id="pr-estado"><option value="">Contacto: todos</option>' + Object.keys(PROSP_ESTADO).map(function (k) { return '<option value="' + k + '"' + sel(k, prospectosFiltro.estado) + '>' + PROSP_ESTADO[k] + '</option>'; }).join('') + '</select>' +
+    '<select id="pr-lote"><option value="">Importación: todas</option>' + imps.map(function (i) { return '<option value="' + lEsc(i.id) + '"' + sel(i.id, prospectosFiltro.lote) + '>' + lEsc('[' + (prospectosImpEsPrueba(i) ? 'PRUEBA' : 'REAL') + '] ' + (i.source_name || i.filename || 'Importación') + ' · ' + leadsFechaCorta(i.created_at)) + '</option>'; }).join('') + '</select>' +
+    '<label class="ld-chk"><input type="checkbox" id="pr-prueba"' + (prospectosFiltro.prueba ? ' checked' : '') + '> Incluir prospectos de prueba</label>' +
+    '<button class="ld-btn" id="pr-refrescar">↻ Actualizar</button>' +
+    '<button class="ld-btn primary" id="pr-importar">⬆ Importar prospectos</button>' +
+    '<button class="ld-btn" id="pr-enriquecer">✚ Enriquecer prospectos</button>' +
+    '</div>';
+}
+function prospectosEnlazarBarra() {
+  var q = document.getElementById('pr-q');
+  if (!q) return;
+  q.addEventListener('input', function (e) { prospectosFiltro.q = e.target.value; prospectosPintar(); });
+  [['pr-origen', 'origen'], ['pr-consent', 'consent'], ['pr-estado', 'estado'], ['pr-lote', 'lote']].forEach(function (par) {
+    document.getElementById(par[0]).addEventListener('change', function (e) { prospectosFiltro[par[1]] = e.target.value; prospectosPintar(); });
+  });
+  document.getElementById('pr-prueba').addEventListener('change', function (e) { prospectosFiltro.prueba = e.target.checked; renderLeadsDigital(); });
+  document.getElementById('pr-refrescar').addEventListener('click', function () { prospectosCargar(); });
+  document.getElementById('pr-importar').addEventListener('click', function () { prospectosImp.abierto = !prospectosImp.abierto; prospectosImp.modo = 'test'; if (prospectosImp.abierto) prospectosEnr.abierto = false; prospectosEnrPintar(); prospectosImportPintar(); });
+  document.getElementById('pr-enriquecer').addEventListener('click', function () { prospectosEnr.abierto = !prospectosEnr.abierto; if (prospectosEnr.abierto) prospectosImp.abierto = false; prospectosImportPintar(); prospectosEnrPintar(); });
+  prospectosImportPintar();
+  prospectosEnrPintar();
+  prospectosConsPintar();
+}
+async function prospectosCargar() {
+  if (prospectosCargando) return;
+  prospectosCargando = true; prospectosError = null;
+  if (document.getElementById('prospectos-resultados')) prospectosPintar();
+  try {
+    var res = await Promise.all([
+      sb.from('digital_prospects').select('*').order('created_at', { ascending: false }).limit(5000),
+      sb.from('digital_prospect_imports').select('id,filename,source_name,created_at,is_test,metadata').order('created_at', { ascending: false }).limit(500),
+      sb.from('digital_prospect_consent_invitations').select('id,prospect_id,status,created_at,expires_at,used_at,decision').order('created_at', { ascending: false }).limit(5000)
+    ]);
+    if (res[0].error) throw res[0].error;
+    prospectosDatos = res[0].data || [];
+    prospectosImports = res[1].error ? [] : (res[1].data || []);
+    prospectosInvit = res[2] && !res[2].error ? (res[2].data || []) : [];
+    prospectosCargado = true;
+    if (prospectosFiltro.prueba === null) {
+      prospectosFiltro.prueba = !prospectosDatos.some(function (p) { return !p.is_test; });
+    }
+  } catch (e) {
+    prospectosError = (e && e.message) ? e.message : 'error desconocido';
+    try { console.error('[Prospectos] falló la carga', { codigo: e && e.code, mensaje: e && e.message }); } catch (x) {}
+  }
+  prospectosCargando = false;
+  if (leadsSubvista === 'prospectos' && vistaActiva === 'leads') { renderLeadsDigital(); }
+}
+function prospectosFiltrados() {
+  var f = prospectosFiltro, q = (f.q || '').trim().toLowerCase();
+  return prospectosBase().filter(function (p) {
+    if (f.origen && p.source !== f.origen) return false;
+    if (f.consent && p.whatsapp_consent !== f.consent) return false;
+    if (f.estado && p.outreach_status !== f.estado) return false;
+    if (f.lote && p.import_id !== f.lote) return false;
+    if (q) {
+      var hay = [p.full_name, p.clinic_name, p.commune, p.phone_raw, p.phone_e164, p.email].join(' ').toLowerCase();
+      if (hay.indexOf(q) < 0) return false;
+    }
+    return true;
+  });
+}
+function prospectosPintar() {
+  var box = document.getElementById('prospectos-resultados');
+  if (!box) return;
+  if (prospectosCargando && !prospectosCargado) { box.innerHTML = '<div style="padding:24px;text-align:center;color:var(--muted);">Cargando…</div>'; return; }
+  if (prospectosError && !prospectosCargado) {
+    box.innerHTML = '<div style="background:#fff3cd;border:1px solid #fde68a;border-radius:10px;padding:14px 18px;text-align:center;font-size:13px;">⚠️ No se pudieron cargar los prospectos.<div style="font-size:11px;color:#71717a;margin-top:4px;">' + lEsc(prospectosError) + '</div> ' +
+      '<button class="ld-btn" style="margin-top:8px" onclick="prospectosCargar()">Reintentar</button></div>';
+    return;
+  }
+  var base = prospectosBase();
+  var n = function (fn) { return base.filter(fn).length; };
+  var card = function (label, val, hl) { return '<div class="dash-card' + (hl ? ' highlight' : '') + '"><div class="dc-label">' + label + '</div><div class="dc-value">' + val + '</div></div>'; };
+  var cards = '<div class="dash-grid ld-cards">' +
+    card('Total prospectos', base.length) +
+    card('Listos para contactar', n(prospectoListo), true) +
+    card('Pendientes', n(function (p) { return p.outreach_status === 'pending'; })) +
+    card('Contactados', n(function (p) { return p.outreach_status === 'contacted'; })) +
+    card('Respondieron', n(function (p) { return p.outreach_status === 'replied'; })) +
+    card('Convertidos', n(function (p) { return p.outreach_status === 'converted'; })) + '</div>';
+  var nCons = '<div style="font-size:12px;color:var(--muted);margin:6px 0;">Consentimiento WhatsApp: <strong>' + n(function (p) { return p.whatsapp_consent === 'yes'; }) + '</strong> autorizados · <strong>' + n(function (p) { return p.whatsapp_consent === 'no'; }) + '</strong> no autorizados · <strong>' + n(function (p) { return p.whatsapp_consent === 'unknown'; }) + '</strong> sin definir. «Listo para contactar» exige prospecto real, móvil +569, consentimiento autorizado y estado pendiente.</div>';
+  var nota = '<div class="pr-nota">Los prospectos no cuentan como leads (ni en Nuevos hoy, HOT, Tibios, Fríos ni asignaciones) hasta que respondan y se conviertan. El envío por WhatsApp a prospectos reales aún no está habilitado (solo plantilla de prueba a prospectos de PRUEBA).</div>';
+  var impPorId = {}; prospectosImports.forEach(function (i) { impPorId[i.id] = i; });
+  var lista = prospectosFiltrados();
+  var filas = lista.map(function (p) {
+    var el = prospectoElegibilidad(p);
+    var cb = p.whatsapp_consent === 'yes' ? 'ok' : (p.whatsapp_consent === 'no' ? 'no' : 'unk');
+    var imp = impPorId[p.import_id];
+    return '<tr>' +
+      '<td><strong>' + lEsc(p.full_name || '—') + '</strong>' + (p.is_test ? '<span class="ld-test">PRUEBA</span>' : '') + (p.email ? '<div style="font-size:11px;color:var(--muted);">' + lEsc(p.email) + '</div>' : '') + '</td>' +
+      '<td>' + lEsc(p.clinic_name || '—') + '</td>' +
+      '<td>' + lEsc(p.commune || '—') + '</td>' +
+      '<td class="pr-c-tel">' + (p.phone_e164 ? lEsc(p.phone_e164) : '<span class="pr-badge no">Inválido</span><div style="font-size:11px;color:var(--muted);">' + lEsc(p.phone_raw || 'sin teléfono') + '</div>') + '</td>' +
+      '<td class="pr-c-ori">' + lEsc(p.source || '—') + (p.source_detail ? '<div style="font-size:11px;color:var(--muted);">' + lEsc(p.source_detail) + '</div>' : '') + '</td>' +
+      '<td><span class="pr-badge ' + cb + '">' + lEsc(PROSP_CONSENT[p.whatsapp_consent] || p.whatsapp_consent) + '</span><div class="pr-elig ' + el.cls + '">' + lEsc(el.txt) + '</div>' + prospectoConsDetalle(p) + '</td>' +
+      '<td class="pr-c-est">' + lEsc(PROSP_ESTADO[p.outreach_status] || p.outreach_status) + (p.last_outreach_at ? '<div style="font-size:11px;color:var(--muted);">' + lEsc(leadsFechaCorta(p.last_outreach_at)) + '</div>' : '') + '</td>' +
+      '<td class="pr-c-imp">' + lEsc(leadsFechaCorta(imp ? imp.created_at : p.created_at)) + '</td>' +
+      '<td class="pr-acc"><button class="ld-btn" data-prc="' + lEsc(p.id) + '">Registrar consentimiento</button> ' + prospectoBotonContacto(p) + '<button class="ld-btn" data-prhist="' + lEsc(p.id) + '">Ver historial</button></td>' +
+      '</tr>';
+  }).join('');
+  box.innerHTML = cards + nCons + nota +
+    '<div class="ld-wrap"><table class="dash-table pr-tabla"><thead><tr>' +
+    '<th>Nombre</th><th>Clínica</th><th>Comuna</th><th class="pr-c-tel">Teléfono</th><th class="pr-c-ori">Origen</th><th>Consentimiento WhatsApp</th><th class="pr-c-est">Estado de contacto</th><th class="pr-c-imp">Importación</th><th class="pr-acc">Acción</th>' +
+    '</tr></thead><tbody>' +
+    (filas || '<tr><td colspan="9" style="text-align:center;color:var(--muted);padding:24px;">' + (base.length ? 'No hay prospectos con estos filtros.' : 'Aún no hay prospectos. Las bases se importarán en una fase posterior.') + '</td></tr>') +
+    '</tbody></table></div>' +
+    '<div style="font-size:11px;color:var(--muted);margin-top:8px;">' + lista.length + ' prospecto(s)</div>';
+  box.querySelectorAll('[data-prc]').forEach(function (b) { b.addEventListener('click', function () { prospectosConsAbrir(b.getAttribute('data-prc')); }); });
+  box.querySelectorAll('[data-prenv]').forEach(function (b) { b.addEventListener('click', function () { prospectosEnvAbrir(b.getAttribute('data-prenv')); }); });
+  box.querySelectorAll('[data-prhist]').forEach(function (b) { b.addEventListener('click', function () { prospectosHistAbrir(b.getAttribute('data-prhist')); }); });
+}
+
+
+// ---- Importador (Outbound 2): solo PREVIEW. NO inserta nada; "Confirmar importacion" queda deshabilitado. ----
+var prospectosImp = { abierto: false, analizando: false, error: null, res: null, filtro: '', file: null, confirmando: false, resultado: null, modo: 'test' };
+var PROSP_IMP_MAX_BYTES = 5 * 1024 * 1024;
+var PROSP_IMP_ESTADOS = ['VALIDO', 'INVALIDO', 'DUPLICADO', 'ADVERTENCIA'];
+var PROSP_IMP_ETIQUETA = { VALIDO: 'VÁLIDO', INVALIDO: 'INVÁLIDO', DUPLICADO: 'DUPLICADO', ADVERTENCIA: 'ADVERTENCIA' };
+var PROSP_IMP_CLASE = { VALIDO: 'ok', INVALIDO: 'no', DUPLICADO: 'dup', ADVERTENCIA: 'unk' };
+
+async function prospectosImportAnalizar(file) {
+  prospectosImp.error = null; prospectosImp.res = null; prospectosImp.filtro = ''; prospectosImp.file = null; prospectosImp.resultado = null;
+  var nombre = (file && file.name) ? file.name.toLowerCase() : '';
+  if (!file) return;
+  if (!/\.(xlsx|csv)$/.test(nombre)) { prospectosImp.error = 'Solo se aceptan archivos .xlsx o .csv.'; prospectosImportPintar(); return; }
+  if (file.size > PROSP_IMP_MAX_BYTES) { prospectosImp.error = 'El archivo supera 5 MB.'; prospectosImportPintar(); return; }
+  prospectosImp.analizando = true; prospectosImportPintar();
+  try {
+    var fd = new FormData(); fd.append('file', file, file.name); fd.append('batch_mode', prospectosImp.modo);
+    var r = await sb.functions.invoke('prospect-import-preview', { body: fd });
+    if (r.error) {
+      var msg = 'No se pudo analizar el archivo.';
+      try { if (r.error.context && r.error.context.json) { var j = await r.error.context.json(); if (j && j.message) msg = j.message; } } catch (x) {}
+      throw new Error(msg);
+    }
+    if (!r.data || r.data.ok !== true) throw new Error((r.data && r.data.message) || 'Respuesta inesperada del análisis.');
+    prospectosImp.res = r.data; prospectosImp.file = file;
+  } catch (e) {
+    prospectosImp.error = (e && e.message) ? e.message : 'No se pudo analizar el archivo.';
+  }
+  prospectosImp.analizando = false;
+  prospectosImportPintar();
+}
+async function prospectosImportConfirmar() {
+  var I = prospectosImp;
+  if (!I.res || !I.file || I.confirmando || I.resultado) return;
+  var s = I.res.summary;
+  if (!s.listas_para_importar) return;
+  var real = I.modo === 'real';
+  var texto = real
+    ? 'MODO REAL: se incorporarán ' + s.listas_para_importar + ' prospecto(s) como PROSPECTOS COMERCIALES REALES (consentimiento WhatsApp: sin definir).\nSe omiten ' + s.duplicado_fuerte + ' duplicado(s) y ' + s.invalidas + ' inválido(s). No se enviará ningún mensaje.\n\n¿Continuar con la importación REAL?'
+    : 'Se importarán ' + s.listas_para_importar + ' prospecto(s) como DATOS DE PRUEBA (consentimiento WhatsApp: sin definir).\nSe omiten ' + s.duplicado_fuerte + ' duplicado(s) y ' + s.invalidas + ' inválido(s). No se enviará ningún mensaje.\n\n¿Confirmar importación?';
+  if (!window.confirm(texto)) return;
+  if (real) {
+    // Segunda confirmacion explicita: hay que escribir la frase exacta.
+    var frase = window.prompt('SEGUNDA CONFIRMACIÓN (lote REAL). Escribe exactamente IMPORTAR REAL para continuar:');
+    if (frase !== 'IMPORTAR REAL') { I.error = 'Importación REAL cancelada: la segunda confirmación no coincidió. No se importó nada.'; prospectosImportPintar(); return; }
+  }
+  I.confirmando = true; I.error = null; prospectosImportPintar();
+  try {
+    var fd = new FormData(); fd.append('file', I.file, I.file.name); fd.append('mode', 'confirm'); fd.append('batch_mode', I.modo); if (I.modo === 'real') fd.append('real_confirmed', 'yes');
+    var r = await sb.functions.invoke('prospect-import-preview', { body: fd });
+    if (r.error) {
+      var msg = 'No se pudo completar la importación. No se importó nada.';
+      try { if (r.error.context && r.error.context.json) { var j = await r.error.context.json(); if (j && j.message) msg = j.message; } } catch (x) {}
+      throw new Error(msg);
+    }
+    if (!r.data || r.data.ok !== true || r.data.import_performed !== true) throw new Error((r.data && r.data.message) || 'Respuesta inesperada de la importación.');
+    I.resultado = r.data;
+    // El lote queda identificable: filtro Importación = este lote, incluyendo datos de prueba
+    prospectosFiltro.lote = r.data.import_id; prospectosFiltro.prueba = (I.modo !== 'real');
+    prospectosCargado = false; prospectosCargando = false;
+    prospectosCargar();
+  } catch (e) {
+    I.error = (e && e.message) ? e.message : 'No se pudo completar la importación. No se importó nada.';
+  }
+  I.confirmando = false;
+  prospectosImportPintar();
+}
+function prospectosImportPintar() {
+  var root = document.getElementById('prospectos-import-root');
+  if (!root) return;
+  if (!prospectosImp.abierto) { root.innerHTML = ''; return; }
+  var I = prospectosImp, res = I.res;
+  var html = '<div class="pr-imp"><div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;">' +
+    '<strong style="font-size:14px;">Importar prospectos</strong>' +
+    '<button class="ld-btn" id="pi-cerrar">Cerrar</button></div>' +
+    '<div style="font-size:12px;color:var(--muted);margin:6px 0 8px;">Sube un Excel (.xlsx, puede tener varias hojas) o CSV. Máx. 5 MB y 5.000 filas. El archivo se analiza en el servidor, <strong>no se guarda</strong>, y no se usa IA.</div>' +
+    '<div id="pi-modo" style="display:flex;gap:16px;align-items:center;flex-wrap:wrap;margin:6px 0;font-size:13px;">' +
+      '<strong>Modo del lote:</strong>' +
+      '<label><input type="radio" name="pi-modo" value="test"' + (I.modo === 'test' ? ' checked' : '') + ((I.analizando || I.confirmando || I.resultado) ? ' disabled' : '') + '> PRUEBA</label>' +
+      '<label><input type="radio" name="pi-modo" value="real"' + (I.modo === 'real' ? ' checked' : '') + ((I.analizando || I.confirmando || I.resultado) ? ' disabled' : '') + '> REAL</label></div>' +
+    (I.modo === 'real' ? '<div style="background:#fee2e2;border:1px solid #fecaca;border-radius:8px;padding:8px 12px;font-size:13px;font-weight:700;color:#991b1b;margin:6px 0;">Este lote se incorporará como prospectos comerciales reales.</div>' : '') +
+    '<input type="file" id="pi-archivo" accept=".xlsx,.csv"' + ((I.analizando || I.confirmando) ? ' disabled' : '') + '>' +
+    (I.resultado ? '' : '<div class="aviso">' + (res ? 'Este análisis aún NO ha importado datos. Revisa y confirma abajo.' : 'Primero se analiza el archivo; recién al confirmar se importa.') + '</div>');
+  if (I.analizando) html += '<div style="padding:10px;color:var(--muted);font-size:13px;">Analizando archivo…</div>';
+  if (I.confirmando) html += '<div style="padding:10px;color:var(--muted);font-size:13px;">Importando… (operación atómica)</div>';
+  if (I.resultado) {
+    var R = I.resultado;
+    html += '<div style="background:#dcfce7;border:1px solid #bbf7d0;border-radius:8px;padding:10px 14px;font-size:14px;font-weight:700;color:#166534;margin:8px 0;">✅ ' +
+      R.imported + ' prospecto' + (R.imported === 1 ? '' : 's') + ' importado' + (R.imported === 1 ? '' : 's') + ' / ' +
+      R.duplicates_omitted + ' duplicado' + (R.duplicates_omitted === 1 ? '' : 's') + ' omitido' + (R.duplicates_omitted === 1 ? '' : 's') + ' / ' +
+      R.invalid + ' inválido' + (R.invalid === 1 ? '' : 's') + '</div>' +
+      '<div style="font-size:11px;color:var(--muted);">Lote <strong>' + (R.batch_mode === 'real' ? '[REAL]' : '[PRUEBA]') + '</strong>: consentimiento WhatsApp «sin definir», sin contacto automático. El lote está seleccionado en el filtro «Importación».</div>';
+  }
+  if (I.error) html += '<div style="background:#fee2e2;border:1px solid #fecaca;border-radius:8px;padding:8px 12px;font-size:12px;color:#991b1b;">⚠️ ' + lEsc(I.error) + '</div>';
+  if (res) {
+    var s = res.summary;
+    var card = function (l, v, hl) { return '<div class="dash-card' + (hl ? ' highlight' : '') + '"><div class="dc-label">' + l + '</div><div class="dc-value">' + v + '</div></div>'; };
+    html += '<div style="font-size:12px;margin:8px 0;">Archivo: <strong>' + lEsc(res.file.name) + '</strong> · ' + Math.round(res.file.size / 1024) + ' KB · ' + res.sheets.length + ' hoja(s)</div>' +
+      '<div class="dash-grid ld-cards">' +
+      card('Filas totales', s.total) + card('Válidas', s.validas) + card('Inválidas', s.invalidas) + card('Duplicado fuerte', s.duplicado_fuerte) +
+      card('Adv. teléfono', s.adv_telefono) + card('Adv. nombre', s.adv_nombre) + card('Sin teléfono', s.sin_telefono) +
+      card('Sin consentimiento', s.sin_consentimiento) + card('Listas para importar', s.listas_para_importar, true) + '</div>' +
+      '<div style="font-size:11px;color:var(--muted);margin:8px 0;">Encabezados repetidos excluidos: ' + s.encabezados_repetidos + ' · Hojas vacías: ' + s.hojas_vacias + '. ' +
+      '"Listas para importar" = válidas o con advertencia, sin duplicado fuerte; no significa "listas para contactar" (el consentimiento queda en <em>sin definir</em>).</div>' +
+      '<div style="font-size:11px;color:var(--muted);margin-bottom:8px;">' + res.sheets.map(function (h) {
+        return '<span style="margin-right:12px;">📄 ' + lEsc(h.name) + ': ' + h.data_rows + ' fila(s)' + (h.note ? ' — ' + lEsc(h.note) : '') + '</span>';
+      }).join('') + '</div>';
+    var cnt = {}; res.rows.forEach(function (r) { cnt[r.status] = (cnt[r.status] || 0) + 1; });
+    html += '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px;">' +
+      '<button class="pr-chip' + (!I.filtro ? ' activa' : '') + '" data-pif="">Todos (' + res.rows.length + ')</button>' +
+      PROSP_IMP_ESTADOS.map(function (e) { return '<button class="pr-chip' + (I.filtro === e ? ' activa' : '') + '" data-pif="' + e + '">' + PROSP_IMP_ETIQUETA[e] + ' (' + (cnt[e] || 0) + ')</button>'; }).join('') + '</div>';
+    var lista = res.rows.filter(function (r) { return !I.filtro || r.status === I.filtro; });
+    var LIM = 500;
+    var filas = lista.slice(0, LIM).map(function (r) {
+      return '<tr>' +
+        '<td><span class="pr-badge ' + PROSP_IMP_CLASE[r.status] + '">' + PROSP_IMP_ETIQUETA[r.status] + '</span><div style="font-size:10px;color:var(--muted);">' + lEsc(r.sheet) + ' · fila ' + r.row + '</div></td>' +
+        '<td>' + lEsc(r.external_customer_id || '—') + '</td>' +
+        '<td>' + lEsc(r.full_name || '—') + '</td>' +
+        '<td>' + lEsc(r.clinic_name || '—') + '</td>' +
+        '<td>' + lEsc(r.source_owner || '—') + '</td>' +
+        '<td>' + lEsc(r.priority_source || '—') + '</td>' +
+        '<td>' + (r.last_billed_year == null ? '—' : lEsc(r.last_billed_year)) + '</td>' +
+        '<td>' + (r.trade_up_financial === true ? 'Sí' : (r.trade_up_financial === false ? 'No' : '—')) + '</td>' +
+        '<td>' + lEsc(r.phone_e164 || '—') + '</td>' +
+        '<td>' + (r.problems.length ? r.problems.map(function (p) { return '<div class="pr-p ' + lEsc(p.level) + '">' + lEsc(p.msg) + '</div>'; }).join('') : '—') + '</td>' +
+        '</tr>';
+    }).join('');
+    html += '<div class="ld-wrap"><table class="dash-table"><thead><tr><th>Estado</th><th>Sold-To</th><th>Nombre / Contacto</th><th>Cliente</th><th>Cartera origen</th><th>Prioridad</th><th>Año últ. facturación</th><th>Trade Up fin.</th><th>Teléfono</th><th>Problema / advertencia</th></tr></thead><tbody>' +
+      (filas || '<tr><td colspan="10" style="text-align:center;color:var(--muted);padding:18px;">Sin filas para este filtro.</td></tr>') + '</tbody></table></div>' +
+      '<div style="font-size:11px;color:var(--muted);margin-top:6px;">' + (lista.length > LIM ? 'Mostrando las primeras ' + LIM + ' de ' + lista.length + ' filas; usa los filtros. ' : lista.length + ' fila(s). ') + 'Nada se fusiona automáticamente: los duplicados y advertencias son solo informativos.</div>' +
+      '<div style="margin-top:12px;display:flex;gap:10px;align-items:center;flex-wrap:wrap;">' +
+      '<button class="ld-btn primary" id="pi-confirmar"' + ((I.resultado || I.confirmando || !I.file || !s.listas_para_importar) ? ' disabled' : '') + '>' + (I.confirmando ? 'Importando…' : (I.modo === 'real' ? 'Confirmar importación REAL' : 'Confirmar importación')) + '</button>' +
+      '<button class="ld-btn" id="pi-descartar"' + (I.confirmando ? ' disabled' : '') + '>' + (I.resultado ? 'Cerrar resultado' : 'Descartar análisis') + '</button>' +
+      '<span style="font-size:11px;color:var(--muted);">' + (I.resultado ? 'Este archivo ya fue importado.' : (s.listas_para_importar ? 'Modo ' + (I.modo === 'real' ? 'REAL' : 'PRUEBA') + ': se importan solo las ' + s.listas_para_importar + ' filas «listas». Duplicados e inválidas se omiten. Sin envíos por WhatsApp.' : 'No hay filas listas para importar.')) + '</span></div>';
+  }
+  html += '</div>';
+  root.innerHTML = html;
+  document.getElementById('pi-cerrar').addEventListener('click', function () { prospectosImp.abierto = false; prospectosImp.modo = 'test'; prospectosImportPintar(); });
+  document.getElementById('pi-archivo').addEventListener('change', function (e) { var f = e.target.files && e.target.files[0]; if (f) prospectosImportAnalizar(f); });
+  var d = document.getElementById('pi-descartar');
+  if (d) d.addEventListener('click', function () { if (prospectosImp.confirmando) return; prospectosImp.res = null; prospectosImp.error = null; prospectosImp.filtro = ''; prospectosImp.file = null; prospectosImp.resultado = null; prospectosImp.modo = 'test'; prospectosImportPintar(); });
+  root.querySelectorAll('input[name=pi-modo]').forEach(function (rd) {
+    rd.addEventListener('change', function () {
+      if (!rd.checked || prospectosImp.analizando || prospectosImp.confirmando) return;
+      prospectosImp.modo = rd.value; prospectosImp.resultado = null; prospectosImp.error = null; prospectosImp.filtro = '';
+      // Cambiar de modo cambia contra que se comparan los duplicados: se vuelve a analizar el mismo archivo.
+      var f = prospectosImp.file; prospectosImp.res = null;
+      if (f) prospectosImportAnalizar(f); else prospectosImportPintar();
+    });
+  });
+  var cf = document.getElementById('pi-confirmar');
+  if (cf) cf.addEventListener('click', function () { prospectosImportConfirmar(); });
+  root.querySelectorAll('[data-pif]').forEach(function (b) {
+    b.addEventListener('click', function () { prospectosImp.filtro = b.getAttribute('data-pif'); prospectosImportPintar(); });
+  });
+}
+
+// ---- Enriquecer prospectos (Outbound 5): completa nombre / móvil / email de prospectos REALES existentes por Sold-To exacto. ----
+// Nunca crea prospectos, nunca sobrescribe datos existentes, no toca consentimiento ni estado de contacto, no envía WhatsApp.
+function prospectosEnrNuevo() { return { abierto: false, analizando: false, error: null, res: null, filtro: '', file: null, confirmando: false, resultado: null, ack: false }; }
+var prospectosEnr = prospectosEnrNuevo();
+var PROSP_ENR_ESTADOS = ['ACTUALIZA', 'SIN_CAMBIOS', 'SIN_MATCH', 'INVALIDO', 'DUPLICADO_ARCHIVO', 'MATCH_MULTIPLE'];
+var PROSP_ENR_ETIQUETA = { ACTUALIZA: 'COMPLETA DATOS', SIN_CAMBIOS: 'SIN CAMBIOS', SIN_MATCH: 'SIN MATCH', INVALIDO: 'INVÁLIDO', DUPLICADO_ARCHIVO: 'REPETIDO EN ARCHIVO', MATCH_MULTIPLE: 'REPETIDO EN BASE' };
+var PROSP_ENR_CLASE = { ACTUALIZA: 'ok', SIN_CAMBIOS: 'unk', SIN_MATCH: 'dup', INVALIDO: 'no', DUPLICADO_ARCHIVO: 'dup', MATCH_MULTIPLE: 'dup' };
+var PROSP_ENR_CAMPO = { full_name: 'Contacto', phone: 'Móvil', email: 'Email' };
+var PROSP_ENR_AVISO = { telefono_duplicado: 'Teléfono duplicado', telefono_no_movil_valido: 'Teléfono no es móvil válido (no se carga)', email_invalido: 'Email inválido (no se carga)', sold_to_invalido: 'Sold-To inválido', sin_sold_to: 'Sin Sold-To', sold_to_repetido_en_archivo: 'Sold-To repetido en el archivo (se omite)', sold_to_repetido_en_base: 'Sold-To repetido en la base (se omite)' };
+
+async function prospectosEnrInvocar(file, modo, extra) {
+  var fd = new FormData(); fd.append('file', file, file.name); fd.append('mode', modo);
+  if (extra) Object.keys(extra).forEach(function (k) { fd.append(k, extra[k]); });
+  var r = await sb.functions.invoke('prospect-import-preview', { body: fd });
+  if (r.error) {
+    var msg = 'No se pudo procesar el archivo.';
+    try { if (r.error.context && r.error.context.json) { var j = await r.error.context.json(); if (j && j.message) msg = j.message; } } catch (x) {}
+    throw new Error(msg);
+  }
+  if (!r.data || r.data.ok !== true) throw new Error((r.data && r.data.message) || 'Respuesta inesperada.');
+  return r.data;
+}
+async function prospectosEnrAnalizar(file) {
+  var E = prospectosEnr;
+  E.error = null; E.res = null; E.filtro = ''; E.file = null; E.resultado = null; E.ack = false;
+  if (!file) return;
+  var nombre = (file.name || '').toLowerCase();
+  if (!/\.(xlsx|csv)$/.test(nombre)) { E.error = 'Solo se aceptan archivos .xlsx o .csv.'; prospectosEnrPintar(); return; }
+  if (file.size > PROSP_IMP_MAX_BYTES) { E.error = 'El archivo supera 5 MB.'; prospectosEnrPintar(); return; }
+  E.analizando = true; prospectosEnrPintar();
+  try {
+    var d = await prospectosEnrInvocar(file, 'enrich_preview');
+    if (d.enrichment_performed !== false) throw new Error('Respuesta inesperada del análisis.');
+    E.res = d; E.file = file;
+  } catch (e) { E.error = (e && e.message) ? e.message : 'No se pudo analizar el archivo.'; }
+  E.analizando = false; prospectosEnrPintar();
+}
+async function prospectosEnrConfirmar() {
+  var E = prospectosEnr;
+  if (!E.res || !E.file || E.confirmando || E.resultado) return;
+  var s = E.res.summary;
+  if (!s.filas_a_actualizar) return;
+  if (s.telefonos_duplicados > 0 && !E.ack) return;
+  var texto = 'Se completarán datos en ' + s.filas_a_actualizar + ' prospecto(s) REAL(ES) existente(s): ' + s.contactos_a_completar + ' contacto(s), ' + s.telefonos_a_completar + ' móvil(es), ' + s.emails_a_completar + ' email(s).\n' +
+    'Solo se llenan campos VACÍOS (no se sobrescribe nada). No se crean prospectos, no se cambia el consentimiento WhatsApp ni el estado de contacto, y no se envía ningún mensaje.\n' +
+    (s.telefonos_duplicados > 0 ? 'ATENCIÓN: hay ' + s.telefonos_duplicados + ' teléfono(s) duplicado(s) (' + s.filas_con_telefono_duplicado + ' fila(s)); ya los revisaste.\n' : '') + '\n¿Confirmar el enriquecimiento?';
+  if (!window.confirm(texto)) return;
+  E.confirmando = true; E.error = null; prospectosEnrPintar();
+  try {
+    var d = await prospectosEnrInvocar(E.file, 'enrich_confirm', s.telefonos_duplicados > 0 ? { dup_ack: 'yes' } : null);
+    if (d.enrichment_performed !== true) throw new Error('Respuesta inesperada del enriquecimiento.');
+    E.resultado = d;
+    prospectosCargado = false; prospectosCargando = false; prospectosCargar();
+  } catch (e) { E.error = (e && e.message) ? e.message : 'No se pudo completar el enriquecimiento. No se actualizó nada.'; }
+  E.confirmando = false; prospectosEnrPintar();
+}
+function prospectosEnrPintar() {
+  var root = document.getElementById('prospectos-enrich-root');
+  if (!root) return;
+  var E = prospectosEnr;
+  if (!E.abierto) { root.innerHTML = ''; return; }
+  var res = E.res, ocupado = E.analizando || E.confirmando;
+  var html = '<div class="pr-imp pr-enr"><div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;">' +
+    '<strong style="font-size:14px;">Enriquecer prospectos</strong><button class="ld-btn" id="pe-cerrar">Cerrar</button></div>' +
+    '<div style="font-size:12px;color:var(--muted);margin:6px 0 8px;">Sube un Excel (.xlsx) o CSV con <strong>Sold-To</strong> y, opcionalmente, Contacto, Teléfono y Email. Solo se <strong>completan campos vacíos</strong> de prospectos REALES que ya existen (match exacto por Sold-To). No crea prospectos, no cambia el consentimiento WhatsApp ni el estado de contacto, y no envía mensajes. El archivo no se guarda.</div>' +
+    '<input type="file" id="pe-archivo" accept=".xlsx,.csv"' + (ocupado ? ' disabled' : '') + '>' +
+    (E.resultado ? '' : '<div class="aviso">' + (res ? 'Este análisis aún NO ha modificado datos. Revisa y confirma abajo.' : 'Primero se analiza el archivo; recién al confirmar se actualiza.') + '</div>');
+  if (E.analizando) html += '<div style="padding:10px;color:var(--muted);font-size:13px;">Analizando archivo…</div>';
+  if (E.confirmando) html += '<div style="padding:10px;color:var(--muted);font-size:13px;">Actualizando… (operación atómica)</div>';
+  if (E.resultado) {
+    var R = E.resultado;
+    html += '<div style="background:#dcfce7;border:1px solid #bbf7d0;border-radius:8px;padding:10px 14px;font-size:14px;font-weight:700;color:#166534;margin:8px 0;">✅ ' +
+      R.updated + ' prospecto' + (R.updated === 1 ? '' : 's') + ' actualizado' + (R.updated === 1 ? '' : 's') + ' · ' +
+      R.full_name + ' contacto(s) · ' + R.phone + ' móvil(es) · ' + R.email + ' email(s)' +
+      (R.skipped_already_filled ? ' · ' + R.skipped_already_filled + ' ya tenían datos (sin cambios)' : '') + '</div>' +
+      '<div style="font-size:11px;color:var(--muted);">Consentimiento WhatsApp y estado de contacto no se modificaron. No se envió ningún mensaje.</div>';
+  }
+  if (E.error) html += '<div style="background:#fee2e2;border:1px solid #fecaca;border-radius:8px;padding:8px 12px;font-size:12px;color:#991b1b;">⚠️ ' + lEsc(E.error) + '</div>';
+  if (res) {
+    var s = res.summary;
+    var card = function (l, v, hl) { return '<div class="dash-card' + (hl ? ' highlight' : '') + '"><div class="dc-label">' + l + '</div><div class="dc-value">' + v + '</div></div>'; };
+    html += '<div style="font-size:12px;margin:8px 0;">Archivo: <strong>' + lEsc(res.file.name) + '</strong> · ' + Math.round(res.file.size / 1024) + ' KB</div>' +
+      '<div class="dash-grid ld-cards">' +
+      card('Filas del archivo', s.filas_archivo) + card('Match exacto', s.match_exacto) + card('Sin match', s.sin_match) +
+      card('Con móvil válido', s.con_movil_valido) + card('Sin móvil', s.sin_movil) + card('Teléfonos duplicados', s.telefonos_duplicados) +
+      card('Contactos a completar', s.contactos_a_completar) + card('Emails a completar', s.emails_a_completar) + card('Móviles a completar', s.telefonos_a_completar) +
+      card('Conflictos (no se pisan)', s.conflictos) + card('Prospectos a actualizar', s.filas_a_actualizar, true) + '</div>' +
+      '<div style="font-size:11px;color:var(--muted);margin:8px 0;">Inválidas: ' + s.invalidas + ' · Repetidas en archivo: ' + s.duplicadas_archivo + ' · Repetidas en base: ' + s.match_multiple + ' · Sin cambios: ' + s.sin_cambios + '. «Conflicto» = el prospecto ya tiene otro dato: se conserva el actual.</div>';
+    if (s.telefonos_duplicados > 0) {
+      html += '<div style="background:#fef3c7;border:1px solid #fde68a;border-radius:8px;padding:8px 12px;font-size:12px;color:#92400e;margin:8px 0;">⚠️ Hay ' + s.telefonos_duplicados + ' teléfono(s) usado(s) por más de un prospecto (' + s.filas_con_telefono_duplicado + ' fila(s) marcadas «Teléfono duplicado»). Revísalos antes de confirmar.' +
+        '<label style="display:block;margin-top:6px;font-weight:700;"><input type="checkbox" id="pe-ack"' + (E.ack ? ' checked' : '') + (ocupado || E.resultado ? ' disabled' : '') + '> Revisé los teléfonos duplicados y acepto continuar</label></div>';
+    }
+    var cnt = {}; res.rows.forEach(function (r) { cnt[r.status] = (cnt[r.status] || 0) + 1; });
+    var nDup = res.rows.filter(function (r) { return r.phone_dup; }).length;
+    html += '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px;">' +
+      '<button class="pr-chip' + (!E.filtro ? ' activa' : '') + '" data-pef="">Todos (' + res.rows.length + ')</button>' +
+      PROSP_ENR_ESTADOS.map(function (e) { return '<button class="pr-chip' + (E.filtro === e ? ' activa' : '') + '" data-pef="' + e + '">' + PROSP_ENR_ETIQUETA[e] + ' (' + (cnt[e] || 0) + ')</button>'; }).join('') +
+      '<button class="pr-chip' + (E.filtro === 'DUP_TEL' ? ' activa' : '') + '" data-pef="DUP_TEL">Teléfono duplicado (' + nDup + ')</button></div>';
+    var lista = res.rows.filter(function (r) { return !E.filtro || (E.filtro === 'DUP_TEL' ? r.phone_dup : r.status === E.filtro); });
+    var LIM = 500;
+    var filas = lista.slice(0, LIM).map(function (r) {
+      return '<tr>' +
+        '<td><span class="pr-badge ' + PROSP_ENR_CLASE[r.status] + '">' + PROSP_ENR_ETIQUETA[r.status] + '</span><div style="font-size:10px;color:var(--muted);">' + lEsc(r.sheet) + ' · fila ' + r.row + '</div></td>' +
+        '<td>' + lEsc(r.external_customer_id || '—') + '</td>' +
+        '<td>' + (r.fills.length ? r.fills.map(function (f) { return lEsc(PROSP_ENR_CAMPO[f] || f); }).join(', ') : '—') + '</td>' +
+        '<td>' + (r.conflicts.length ? r.conflicts.map(function (f) { return lEsc(PROSP_ENR_CAMPO[f] || f); }).join(', ') : '—') + '</td>' +
+        '<td>' + (r.has_mobile ? 'Sí' : 'No') + '</td>' +
+        '<td>' + (r.warnings.length ? r.warnings.map(function (w) { return '<div class="pr-p warning">' + lEsc(PROSP_ENR_AVISO[w] || w) + '</div>'; }).join('') : '—') + '</td>' +
+        '</tr>';
+    }).join('');
+    html += '<div class="ld-wrap"><table class="dash-table"><thead><tr><th>Estado</th><th>Sold-To</th><th>Se completa</th><th>Conflicto (se conserva actual)</th><th>Móvil válido</th><th>Advertencias</th></tr></thead><tbody>' +
+      (filas || '<tr><td colspan="6" style="text-align:center;color:var(--muted);padding:18px;">Sin filas para este filtro.</td></tr>') + '</tbody></table></div>' +
+      '<div style="font-size:11px;color:var(--muted);margin-top:6px;">' + (lista.length > LIM ? 'Mostrando las primeras ' + LIM + ' de ' + lista.length + ' filas; usa los filtros.' : lista.length + ' fila(s).') + ' Por privacidad, la vista previa no muestra nombres, teléfonos ni correos.</div>' +
+      '<div style="margin-top:12px;display:flex;gap:10px;align-items:center;flex-wrap:wrap;">' +
+      '<button class="ld-btn primary" id="pe-confirmar"' + ((E.resultado || E.confirmando || !E.file || !s.filas_a_actualizar || (s.telefonos_duplicados > 0 && !E.ack)) ? ' disabled' : '') + '>' + (E.confirmando ? 'Actualizando…' : 'Confirmar enriquecimiento') + '</button>' +
+      '<button class="ld-btn" id="pe-descartar"' + (E.confirmando ? ' disabled' : '') + '>' + (E.resultado ? 'Cerrar resultado' : 'Descartar análisis') + '</button>' +
+      '<span style="font-size:11px;color:var(--muted);">' + (E.resultado ? 'Este archivo ya fue aplicado.' : (s.filas_a_actualizar ? 'Se actualizan ' + s.filas_a_actualizar + ' prospecto(s) existente(s); solo campos vacíos.' : 'No hay datos para completar.')) + '</span></div>';
+  }
+  html += '</div>';
+  root.innerHTML = html;
+  document.getElementById('pe-cerrar').addEventListener('click', function () { prospectosEnr.abierto = false; prospectosEnrPintar(); });
+  document.getElementById('pe-archivo').addEventListener('change', function (e) { var f = e.target.files && e.target.files[0]; if (f) prospectosEnrAnalizar(f); });
+  var d = document.getElementById('pe-descartar');
+  if (d) d.addEventListener('click', function () { if (prospectosEnr.confirmando) return; prospectosEnr = Object.assign(prospectosEnrNuevo(), { abierto: true }); prospectosEnrPintar(); });
+  var ak = document.getElementById('pe-ack');
+  if (ak) ak.addEventListener('change', function () { prospectosEnr.ack = ak.checked; prospectosEnrPintar(); });
+  var cf = document.getElementById('pe-confirmar');
+  if (cf) cf.addEventListener('click', function () { prospectosEnrConfirmar(); });
+  root.querySelectorAll('[data-pef]').forEach(function (b) {
+    b.addEventListener('click', function () { prospectosEnr.filtro = b.getAttribute('data-pef'); prospectosEnrPintar(); });
+  });
+}
+
+// ---- Consentimiento WhatsApp (Outbound 6): registro INDIVIDUAL, con evidencia y auditoria. Solo Lead Admin (la RPC lo exige). ----
+// No hay accion masiva. No cambia outreach_status. No envia WhatsApp. Sin service_role: sb.rpc con la sesion del usuario.
+function prospectosConsNuevo() { return { id: null, estado: 'granted', fuente: '', fecha: '', nota: '', enviando: false, error: null, ok: null, historial: [], cargandoHist: false, link: null, generando: false, errorInv: null, copiado: false }; }
+var prospectosCons = prospectosConsNuevo();
+var PROSP_CONS_ESTADO = { granted: 'Autorizado', denied: 'No autorizado', unknown: 'Sin definir' };
+var PROSP_CONS_ERR = {
+  FUENTE_REQUERIDA: 'Indica la fuente del consentimiento.', FUENTE_INVALIDA: 'Fuente no válida.', FECHA_REQUERIDA: 'Indica la fecha del consentimiento.',
+  FECHA_INVALIDA: 'La fecha no es válida (no puede ser futura ni anterior a 2015).', NOTA_REQUERIDA: 'La nota o referencia es obligatoria (mínimo 5 caracteres).',
+  SIN_CAMBIO: 'El prospecto ya tiene ese estado de consentimiento.', CONSENTIMIENTO_YA_DEFINIDO: 'El consentimiento ya está definido: solo se puede invitar a prospectos «Sin definir».', INVITACION_NO_PENDIENTE: 'La invitación ya no está pendiente.', PROSPECTO_DADO_DE_BAJA: 'El prospecto se dio de baja (opted_out): no se puede autorizar.',
+  PROSPECTO_NO_ENCONTRADO: 'Prospecto no encontrado.', NO_AUTORIZADO: 'No tienes permiso para modificar consentimientos.', PARAMETROS_INVALIDOS: 'Datos no válidos.'
+};
+function prospectoConsEstadoDe(p) { return p.whatsapp_consent === 'yes' ? 'granted' : (p.whatsapp_consent === 'no' ? 'denied' : 'unknown'); }
+var PROSP_INV_ESTADO = { pendiente: 'pendiente', aceptada: 'aceptada', rechazada: 'rechazada', vencida: 'vencida', revocada: 'revocada' };
+function prospectoInvEstado(i) {
+  if (i.status === 'accepted') return 'aceptada';
+  if (i.status === 'rejected') return 'rechazada';
+  if (i.status === 'revoked') return 'revocada';
+  return (new Date(i.expires_at).getTime() <= Date.now()) ? 'vencida' : 'pendiente';
+}
+function prospectoInvDe(pid) { return prospectosInvit.filter(function (i) { return i.prospect_id === pid; }); }
+function prospectoInvResumen(p) {
+  var l = prospectoInvDe(p.id); if (!l.length) return '';
+  return '<div style="font-size:11px;color:var(--muted);">Link de consentimiento: ' + PROSP_INV_ESTADO[prospectoInvEstado(l[0])] + '</div>';
+}
+function prospectoConsDetalle(p) {
+  if (p.whatsapp_consent === 'unknown' && !p.consent_source && !p.consent_at) return prospectoInvResumen(p);
+  var t = [];
+  if (p.consent_source) t.push('Fuente: ' + (PROSP_CONS_FUENTE[p.consent_source] || p.consent_source));
+  if (p.consent_at) t.push('Fecha: ' + String(p.consent_at).slice(0, 10).split('-').reverse().join('-'));
+  return (t.length ? '<div style="font-size:11px;color:var(--muted);">' + lEsc(t.join(' · ')) + '</div>' : '') + prospectoInvResumen(p);
+}
+function prospectosConsHoy() { var d = new Date(); return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); }
+async function prospectosConsAbrir(id) {
+  var C = prospectosCons = prospectosConsNuevo(); C.id = id;
+  var p = prospectosDatos.filter(function (x) { return x.id === id; })[0];
+  C.estado = (p && prospectoConsEstadoDe(p) === 'granted') ? 'denied' : 'granted';
+  C.fecha = '';
+  prospectosConsPintar(); prospectosConsHistorial();
+  var r = document.getElementById('prospectos-consent-root'); if (r && r.scrollIntoView) { try { r.scrollIntoView({ block: 'nearest' }); } catch (x) {} }
+}
+async function prospectosConsHistorial() {
+  var C = prospectosCons, id = C.id; if (!id) return;
+  C.cargandoHist = true; prospectosConsPintar();
+  await prospectosInvRecargar();
+  try {
+    var r = await sb.from('digital_prospect_consent_log').select('previous_state,new_state,source,consent_date,note,changed_by_email,changed_at').eq('prospect_id', id).order('changed_at', { ascending: false });
+    if (prospectosCons.id === id) prospectosCons.historial = r.error ? [] : (r.data || []);
+  } catch (e) { if (prospectosCons.id === id) prospectosCons.historial = []; }
+  if (prospectosCons.id === id) { prospectosCons.cargandoHist = false; prospectosConsPintar(); }
+}
+async function prospectosConsGuardar() {
+  var C = prospectosCons; if (!C.id || C.enviando) return;
+  var p = prospectosDatos.filter(function (x) { return x.id === C.id; })[0]; if (!p) return;
+  var nota = (C.nota || '').trim();
+  C.error = null; C.ok = null;
+  if (C.estado === 'granted') {
+    if (!C.fuente) C.error = PROSP_CONS_ERR.FUENTE_REQUERIDA; else if (!C.fecha) C.error = PROSP_CONS_ERR.FECHA_REQUERIDA;
+    else if (C.fecha > prospectosConsHoy()) C.error = PROSP_CONS_ERR.FECHA_INVALIDA; else if (nota.length < 5) C.error = PROSP_CONS_ERR.NOTA_REQUERIDA;
+  } else if (C.estado === 'unknown' && nota.length < 5) C.error = PROSP_CONS_ERR.NOTA_REQUERIDA;
+  if (C.error) { prospectosConsPintar(); return; }
+  var txt = 'Registrar consentimiento WhatsApp de este prospecto:\n' + (p.full_name || p.clinic_name || p.external_customer_id || 'sin nombre') + '\n\n' + PROSP_CONS_ESTADO[prospectoConsEstadoDe(p)] + '  →  ' + PROSP_CONS_ESTADO[C.estado] +
+    (C.estado === 'granted' ? '\nFuente: ' + (PROSP_CONS_FUENTE[C.fuente] || C.fuente) + '\nFecha: ' + C.fecha + '\nNota: ' + nota : '') +
+    '\n\nQuedará registrado tu usuario y la fecha del cambio. No se enviará ningún mensaje ni se cambiará el estado de contacto.';
+  if (!window.confirm(txt)) return;
+  C.enviando = true; prospectosConsPintar();
+  try {
+    var r = await sb.rpc('set_prospect_consent', { p_prospect_id: C.id, p_state: C.estado, p_source: C.fuente || null, p_consent_date: C.fecha || null, p_note: nota || null });
+    if (r.error) {
+      var m = String(r.error.message || ''), k = Object.keys(PROSP_CONS_ERR).filter(function (c) { return m.indexOf(c) >= 0; })[0];
+      throw new Error(k ? PROSP_CONS_ERR[k] : 'No se pudo registrar el consentimiento. No se cambió nada.');
+    }
+    C.ok = 'Consentimiento registrado: ' + PROSP_CONS_ESTADO[r.data.new_state] + (r.data.contact_ready ? ' · el prospecto queda LISTO para contactar (sin envío automático).' : '.');
+    C.nota = ''; C.fuente = '';
+    prospectosCargado = false; prospectosCargando = false; prospectosCargar();
+    prospectosConsHistorial();
+  } catch (e) { C.error = (e && e.message) ? e.message : 'No se pudo registrar el consentimiento. No se cambió nada.'; }
+  C.enviando = false; prospectosConsPintar();
+}
+
+// ---- Invitacion de consentimiento por link individual (Outbound 6B). El token existe SOLO en la respuesta de create_consent_invitation (memoria); la base guarda su hash. ----
+async function prospectosInvRecargar() {
+  var id = prospectosCons.id; if (!id) return;
+  try {
+    var r = await sb.from('digital_prospect_consent_invitations').select('id,prospect_id,status,created_at,expires_at,used_at,decision').eq('prospect_id', id).order('created_at', { ascending: false });
+    if (!r.error) { prospectosInvit = prospectosInvit.filter(function (i) { return i.prospect_id !== id; }).concat(r.data || []); }
+  } catch (e) {}
+}
+function prospectosInvError(e) {
+  var m = String((e && e.message) || ''), k = Object.keys(PROSP_CONS_ERR).filter(function (c) { return m.indexOf(c) >= 0; })[0];
+  return k ? PROSP_CONS_ERR[k] : 'No se pudo completar la operación. No se cambió nada.';
+}
+// URL PUBLICA para links de consentimiento (cliente externo, sin login).
+// NO usar window.location.origin: el admin/preview puede estar protegido por Vercel Authentication.
+// Unico lugar a cambiar al pasar a produccion o a otro dominio publico. Sin "/" final.
+// Requiere que consentimiento-whatsapp.html este desplegado en ese dominio (rama main).
+var CONSENT_PUBLIC_BASE_URL = 'https://recetario-hosmil.vercel.app';
+function consentBaseUrlValida() {
+  var b = String(CONSENT_PUBLIC_BASE_URL || '');
+  return /^https:\/\/[a-z0-9.-]+$/i.test(b) && !/-git-|localhost|127\.0\.0\.1/i.test(b);
+}
+async function prospectosInvGenerar() {
+  var C = prospectosCons; if (!C.id || C.generando) return;
+  if (!consentBaseUrlValida()) { C.errorInv = 'Falta configurar la URL pública de consentimiento (CONSENT_PUBLIC_BASE_URL). No se generó ningún link.'; prospectosConsPintar(); return; }
+  var p = prospectosDatos.filter(function (x) { return x.id === C.id; })[0]; if (!p) return;
+  var hay = prospectoInvDe(p.id).some(function (i) { return prospectoInvEstado(i) === 'pendiente'; });
+  var txt = 'Generar un link personal de consentimiento WhatsApp para:\n' + (p.full_name || p.clinic_name || p.external_customer_id || 'este prospecto') + '\n\nEl link es de un solo uso y vence en 14 días' + (hay ? '. El link vigente anterior quedará revocado' : '') + '.\nSe mostrará UNA sola vez (no queda guardado). No se envía automáticamente por ningún canal ni se enviará ningún WhatsApp.\n\n¿Generar link?';
+  if (!window.confirm(txt)) return;
+  C.generando = true; C.errorInv = null; C.link = null; C.copiado = false; prospectosConsPintar();
+  try {
+    var r = await sb.rpc('create_consent_invitation', { p_prospect_id: C.id, p_ttl_days: 14 });
+    if (r.error) throw r.error;
+    C.link = { url: CONSENT_PUBLIC_BASE_URL + '/consentimiento-whatsapp.html?t=' + encodeURIComponent(r.data.token), vence: r.data.expires_at };
+    await prospectosInvRecargar();
+  } catch (e) { C.errorInv = prospectosInvError(e); }
+  C.generando = false; prospectosConsPintar();
+}
+async function prospectosInvRevocar(invId) {
+  var C = prospectosCons; if (!C.id || C.generando) return;
+  if (!window.confirm('¿Revocar este link de consentimiento? Dejará de funcionar.')) return;
+  C.generando = true; C.errorInv = null; prospectosConsPintar();
+  try {
+    var r = await sb.rpc('revoke_consent_invitation', { p_invitation_id: invId });
+    if (r.error) throw r.error;
+    C.link = null; await prospectosInvRecargar();
+  } catch (e) { C.errorInv = prospectosInvError(e); }
+  C.generando = false; prospectosConsPintar();
+}
+async function prospectosInvCopiar() {
+  var C = prospectosCons; if (!C.link) return;
+  try { await navigator.clipboard.writeText(C.link.url); C.copiado = true; }
+  catch (e) { var inp = document.getElementById('pc-link'); if (inp) { inp.focus(); inp.select(); try { C.copiado = document.execCommand('copy'); } catch (x) { C.copiado = false; } } }
+  prospectosConsPintar();
+}
+function prospectosConsPintar() {
+  var root = document.getElementById('prospectos-consent-root'); if (!root) return;
+  var C = prospectosCons;
+  if (!C.id) { root.innerHTML = ''; return; }
+  var p = prospectosDatos.filter(function (x) { return x.id === C.id; })[0];
+  if (!p) { root.innerHTML = ''; return; }
+  var actual = prospectoConsEstadoDe(p), dis = C.enviando ? ' disabled' : '';
+  var radios = ['granted', 'denied', 'unknown'].filter(function (e) { return e !== actual; }).map(function (e) {
+    return '<label style="margin-right:14px;"><input type="radio" name="pc-estado" value="' + e + '"' + (C.estado === e ? ' checked' : '') + dis + '> ' + (e === 'unknown' ? 'Volver a Sin definir' : PROSP_CONS_ESTADO[e]) + '</label>';
+  }).join('');
+  var lbl = 'font-size:12px;font-weight:700;display:block;margin:8px 0 3px;';
+  var opts = '<option value="">— Selecciona —</option>' + Object.keys(PROSP_CONS_FUENTE).map(function (k) { return '<option value="' + k + '"' + (C.fuente === k ? ' selected' : '') + '>' + lEsc(PROSP_CONS_FUENTE[k]) + '</option>'; }).join('');
+  var html = '<div class="pr-imp pr-cons"><div style="display:flex;justify-content:space-between;align-items:center;gap:10px;flex-wrap:wrap;"><strong style="font-size:14px;">Registrar consentimiento WhatsApp</strong><button class="ld-btn" id="pc-cerrar">Cerrar</button></div>' +
+    '<div style="font-size:13px;margin:6px 0;"><strong>' + lEsc(p.full_name || p.clinic_name || 'Sin nombre') + '</strong>' + (p.external_customer_id ? ' · Sold-To ' + lEsc(p.external_customer_id) : '') + (p.is_test ? ' <span class="ld-test">PRUEBA</span>' : '') +
+    ' · Estado actual: <span class="pr-badge ' + (actual === 'granted' ? 'ok' : (actual === 'denied' ? 'no' : 'unk')) + '">' + PROSP_CONS_ESTADO[actual] + '</span>' + prospectoConsDetalle(p) + '</div>' +
+    '<div class="aviso">El consentimiento nunca se asigna por tener teléfono. Cada cambio es individual, exige evidencia (si es «Autorizado») y queda en el historial con tu usuario. No envía mensajes ni cambia el estado de contacto.</div>' +
+    '<div style="margin:6px 0;">' + radios + '</div>';
+  if (C.estado !== 'unknown') {
+    html += '<label style="' + lbl + '">Fuente del consentimiento' + (C.estado === 'granted' ? ' *' : ' (opcional)') + '</label><select id="pc-fuente"' + dis + '>' + opts + '</select>' +
+      '<label style="' + lbl + '">Fecha del consentimiento' + (C.estado === 'granted' ? ' *' : ' (opcional; por defecto hoy)') + '</label><input type="date" id="pc-fecha" max="' + prospectosConsHoy() + '" value="' + lEsc(C.fecha) + '"' + dis + '>';
+  }
+  html += '<label style="' + lbl + '">' + (C.estado === 'granted' ? 'Referencia o nota breve *' : (C.estado === 'unknown' ? 'Motivo (obligatorio) *' : 'Motivo (opcional)')) + '</label>' +
+    '<textarea id="pc-nota" maxlength="500" rows="2" style="width:100%;max-width:560px;"' + dis + ' placeholder="' + (C.estado === 'granted' ? 'Ej.: formulario firmado en consulta, folio 123' : 'Breve') + '">' + lEsc(C.nota) + '</textarea>';
+  if (C.error) html += '<div style="background:#fee2e2;border:1px solid #fecaca;border-radius:8px;padding:8px 12px;font-size:12px;color:#991b1b;margin-top:8px;">⚠️ ' + lEsc(C.error) + '</div>';
+  if (C.ok) html += '<div style="background:#dcfce7;border:1px solid #bbf7d0;border-radius:8px;padding:8px 12px;font-size:13px;font-weight:700;color:#166534;margin-top:8px;">✅ ' + lEsc(C.ok) + '</div>';
+  html += '<div style="margin-top:10px;"><button class="ld-btn primary" id="pc-guardar"' + dis + '>' + (C.enviando ? 'Guardando…' : 'Guardar consentimiento') + '</button></div>';
+  // Invitacion por link (solo si el prospecto esta Sin definir)
+  var invs = prospectoInvDe(p.id), fmtF = function (t) { return t ? leadsFechaCorta(t) : '—'; };
+  html += '<div style="margin-top:14px;border-top:1px solid var(--border);padding-top:10px;"><div style="font-size:12px;font-weight:700;">Link de consentimiento (que el propio cliente autorice o rechace)</div>';
+  if (actual === 'unknown') {
+    html += '<div style="margin:6px 0;"><button class="ld-btn" id="pc-gen-link"' + ((C.generando || C.enviando) ? ' disabled' : '') + '>' + (C.generando ? 'Generando…' : 'Generar link de consentimiento') + '</button></div>';
+  } else {
+    html += '<div style="font-size:12px;color:var(--muted);margin:6px 0;">Solo se puede invitar a prospectos «Sin definir».</div>';
+  }
+  if (C.errorInv) html += '<div style="background:#fee2e2;border:1px solid #fecaca;border-radius:8px;padding:8px 12px;font-size:12px;color:#991b1b;margin:6px 0;">⚠️ ' + lEsc(C.errorInv) + '</div>';
+  if (C.link) {
+    html += '<div style="background:#eff6ff;border:1px solid #bfdbfe;border-radius:8px;padding:10px 12px;margin:6px 0;"><div style="font-size:12px;font-weight:700;margin-bottom:4px;">Link generado — se muestra una sola vez. Cópialo ahora y envíalo tú por el canal que corresponda (no se envía automáticamente).</div>' +
+      '<div style="display:flex;gap:8px;flex-wrap:wrap;"><input type="text" id="pc-link" readonly value="' + lEsc(C.link.url) + '" style="flex:1;min-width:220px;"><button class="ld-btn primary" id="pc-copiar">' + (C.copiado ? '✓ Copiado' : 'Copiar link') + '</button></div>' +
+      '<div style="font-size:11px;color:var(--muted);margin-top:4px;">Vence: ' + lEsc(fmtF(C.link.vence)) + ' · de un solo uso.</div></div>';
+  }
+  html += invs.length ? '<div class="ld-wrap"><table class="dash-table"><thead><tr><th>Estado</th><th>Creada</th><th>Vence</th><th>Respondida</th><th></th></tr></thead><tbody>' +
+    invs.map(function (i) { var e = prospectoInvEstado(i); return '<tr><td><span class="pr-badge ' + (e === 'aceptada' ? 'ok' : (e === 'rechazada' ? 'no' : (e === 'pendiente' ? 'unk' : 'dup'))) + '">' + PROSP_INV_ESTADO[e] + '</span></td><td>' + lEsc(fmtF(i.created_at)) + '</td><td>' + lEsc(fmtF(i.expires_at)) + '</td><td>' + lEsc(fmtF(i.used_at)) + '</td><td>' + (e === 'pendiente' ? '<button class="ld-btn" data-pcrev="' + lEsc(i.id) + '"' + (C.generando ? ' disabled' : '') + '>Revocar</button>' : '') + '</td></tr>'; }).join('') + '</tbody></table></div>'
+    : '<div style="font-size:12px;color:var(--muted);">Sin invitaciones.</div>';
+  html += '</div>';
+  html += '<div style="margin-top:12px;font-size:12px;font-weight:700;">Historial</div>' + (C.cargandoHist ? '<div style="font-size:12px;color:var(--muted);">Cargando…</div>' :
+    (C.historial.length ? '<div class="ld-wrap"><table class="dash-table"><thead><tr><th>Fecha del cambio</th><th>Cambio</th><th>Fuente</th><th>Fecha consent.</th><th>Nota</th><th>Por</th></tr></thead><tbody>' +
+      C.historial.map(function (h) { return '<tr><td>' + lEsc(leadsFechaCorta(h.changed_at)) + '</td><td>' + lEsc((PROSP_CONS_ESTADO[h.previous_state] || h.previous_state) + ' → ' + (PROSP_CONS_ESTADO[h.new_state] || h.new_state)) + '</td><td>' + lEsc(PROSP_CONS_FUENTE[h.source] || h.source || '—') + '</td><td>' + lEsc(h.consent_date || '—') + '</td><td>' + lEsc(h.note || '—') + '</td><td>' + lEsc(h.changed_by_email || '—') + '</td></tr>'; }).join('') + '</tbody></table></div>'
+      : '<div style="font-size:12px;color:var(--muted);">Sin cambios registrados.</div>'));
+  html += '</div>';
+  root.innerHTML = html;
+  document.getElementById('pc-cerrar').addEventListener('click', function () { prospectosCons = prospectosConsNuevo(); prospectosConsPintar(); });
+  root.querySelectorAll('input[name=pc-estado]').forEach(function (rd) { rd.addEventListener('change', function () { if (!rd.checked || C.enviando) return; prospectosCons.estado = rd.value; prospectosCons.error = null; prospectosCons.ok = null; prospectosConsPintar(); }); });
+  var f = document.getElementById('pc-fuente'); if (f) f.addEventListener('change', function () { prospectosCons.fuente = f.value; });
+  var d = document.getElementById('pc-fecha'); if (d) d.addEventListener('change', function () { prospectosCons.fecha = d.value; });
+  var n = document.getElementById('pc-nota'); if (n) n.addEventListener('input', function () { prospectosCons.nota = n.value; });
+  document.getElementById('pc-guardar').addEventListener('click', function () { prospectosConsGuardar(); });
+  var gl = document.getElementById('pc-gen-link'); if (gl) gl.addEventListener('click', function () { prospectosInvGenerar(); });
+  var cp = document.getElementById('pc-copiar'); if (cp) cp.addEventListener('click', function () { prospectosInvCopiar(); });
+  root.querySelectorAll('[data-pcrev]').forEach(function (b) { b.addEventListener('click', function () { prospectosInvRevocar(b.getAttribute('data-pcrev')); }); });
+}
+
+// ---- Datos ----
+// Describe con precisión QUÉ consulta falló (tabla/RPC, código, HTTP, mensaje) para poder diagnosticar.
+function leadsDetalleError(operacion, r) {
+  var e = (r && r.error) ? r.error : r;
+  var partes = [operacion];
+  if (e && e.code) partes.push('código ' + e.code);
+  if (r && r.status) partes.push('HTTP ' + r.status);
+  partes.push((e && e.message) ? e.message : 'error desconocido');
+  var d = { operacion: operacion, codigo: e && e.code, http: r && r.status, mensaje: e && e.message, detalle: e && e.details, pista: e && e.hint };
+  try { console.error('[Leads Digital] falló la carga', d); } catch (x) {}
+  return partes.join(' · ');
+}
+function leadsErrorDeSesion(r) {
+  var e = (r && r.error) ? r.error : r;
+  var c = e && e.code ? String(e.code) : '';
+  var m = (e && e.message ? String(e.message) : '').toLowerCase();
+  return c === '42501' || c.indexOf('PGRST30') === 0 || (r && (r.status === 401 || r.status === 403)) || m.indexOf('jwt') >= 0 || m.indexOf('permission denied') >= 0;
+}
+async function leadsConsultar() {
+  var incluirPrueba = leadsFiltro.prueba === null ? true : leadsFiltro.prueba;
+  var qLeads = sb.from('digital_leads').select('*');
+  if (!incluirPrueba) qLeads = qLeads.eq('is_test', false); // servidor: solo reales
+  var res = await Promise.all([
+    qLeads.order('created_at', { ascending: false }).limit(2000),
+    sb.from('digital_lead_assignees').select('id,nombre,email').eq('activo', true).order('nombre', { ascending: true })
+  ]);
+  return { leads: res[0], asignados: res[1], incluirPrueba: incluirPrueba };
+}
+async function leadsCargar(silencioso) {
+  if (leadsCargando) { leadsPendiente = true; return; }
+  leadsCargando = true;
+  if (!silencioso) { leadsError = null; leadsAviso = null; if (vistaActiva === 'leads') renderLeadsDigital(); }
+  try {
+    var r = await leadsConsultar();
+    // Si falla por sesion/permiso (p.ej. token vencido: la peticion sale como anon), se refresca la sesion UNA vez y se reintenta.
+    if (r.leads.error && leadsErrorDeSesion(r.leads)) {
+      try { await sb.auth.refreshSession(); } catch (x) {}
+      r = await leadsConsultar();
+    }
+    if (r.leads.error) throw { detalle: leadsDetalleError('digital_leads (select)', r.leads) };
+    leadsDatos = r.leads.data || [];
+    leadsAsignados = r.asignados.error ? [] : (r.asignados.data || []);
+    leadsModoCarga = r.incluirPrueba;
+    leadsError = null; leadsAviso = null;
+    leadsCargado = true; leadsStale = false;
+    if (leadsFiltro.prueba === null) {
+      // Sin leads reales todavia: se muestran los de prueba para poder validar la pantalla.
+      leadsFiltro.prueba = !leadsDatos.some(function (l) { return !l.is_test; });
+    }
+  } catch (e) {
+    var msg = (e && e.detalle) ? e.detalle : leadsDetalleError('digital_leads (carga)', e);
+    // Una recarga fallida NUNCA tapa datos validos: solo avisa. El error bloqueante es solo para la primera carga.
+    if (leadsCargado) { leadsAviso = msg; } else { leadsError = msg; }
+  }
+  leadsCargando = false;
+  if (leadsPendiente) { leadsPendiente = false; setTimeout(function () { leadsCargar(true); }, 0); }
+  if (vistaActiva === 'leads') {
+    if (document.getElementById('prospectos-resultados')) { /* subvista Prospectos activa: no se toca */ }
+    else if (!document.getElementById('leads-resultados')) { renderLeadsDigital(); } else { leadsPintar(); leadsRefrescarDrawer(); }
+  }
+}
+
+function leadsBase() {
+  return leadsDatos.filter(function (l) { return leadsFiltro.prueba === true || !l.is_test; });
+}
+function leadsFiltrados() {
+  var q = (leadsFiltro.q || '').trim().toLowerCase();
+  var lista = leadsBase().filter(function (l) {
+    if (leadsFiltro.temp && l.temperature !== leadsFiltro.temp) return false;
+    if (leadsFiltro.estado && leadsEstadoClave(l.status) !== leadsFiltro.estado) return false;
+    if (leadsFiltro.asig === 'si' && !l.assigned_to_name) return false;
+    if (leadsFiltro.asig === 'no' && l.assigned_to_name) return false;
+    if (q) {
+      var hay = [l.contact_name, l.clinic_name, l.commune, l.phone_e164].join(' ').toLowerCase();
+      if (hay.indexOf(q) < 0) return false;
+    }
+    return true;
+  });
+  // Orden: 1) HOT sin asignar, 2) nuevos (sin derivar) más recientes, 3) resto por fecha desc.
+  function grupo(l) {
+    var sinAsignar = !l.assigned_to_name;
+    if (sinAsignar && l.temperature === 'hot' && leadsEstadoClave(l.status) === 'nuevo') return 0;
+    if (sinAsignar && leadsEstadoClave(l.status) === 'nuevo') return 1;
+    return 2;
+  }
+  lista.sort(function (a, b) {
+    var ga = grupo(a), gb = grupo(b);
+    if (ga !== gb) return ga - gb;
+    return new Date(b.created_at) - new Date(a.created_at);
+  });
+  return lista;
+}
+
+// ---- Vista ----
+function renderLeadsDigital() {
+  if (!leadsAcceso) { vistaActiva = 'cotizaciones'; renderDashboard(); return; }
+  leadsInyectarEstilos();
+  document.getElementById('login-view').style.display = 'none';
+  var v = document.getElementById('dashboard-view');
+  v.style.display = 'block';
+  if (!leadsCargado && !leadsCargando && !leadsError) { leadsCargar(true); }
+  if (leadsCargado && leadsStale && !leadsCargando) { leadsCargar(true); }
+
+  var sel = function (valor, actual) { return valor === actual ? ' selected' : ''; };
+  var barra =
+    '<div class="ld-bar">' +
+    '<input type="search" id="ld-q" placeholder="Buscar nombre, clínica, comuna o teléfono" value="' + lEsc(leadsFiltro.q) + '">' +
+    '<select id="ld-temp"><option value="">Temperatura: todas</option>' +
+      '<option value="hot"' + sel('hot', leadsFiltro.temp) + '>HOT</option><option value="warm"' + sel('warm', leadsFiltro.temp) + '>Tibio</option><option value="cold"' + sel('cold', leadsFiltro.temp) + '>Frío</option></select>' +
+    '<select id="ld-estado"><option value="">Estado: todos</option>' +
+      Object.keys(LEADS_ESTADO).map(function (k) { return '<option value="' + k + '"' + sel(k, leadsFiltro.estado) + '>' + LEADS_ESTADO[k] + '</option>'; }).join('') + '</select>' +
+    '<select id="ld-asig"><option value="">Asignación: todos</option>' +
+      '<option value="no"' + sel('no', leadsFiltro.asig) + '>Sin asignar</option><option value="si"' + sel('si', leadsFiltro.asig) + '>Asignados</option></select>' +
+    '<label class="ld-chk"><input type="checkbox" id="ld-prueba"' + (leadsFiltro.prueba ? ' checked' : '') + '> Incluir leads de prueba</label>' +
+    '<button class="ld-btn" id="ld-excel" title="Exporta lo que ves en la tabla">⬇ Excel</button>' +
+    '</div>';
+
+  v.innerHTML =
+    '<header class="topbar"><div><div class="brand-name">STRAUMANN</div><div class="brand-sub">GROUP CHILE · NEODENT</div></div>' +
+    '<div style="display:flex;align-items:center;gap:12px;"><span style="font-size:10px;color:#a1a1aa;">Herramienta interna desarrollada por Daniel Jordán para Straumann Group Chile. · Admin v' + ADMIN_VERSION + '</span><button class="btn-logout" id="btn-logout">Cerrar sesión</button></div></header>' +
+    '<main class="leads-main">' +
+    construirTabsPrincipales('leads') +
+    '<h2 style="margin:0 0 4px;font-size:18px;">Leads Digital</h2>' +
+    '<p style="margin:0 0 12px;font-size:12px;color:var(--muted);">Leads SIRIOS (RM). Todos llegan primero a ti; la derivación es manual. Vista privada.</p>' +
+    prospectosSubtabsHtml() +
+    (leadsSubvista === 'prospectos' ? prospectosBarraHtml() + '<div id="prospectos-import-root"></div><div id="prospectos-enrich-root"></div><div id="prospectos-consent-root"></div><div id="prospectos-resultados"></div>' : barra + '<div id="leads-resultados"></div>') +
+    '</main>' +
+    '<div id="leads-drawer-root"></div>';
+
+  document.getElementById('btn-logout').addEventListener('click', doLogout);
+  prospectosEnlazarSubtabs();
+  if (leadsSubvista === 'prospectos') {
+    prospectosEnlazarBarra();
+    if (!prospectosCargado && !prospectosCargando) { prospectosCargar(); }
+    prospectosPintar();
+    return;
+  }
+  document.getElementById('ld-q').addEventListener('input', function (e) { leadsFiltro.q = e.target.value; leadsPintar(); });
+  document.getElementById('ld-temp').addEventListener('change', function (e) { leadsFiltro.temp = e.target.value; leadsPintar(); });
+  document.getElementById('ld-estado').addEventListener('change', function (e) { leadsFiltro.estado = e.target.value; leadsPintar(); });
+  document.getElementById('ld-asig').addEventListener('change', function (e) { leadsFiltro.asig = e.target.value; leadsPintar(); });
+  document.getElementById('ld-prueba').addEventListener('change', function (e) { leadsFiltro.prueba = e.target.checked; leadsPintar(); leadsCargar(true); });
+  document.getElementById('ld-excel').addEventListener('click', leadsExportar);
+  leadsPintar();
+  if (leadsDetalleId) leadsAbrir(leadsDetalleId, true);
+}
+
+function leadsPintar() {
+  var box = document.getElementById('leads-resultados');
+  if (!box) return;
+  var cbPrueba = document.getElementById('ld-prueba'); // el default se decide al llegar los datos
+  if (cbPrueba) cbPrueba.checked = leadsFiltro.prueba === true;
+  if (leadsCargando && !leadsCargado) { box.innerHTML = '<div style="padding:24px;text-align:center;color:var(--muted);">Cargando…</div>'; return; }
+  if (leadsError && !leadsCargado) {
+    box.innerHTML = '<div style="background:#fff3cd;border:1px solid #fde68a;border-radius:10px;padding:14px 18px;text-align:center;font-size:13px;">⚠️ No se pudieron cargar los leads.<div style="font-size:11px;color:#71717a;margin-top:4px;">' + lEsc(leadsError) + '</div> ' +
+      '<button class="ld-btn" style="margin-top:8px" onclick="leadsError=null;leadsCargar(false)">Reintentar</button></div>';
+    return;
+  }
+  var aviso = leadsAviso ? '<div style="background:#fff3cd;border:1px solid #fde68a;border-radius:10px;padding:8px 12px;margin-bottom:12px;font-size:12px;">⚠️ No se pudo actualizar; se muestra la última información cargada.<div style="font-size:11px;color:#71717a;margin-top:2px;">' + lEsc(leadsAviso) + '</div> <button class="ld-btn" style="margin-top:6px" onclick="leadsAviso=null;leadsCargar(false)">Reintentar</button></div>' : '';
+  var base = leadsBase();
+  var hoy = leadsDiaSantiago(new Date().toISOString());
+  var c = {
+    hoy: base.filter(function (l) { return leadsDiaSantiago(l.created_at) === hoy; }).length,
+    hot: base.filter(function (l) { return l.temperature === 'hot'; }).length,
+    warm: base.filter(function (l) { return l.temperature === 'warm'; }).length,
+    cold: base.filter(function (l) { return l.temperature === 'cold'; }).length,
+    sin: base.filter(function (l) { return !l.assigned_to_name; }).length,
+    asig: base.filter(function (l) { return !!l.assigned_to_name; }).length
+  };
+  var card = function (label, val, hl) { return '<div class="dash-card' + (hl ? ' highlight' : '') + '"><div class="dc-label">' + label + '</div><div class="dc-value">' + val + '</div></div>'; };
+  var cards = '<div class="dash-grid ld-cards">' + card('Nuevos hoy', c.hoy) + card('HOT', c.hot, true) + card('Tibios', c.warm) + card('Fríos', c.cold) + card('Sin asignar', c.sin) + card('Asignados', c.asig) + '</div>';
+
+  var lista = leadsFiltrados();
+  var filas = lista.map(function (l) {
+    var accion = l.assigned_to_name ? 'Ver' : 'Ver / Derivar';
+    return '<tr>' +
+      '<td><span class="ld-temp ' + lEsc(l.temperature) + '">' + lEsc(LEADS_TEMP[l.temperature] || l.temperature) + '</span></td>' +
+      '<td><strong>' + lEsc(l.contact_name || '—') + '</strong>' + (l.is_test ? '<span class="ld-test">PRUEBA</span>' : '') + '<div style="font-size:11px;color:var(--muted);">' + lEsc(leadsFechaCorta(l.created_at)) + '</div></td>' +
+      '<td>' + lEsc(l.clinic_name || '—') + '</td>' +
+      '<td>' + lEsc(l.commune || '—') + '</td>' +
+      '<td>' + lEsc(leadsScannerTxt(l)) + '</td>' +
+      '<td>' + lEsc(LEADS_NEED[l.need] || '—') + '</td>' +
+      '<td>' + lEsc(LEADS_PLAZO[l.purchase_timeline] || '—') + '</td>' +
+      '<td class="num" style="font-weight:800;">' + lEsc(l.score) + '</td>' +
+      '<td>' + lEsc(LEADS_ESTADO[leadsEstadoClave(l.status)] || l.status) + '</td>' +
+      '<td>' + (l.assigned_to_name ? lEsc(l.assigned_to_name) : '<span style="color:var(--muted);">Sin asignar</span>') + '</td>' +
+      '<td><button class="ld-btn' + (l.assigned_to_name ? '' : ' primary') + '" data-lead="' + lEsc(l.id) + '">' + accion + '</button></td>' +
+      '</tr>';
+  }).join('');
+  var tabla =
+    '<div class="ld-wrap"><table class="dash-table"><thead><tr>' +
+    '<th>Temp.</th><th>Nombre</th><th>Clínica</th><th>Comuna</th><th>Scanner actual</th><th>Necesidad</th><th>Plazo</th><th class="num">Score</th><th>Estado</th><th>Asignado a</th><th>Acción</th>' +
+    '</tr></thead><tbody>' +
+    (filas || '<tr><td colspan="11" style="text-align:center;color:var(--muted);padding:24px;">' + (base.length ? 'No hay leads con estos filtros.' : 'No hay leads para mostrar.') + '</td></tr>') +
+    '</tbody></table></div>' +
+    '<div style="font-size:11px;color:var(--muted);margin-top:8px;">' + lista.length + ' lead(s) · orden: HOT sin asignar, nuevos recientes, resto por fecha.</div>';
+  box.innerHTML = aviso + cards + tabla;
+  box.querySelectorAll('button[data-lead]').forEach(function (b) {
+    b.addEventListener('click', function () { leadsAbrir(b.getAttribute('data-lead')); });
+  });
+}
+
+function leadsExportar() {
+  var lista = leadsFiltrados();
+  exportarMatrizExcel(lista, [
+    { label: 'Fecha', value: function (l) { return leadsFechaCorta(l.created_at); } },
+    { label: 'Temperatura', value: function (l) { return LEADS_TEMP[l.temperature] || l.temperature; } },
+    { label: 'Nombre', key: 'contact_name' },
+    { label: 'Clínica', key: 'clinic_name' },
+    { label: 'Comuna', key: 'commune' },
+    { label: 'Teléfono', key: 'phone_e164' },
+    { label: 'Scanner actual', value: leadsScannerTxt },
+    { label: 'Necesidad', value: function (l) { return LEADS_NEED[l.need] || ''; } },
+    { label: 'Plazo', value: function (l) { return LEADS_PLAZO[l.purchase_timeline] || ''; } },
+    { label: 'Demo', value: function (l) { return leadsSiNo(l.wants_demo); } },
+    { label: 'Cotización', value: function (l) { return leadsSiNo(l.wants_quote); } },
+    { label: 'Score', key: 'score' },
+    { label: 'Estado', value: function (l) { return LEADS_ESTADO[leadsEstadoClave(l.status)] || l.status; } },
+    { label: 'Asignado a', key: 'assigned_to_name' },
+    { label: 'Prueba', value: function (l) { return l.is_test ? 'Sí' : 'No'; } }
+  ], 'Leads', 'Leads_Digital');
+}
+
+// ---- Detalle / derivación ----
+function leadsActual() {
+  return leadsDatos.find(function (x) { return x.id === leadsDetalleId; }) || null;
+}
+async function leadsAbrir(id, conservar) {
+  leadsDetalleId = id;
+  var l = leadsActual();
+  var root = document.getElementById('leads-drawer-root');
+  if (!l || !root) return;
+  var opciones = leadsAsignados.map(function (a) { return '<option value="' + lEsc(a.nombre) + '">' + lEsc(a.nombre) + '</option>'; }).join('');
+  root.innerHTML =
+    '<div class="ld-overlay" id="ld-overlay"></div>' +
+    '<aside class="ld-drawer" role="dialog" aria-label="Detalle del lead">' +
+    '<button class="ld-btn" style="float:right" id="ld-cerrar">Cerrar</button>' +
+    '<h2>' + lEsc(l.contact_name || 'Lead') + (l.is_test ? '<span class="ld-test">PRUEBA</span>' : '') + '</h2>' +
+    '<div style="margin:6px 0 14px;"><span class="ld-temp ' + lEsc(l.temperature) + '">' + lEsc(LEADS_TEMP[l.temperature]) + '</span> <span style="font-size:13px;margin-left:6px;">Score <strong>' + lEsc(l.score) + '</strong></span></div>' +
+    '<div class="ld-kv">' +
+      '<div class="k">Clínica</div><div>' + lEsc(l.clinic_name || '—') + '</div>' +
+      '<div class="k">Teléfono</div><div>' + (l.phone_e164 ? '<a href="tel:' + lEsc(l.phone_e164) + '">' + lEsc(l.phone_e164) + '</a>' : '—') + '</div>' +
+      '<div class="k">Comuna</div><div>' + lEsc(l.commune || '—') + '</div>' +
+      '<div class="k">Scanner actual</div><div>' + lEsc(leadsScannerTxt(l)) + '</div>' +
+      '<div class="k">Necesidad</div><div>' + lEsc(LEADS_NEED[l.need] || '—') + '</div>' +
+      '<div class="k">Plazo</div><div>' + lEsc(LEADS_PLAZO[l.purchase_timeline] || '—') + '</div>' +
+      '<div class="k">Demo</div><div>' + leadsSiNo(l.wants_demo) + '</div>' +
+      '<div class="k">Cotización</div><div>' + leadsSiNo(l.wants_quote) + '</div>' +
+      leadsComercial(l).map(function (r) { return '<div class="k">' + r[0] + '</div><div>' + lEsc(r[1]) + '</div>'; }).join('') +
+      '<div class="k">Ingreso</div><div>' + lEsc(leadsFechaCorta(l.created_at)) + '</div>' +
+    '</div>' +
+    '<h4>Resumen IA</h4><div class="ld-box">' + lEsc(l.ai_summary || 'Sin resumen todavía.') + '</div>' +
+    '<h4>Derivación</h4><div id="ld-asignacion"></div>' +
+    '<div style="display:grid;gap:8px;margin-top:8px;">' +
+      '<select id="ld-dest"><option value="">Seleccionar persona…</option>' + opciones + '<option value="__otro__">Otro…</option></select>' +
+      '<input type="text" id="ld-otro" placeholder="Nombre de la persona" maxlength="120" style="display:none;">' +
+      '<button class="ld-btn primary" id="ld-derivar">Derivar lead</button>' +
+    '</div>' +
+    '<h4>Nota de Daniel</h4>' +
+    '<textarea id="ld-nota" rows="4" maxlength="4000" placeholder="Ej.: priorizar llamada hoy; revisar Trade Up…"></textarea>' +
+    '<button class="ld-btn" id="ld-guardar-nota" style="margin-top:8px;">Guardar nota</button>' +
+    '<div class="ld-msg" id="ld-msg"></div>' +
+    '<h4>Historial</h4><ul class="ld-hist" id="ld-historial"><li class="t">Cargando…</li></ul>' +
+    '</aside>';
+  document.getElementById('ld-nota').value = l.daniel_notes || '';
+  document.getElementById('ld-overlay').addEventListener('click', leadsCerrar);
+  document.getElementById('ld-cerrar').addEventListener('click', leadsCerrar);
+  document.getElementById('ld-dest').addEventListener('change', function (e) {
+    var o = document.getElementById('ld-otro');
+    o.style.display = e.target.value === '__otro__' ? 'block' : 'none';
+    if (e.target.value === '__otro__') o.focus();
+  });
+  document.getElementById('ld-derivar').addEventListener('click', leadsDerivar);
+  document.getElementById('ld-guardar-nota').addEventListener('click', leadsGuardarNota);
+  leadsPintarAsignacion();
+  leadsCargarHistorial();
+}
+function leadsCerrar() {
+  leadsDetalleId = null;
+  var root = document.getElementById('leads-drawer-root');
+  if (root) root.innerHTML = '';
+}
+// Refresco por Realtime sin pisar lo que Daniel está escribiendo.
+function leadsRefrescarDrawer() {
+  if (!leadsDetalleId || !document.getElementById('ld-asignacion')) return;
+  leadsPintarAsignacion();
+  leadsCargarHistorial();
+}
+function leadsPintarAsignacion() {
+  var l = leadsActual(); var box = document.getElementById('ld-asignacion');
+  if (!l || !box) return;
+  box.innerHTML = l.assigned_to_name
+    ? '<div class="ld-box">Asignado a <strong>' + lEsc(l.assigned_to_name) + '</strong><br><span style="color:var(--muted);font-size:12px;">' + lEsc(leadsFechaCorta(l.assigned_at)) + ' · Estado: ' + lEsc(LEADS_ESTADO[leadsEstadoClave(l.status)] || l.status) + '</span></div>'
+    : '<div class="ld-box" style="color:var(--muted);">Sin asignar todavía.</div>';
+}
+async function leadsCargarHistorial() {
+  var id = leadsDetalleId; var ul = document.getElementById('ld-historial');
+  if (!id || !ul) return;
+  var r = await sb.from('digital_lead_activities').select('id,created_at,event_type,detail').eq('lead_id', id).order('created_at', { ascending: false }).order('id', { ascending: false });
+  ul = document.getElementById('ld-historial');
+  if (!ul || id !== leadsDetalleId) return;
+  if (r.error) { ul.innerHTML = '<li class="t">No se pudo cargar el historial.</li>'; return; }
+  leadsActividades = r.data || [];
+  var txt = function (a) {
+    var d = a.detail || {};
+    if (a.event_type === 'assigned') return 'Derivado a ' + lEsc(d.assigned_to_name || '—') + (d.previous_assignee ? ' (antes: ' + lEsc(d.previous_assignee) + ')' : '');
+    if (a.event_type === 'note_updated') return 'Nota actualizada';
+    return lEsc(a.event_type);
+  };
+  ul.innerHTML = leadsActividades.length
+    ? leadsActividades.map(function (a) { return '<li>' + txt(a) + '<div class="t">' + lEsc(leadsFechaCorta(a.created_at)) + '</div></li>'; }).join('')
+    : '<li class="t">Sin actividad registrada.</li>';
+}
+function leadsMsg(texto, ok) {
+  var m = document.getElementById('ld-msg');
+  if (m) { m.textContent = texto || ''; m.className = 'ld-msg ' + (ok ? 'ok' : 'err'); }
+}
+async function leadsDerivar() {
+  var l = leadsActual(); if (!l) return;
+  var sel = document.getElementById('ld-dest').value;
+  var nombre = sel === '__otro__' ? (document.getElementById('ld-otro').value || '').trim() : sel;
+  if (!nombre) { leadsMsg('Selecciona a quién derivar (o escribe el nombre en "Otro").', false); return; }
+  var btn = document.getElementById('ld-derivar'); btn.disabled = true; leadsMsg('Derivando…', true);
+  var r = await sb.rpc('assign_digital_lead', { p_lead_id: l.id, p_assigned_to_name: nombre, p_assigned_to_email: null });
+  btn.disabled = false;
+  if (r.error) { leadsMsg('No se pudo derivar: ' + r.error.message, false); return; }
+  leadsMsg('Lead derivado a ' + nombre + '.', true);
+  leadsCargando = false;
+  await leadsCargar(true);
+}
+async function leadsGuardarNota() {
+  var l = leadsActual(); if (!l) return;
+  var btn = document.getElementById('ld-guardar-nota'); btn.disabled = true; leadsMsg('Guardando…', true);
+  var r = await sb.rpc('update_digital_lead_notes', { p_lead_id: l.id, p_notes: document.getElementById('ld-nota').value });
+  btn.disabled = false;
+  if (r.error) { leadsMsg('No se pudo guardar: ' + r.error.message, false); return; }
+  leadsMsg('Nota guardada.', true);
+  leadsCargando = false;
+  await leadsCargar(true);
+}
+
 sb.auth.onAuthStateChange(function (event, session) {
   if (session) {
     suscribirRealtime();
     cargarMiPerfil().then(cargarCotizaciones);
   } else {
     miPerfil = null;
+    leadsLimpiar(); // COMPLEMENTO Leads Digital
     if (channel) { sb.removeChannel(channel); channel = null; }
     renderLogin();
   }
@@ -4624,6 +6011,7 @@ async function cargarMiPerfil() {
   } catch (e) {
     miPerfil = null;
   }
+  await leadsCargarAcceso(); // COMPLEMENTO Leads Digital: decide la RPC is_lead_admin(); RLS lo refuerza
 }
 
 (async function init() {

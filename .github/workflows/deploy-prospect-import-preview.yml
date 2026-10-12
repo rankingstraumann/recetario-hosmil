@@ -1,0 +1,32 @@
+name: Deploy prospect-import-preview
+
+# Trigger de despliegue controlado para OUTBOUND 5 (enriquecimiento)
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - leads-outbound-v1-preview
+    paths:
+      - ".github/workflows/deploy-prospect-import-preview.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout leads-outbound-v1-preview
+        uses: actions/checkout@v4
+        with:
+          ref: leads-outbound-v1-preview
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Deploy Supabase Edge Function
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+        run: npx --yes supabase@latest functions deploy prospect-import-preview --project-ref gzimllusbxjorbsbtsse
