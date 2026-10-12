@@ -4907,6 +4907,108 @@ async function prospectosEnvEnviar() {
   try { await prospectosCargar(); } catch (x) {}
 }
 
+// ---- Outbound 8: historial por prospecto. SOLO LECTURA (RPC get_prospect_timeline; Lead Admin). Sin acciones de escritura. ----
+var prospectosHist = { id: null };
+var PROSP_HIST_CONS = { granted: 'Autorizado', denied: 'No autorizado', unknown: 'Sin definir' };
+var PROSP_HIST_ENVIO = { sending: 'En curso', dry_run: 'Simulación (no se envió nada)', sent: 'Enviado', failed: 'Falló' };
+var PROSP_HIST_CAMPO = { full_name: 'Contacto', phone_raw: 'Teléfono', phone_e164: 'Móvil', email: 'Correo' };
+var PROSP_HIST_CAT = { import: ['#a1a1aa', 'Importación'], enrichment: ['#a1a1aa', 'Enriquecimiento'], consent: ['#16a34a', 'Consentimiento'], invitation_created: ['#16a34a', 'Consentimiento'], invitation_used: ['#16a34a', 'Consentimiento'],
+  send: ['#2563eb', 'Envío'], reply: ['#d97706', 'Respuesta'], conversion: ['#9a1b1b', 'Conversión'] };
+function histFecha(iso) {
+  if (!iso) return '—';
+  return new Date(iso).toLocaleString('es-CL', { timeZone: 'America/Santiago', day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+}
+function prospectosHistEvento(ev) {
+  var d = ev.data || {}, t = '', det = [], k = ev.kind;
+  if (k === 'import') {
+    var modo = (d.batch_is_test === null || d.batch_is_test === undefined) ? d.prospect_is_test : d.batch_is_test;
+    t = d.filename ? 'Importación' : 'Prospecto creado';
+    if (d.filename) det.push('Archivo: ' + d.filename);
+    det.push('Modo: ' + (modo ? 'PRUEBA' : 'REAL'));
+    var og = [d.source, d.source_detail].filter(Boolean).join(' · '); if (og) det.push('Origen: ' + og);
+  } else if (k === 'enrichment') {
+    t = 'Enriquecimiento de datos';
+    var fl = (d.fields || []).map(function (f) { return PROSP_HIST_CAMPO[f] || f; }); det.push('Campos completados: ' + (fl.length ? fl.join(', ') : '—'));
+    if (d.filename) det.push('Archivo: ' + d.filename);
+  } else if (k === 'consent') {
+    t = 'Consentimiento: ' + (PROSP_HIST_CONS[d.previous_state] || d.previous_state) + ' → ' + (PROSP_HIST_CONS[d.new_state] || d.new_state);
+    if (d.source) det.push('Fuente: ' + (PROSP_CONS_FUENTE[d.source] || d.source));
+    if (d.consent_date) det.push('Fecha del consentimiento: ' + String(d.consent_date).slice(0, 10).split('-').reverse().join('-'));
+    if (d.note) det.push('Nota: ' + d.note);
+    if (d.changed_by_email) det.push('Por: ' + d.changed_by_email);
+  } else if (k === 'invitation_created') {
+    var est = d.status === 'accepted' ? 'aceptada' : d.status === 'rejected' ? 'rechazada' : d.status === 'revoked' ? 'revocada' : (d.expired ? 'vencida' : 'pendiente');
+    t = 'Link de consentimiento generado'; det.push('Estado actual: ' + est); if (d.expires_at) det.push('Vence: ' + histFecha(d.expires_at));
+    if (d.created_by_email) det.push('Por: ' + d.created_by_email);
+  } else if (k === 'invitation_used') {
+    t = 'Link de consentimiento respondido (usado)'; det.push('Decisión del cliente: ' + (d.decision === 'granted' ? 'Autorizó' : d.decision === 'denied' ? 'Rechazó' : '—'));
+    if (d.text_version) det.push('Texto: ' + d.text_version); if (d.channel) det.push('Canal: ' + d.channel);
+  } else if (k === 'send') {
+    t = 'Plantilla ' + (d.template_name || '') + ' (' + (d.template_language || '') + '): ' + (PROSP_HIST_ENVIO[d.status] || d.status);
+    if (d.requested_by_email) det.push('Solicitó: ' + d.requested_by_email);
+    if (d.completed_at) det.push('Completado: ' + histFecha(d.completed_at));
+    if (d.provider_message_id) det.push('ID de mensaje: ' + d.provider_message_id);
+    if (d.error_code || d.error_message) det.push('Error: ' + [d.error_code, d.error_message].filter(Boolean).join(' · '));
+  } else if (k === 'reply') {
+    t = 'Respuesta del cliente'; det.push('Primer mensaje recibido después del envío (se une por teléfono).');
+    if (d.shared_phone) det.push('Aviso: otro prospecto comparte este teléfono.');
+  } else if (k === 'conversion') {
+    t = 'Convertido a lead'; det.push('Lead ' + String(d.id || '').slice(0, 8));
+    det.push('Score ' + (d.score === null || d.score === undefined ? '—' : d.score) + ' · ' + (LEADS_TEMP[d.temperature] || d.temperature || '—'));
+    det.push('Estado del lead: ' + (LEADS_ESTADO[d.status] || d.status || '—') + (d.is_test ? ' · PRUEBA' : ''));
+  } else t = k;
+  return { t: t, det: det, cat: PROSP_HIST_CAT[k] || ['#a1a1aa', ''] };
+}
+function prospectosHistCerrar() { var m = document.getElementById('pr-hist-modal'); if (m) m.remove(); prospectosHist = { id: null }; }
+function prospectosHistVerLead(id) { prospectosHistCerrar(); leadsSubvista = 'leads'; leadsDetalleId = id; renderLeadsDigital(); }
+function prospectosHistPintar(estado, data, msg) {
+  var p = prospectosDatos.filter(function (x) { return String(x.id) === String(prospectosHist.id); })[0]; if (!p) return;
+  var m = document.getElementById('pr-hist-modal');
+  if (!m) { m = document.createElement('div'); m.id = 'pr-hist-modal'; m.setAttribute('role', 'dialog'); m.setAttribute('aria-modal', 'true');
+    m.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.45);z-index:50;display:flex;align-items:center;justify-content:center;padding:16px'; document.body.appendChild(m); }
+  var cuerpo;
+  if (estado === 'cargando') cuerpo = '<p>Cargando historial…</p>';
+  else if (estado === 'error') cuerpo = '<div style="background:#fee2e2;border:1px solid #fca5a5;border-radius:8px;padding:10px;font-size:13px">' + lEsc(msg) + '</div>';
+  else {
+    var pr = data.prospect || {}, evs = data.events || [];
+    var chips = '<div style="display:flex;flex-wrap:wrap;gap:8px;font-size:12px;margin-bottom:10px">' +
+      '<span class="pr-badge ' + (pr.whatsapp_consent === 'yes' ? 'ok' : pr.whatsapp_consent === 'no' ? 'no' : 'unk') + '">Consentimiento: ' + lEsc(PROSP_CONSENT[pr.whatsapp_consent] || pr.whatsapp_consent) + '</span>' +
+      '<span class="pr-badge unk">Estado: ' + lEsc(PROSP_ESTADO[pr.outreach_status] || pr.outreach_status) + '</span>' +
+      (pr.is_test ? '<span class="ld-test">PRUEBA</span>' : '<span class="pr-badge neu">REAL</span>') +
+      (pr.last_outreach_at ? '<span style="color:var(--muted)">Último contacto: ' + lEsc(histFecha(pr.last_outreach_at)) + '</span>' : '') + '</div>';
+    var filas = evs.map(function (ev) {
+      var x = prospectosHistEvento(ev);
+      return '<tr style="border-top:1px solid #f4f4f5"><td style="white-space:nowrap;vertical-align:top;padding:7px 10px 7px 0;font-size:12px;color:var(--muted)">' + lEsc(histFecha(ev.ts)) + '</td>' +
+        '<td style="vertical-align:top;padding:7px 10px 7px 8px;border-left:4px solid ' + x.cat[0] + ';min-width:150px"><div style="font-size:10px;text-transform:uppercase;letter-spacing:.04em;color:' + x.cat[0] + '">' + lEsc(x.cat[1]) + '</div><strong style="font-size:13px">' + lEsc(x.t) + '</strong></td>' +
+        '<td style="vertical-align:top;padding:7px 0;font-size:12px">' + x.det.map(function (l) { return '<div>' + lEsc(l) + '</div>'; }).join('') +
+        (ev.kind === 'conversion' && data.lead && data.lead.id ? '<div style="margin-top:4px"><button class="ld-btn" data-hist-lead="' + lEsc(data.lead.id) + '">Abrir lead</button></div>' : '') + '</td></tr>';
+    }).join('');
+    cuerpo = chips + '<table style="width:100%;border-collapse:collapse"><thead><tr style="font-size:11px;text-transform:uppercase;color:var(--muted);text-align:left"><th style="padding:4px 10px 4px 0">Fecha</th><th style="padding:4px 10px 4px 8px">Evento</th><th>Detalle</th></tr></thead><tbody>' +
+      (filas || '<tr><td colspan="3" style="padding:12px 0;color:var(--muted)">Sin actividad registrada.</td></tr>') + '</tbody></table>' +
+      '<p style="font-size:11px;color:var(--muted);margin:10px 0 0">Solo lectura. No se muestran tokens, IP, user-agent ni datos técnicos.</p>';
+  }
+  m.innerHTML = '<div style="background:#fff;border-radius:12px;max-width:920px;width:100%;max-height:88vh;overflow:auto;padding:18px;box-shadow:0 10px 40px rgba(0,0,0,.3)">' +
+    '<div style="display:flex;justify-content:space-between;align-items:flex-start;gap:10px;margin-bottom:10px"><h3 style="margin:0;font-size:16px">Historial · ' + lEsc(p.full_name || p.clinic_name || '—') + '</h3><button class="ld-btn" id="pr-hist-cerrar">Cerrar</button></div>' + cuerpo + '</div>';
+  document.getElementById('pr-hist-cerrar').onclick = prospectosHistCerrar;
+  m.onclick = function (e) { if (e.target === m) prospectosHistCerrar(); };
+  m.querySelectorAll('[data-hist-lead]').forEach(function (b) { b.onclick = function () { prospectosHistVerLead(b.getAttribute('data-hist-lead')); }; });
+}
+async function prospectosHistAbrir(id) {
+  if (prospectosHist.id) return;
+  prospectosHist = { id: id }; prospectosHistPintar('cargando');
+  try {
+    var r = await sb.rpc('get_prospect_timeline', { p_prospect_id: id });
+    if (r.error) throw r.error;
+    if (prospectosHist.id !== id) return;
+    prospectosHistPintar('ok', r.data || {});
+  } catch (e) {
+    var t = String((e && (e.message || e.code)) || '');
+    var msg = /PGRST202|Could not find the function|get_prospect_timeline/.test(t) && !/NO_AUTORIZADO/.test(t) ? 'El historial aún no está disponible en la base (falta aplicar la migración 015).'
+      : /NO_AUTORIZADO|42501/.test(t) ? 'No tienes permiso para ver el historial.' : /PROSPECTO_NO_ENCONTRADO/.test(t) ? 'Prospecto no encontrado.' : 'No se pudo cargar el historial.';
+    if (prospectosHist.id === id) prospectosHistPintar('error', null, msg);
+  }
+}
+
 function prospectoElegibilidad(p) {
   if (prospectoListo(p)) return { ok: true, cls: 'ok', txt: 'Listo para contactar' };
   if (p.whatsapp_eligible === true) {
@@ -5033,7 +5135,7 @@ function prospectosPintar() {
       '<td><span class="pr-badge ' + cb + '">' + lEsc(PROSP_CONSENT[p.whatsapp_consent] || p.whatsapp_consent) + '</span><div class="pr-elig ' + el.cls + '">' + lEsc(el.txt) + '</div>' + prospectoConsDetalle(p) + '</td>' +
       '<td class="pr-c-est">' + lEsc(PROSP_ESTADO[p.outreach_status] || p.outreach_status) + (p.last_outreach_at ? '<div style="font-size:11px;color:var(--muted);">' + lEsc(leadsFechaCorta(p.last_outreach_at)) + '</div>' : '') + '</td>' +
       '<td class="pr-c-imp">' + lEsc(leadsFechaCorta(imp ? imp.created_at : p.created_at)) + '</td>' +
-      '<td class="pr-acc"><button class="ld-btn" data-prc="' + lEsc(p.id) + '">Registrar consentimiento</button> ' + prospectoBotonContacto(p) + '</td>' +
+      '<td class="pr-acc"><button class="ld-btn" data-prc="' + lEsc(p.id) + '">Registrar consentimiento</button> ' + prospectoBotonContacto(p) + '<button class="ld-btn" data-prhist="' + lEsc(p.id) + '">Ver historial</button></td>' +
       '</tr>';
   }).join('');
   box.innerHTML = cards + nCons + nota +
@@ -5045,6 +5147,7 @@ function prospectosPintar() {
     '<div style="font-size:11px;color:var(--muted);margin-top:8px;">' + lista.length + ' prospecto(s)</div>';
   box.querySelectorAll('[data-prc]').forEach(function (b) { b.addEventListener('click', function () { prospectosConsAbrir(b.getAttribute('data-prc')); }); });
   box.querySelectorAll('[data-prenv]').forEach(function (b) { b.addEventListener('click', function () { prospectosEnvAbrir(b.getAttribute('data-prenv')); }); });
+  box.querySelectorAll('[data-prhist]').forEach(function (b) { b.addEventListener('click', function () { prospectosHistAbrir(b.getAttribute('data-prhist')); }); });
 }
 
 
