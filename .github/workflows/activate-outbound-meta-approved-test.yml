@@ -1,0 +1,38 @@
+name: Activate approved WhatsApp template (TEST ONLY)
+
+on:
+  push:
+    branches:
+      - activate-outbound-meta-approved-test-20261013
+    paths:
+      - .github/workflows/activate-outbound-meta-approved-test.yml
+
+permissions:
+  contents: read
+
+jobs:
+  configure:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Configure outbound WhatsApp TEST-only after Meta approval
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+        run: |
+          npx --yes supabase@latest secrets set \
+            OUTBOUND_WHATSAPP_ENABLED=true \
+            OUTBOUND_WHATSAPP_TEST_ONLY=true \
+            OUTBOUND_TEMPLATE_NAME=trade_up_sirios_intro \
+            OUTBOUND_TEMPLATE_LANGUAGE=es_CL \
+            OUTBOUND_TEMPLATE_APPROVED=true \
+            --project-ref gzimllusbxjorbsbtsse
+
+      - name: Confirm safety mode
+        run: |
+          echo "Configured: template=trade_up_sirios_intro, language=es_CL, approved=true"
+          echo "Safety barrier remains: OUTBOUND_WHATSAPP_TEST_ONLY=true"
+          echo "No WhatsApp message was sent by this workflow."
