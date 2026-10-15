@@ -77,7 +77,7 @@ export const SECRET_EMISOR = 'S3cr3t-gestion-' + 'x'.repeat(24);
 export function depsEmisor(mock, over = {}, logs = []) {
   let n = 0;
   return {
-    cfg: { secret: SECRET_EMISOR, from: 'Recetario Straumann <no-responder@recetariostra.cl>', replyDomain: 'pagos.recetariostra.cl', maxLote: 5, resendTimeoutMs: 2000 },
+    cfg: { secret: SECRET_EMISOR, from: 'Recetario Straumann <no-responder@recetariostra.cl>', replyDomain: 'pedidos.recetariostra.cl', maxLote: 5, resendTimeoutMs: 2000 },
     rpc,
     getCotizacion: (id) => selectJson(`SELECT to_jsonb(c) FROM public.cotizaciones c WHERE c.id='${id}'`),
     getPagos: (id) => selectJson(`SELECT coalesce(jsonb_agg(to_jsonb(p) ORDER BY p.created_at),'[]'::jsonb) FROM public.cotizacion_pagos p WHERE p.cotizacion_id='${id}'`),
@@ -93,19 +93,19 @@ export function depsEmisor(mock, over = {}, logs = []) {
 
 // ---- correos ENTRANTES simulados (formato del webhook de Resend: solo metadatos; cuerpo/cabeceras por API) ----
 export const WEBHOOK_SECRET = 'whsec_' + Buffer.from('secreto-webhook-de-prueba-0123456789').toString('base64');
-export const DOMINIO = 'pagos.recetariostra.cl';
-export const AUTH_OK = { 'Authentication-Results': 'mx.resend.com; dmarc=pass (p=NONE) header.from=straumann.com; spf=pass; dkim=pass header.d=straumann.com' };
+export const DOMINIO = 'pedidos.recetariostra.cl';
+export const AUTH_OK = { spf: 'pass', dkim: 'pass', dmarc: 'pass' };   // objeto `authentication` de GET /emails/receiving/{id} (Resend)
 export const CS = 'm.cl.customerservicechile@straumann.com', FIN = 'cobranza.cl@straumann.com';
 
 /** Crea un correo entrante firmado. `cuerpos` es el "almacen" que simula la API de lectura de Resend. */
 export function fabricaEntrantes(cuerpos) {
   let k = 0;
-  return function entrante({ from, token, to, cc = [], text = '', html = null, headers = AUTH_OK, messageId, svixId, sinCuerpo = false, firmaMala = false, tipo = 'email.received' }) {
+  return function entrante({ from, token, to, cc = [], text = '', html = null, authentication = AUTH_OK, messageId, svixId, sinCuerpo = false, firmaMala = false, tipo = 'email.received' }) {
     k++;
     const emailId = 'em_' + String(k).padStart(8, '0') + randomUUID().slice(0, 4).replace(/-/g, '');
     const mid = messageId ?? `<msg-${k}-${randomUUID()}@straumann.com>`;
     const body = JSON.stringify({ type: tipo, created_at: new Date().toISOString(), data: { email_id: emailId, from, to: to ?? [`reply+${token}@${DOMINIO}`], cc, bcc: [], received_for: [], message_id: mid, subject: 'Re: algo' } });
-    if (!sinCuerpo) cuerpos.set(emailId, { text, html, headers });
+    if (!sinCuerpo) cuerpos.set(emailId, { text, html, headers: { 'message-id': mid }, authentication });
     const id = svixId ?? `msg_${randomUUID().replace(/-/g, '')}`, ts = String(Math.floor(Date.now() / 1000));
     const key = Buffer.from(WEBHOOK_SECRET.replace('whsec_', ''), 'base64');
     const sig = 'v1,' + createHmac('sha256', key).update(`${id}.${ts}.${body}`).digest('base64');

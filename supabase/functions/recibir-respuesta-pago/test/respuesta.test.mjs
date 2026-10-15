@@ -2,7 +2,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHmac } from 'node:crypto';
-import { extraerTextoNuevo, analizarFinanzas, analizarCS, tokenDeDestinatarios, remitenteSimple, autenticacionOk, verificarSvix, htmlATexto } from '../respuesta.ts';
+import { extraerTextoNuevo, analizarFinanzas, analizarCS, tokenDeDestinatarios, remitenteSimple, autenticacionResend, verificarSvix, htmlATexto } from '../respuesta.ts';
 
 const TOK = 'a'.repeat(32);
 
@@ -69,10 +69,10 @@ test('CS: no confunde RUT, telefono, montos ni numero sin palabra clave con un N
 
 // ---------- hilo y remitente ----------
 test('token de hilo: solo reply+<32hex>@dominio exacto; varios tokens distintos => null', () => {
-  const d = 'pagos.recetariostra.cl';
+  const d = 'pedidos.recetariostra.cl';
   assert.equal(tokenDeDestinatarios([`reply+${TOK}@${d}`], d), TOK);
   assert.equal(tokenDeDestinatarios([`Pagos <reply+${TOK}@${d}>`, 'x@y.cl'], d), TOK);
-  assert.equal(tokenDeDestinatarios([`REPLY+${TOK}@PAGOS.RECETARIOSTRA.CL`], d), TOK);
+  assert.equal(tokenDeDestinatarios([`REPLY+${TOK}@PEDIDOS.RECETARIOSTRA.CL`], d), TOK);
   assert.equal(tokenDeDestinatarios([`reply+${TOK}@evil.cl`], d), null);
   assert.equal(tokenDeDestinatarios([`reply+${TOK}@${d}.evil.cl`], d), null);
   assert.equal(tokenDeDestinatarios([`reply+${'b'.repeat(32)}@${d}`, `reply+${TOK}@${d}`], d), null);
@@ -83,17 +83,16 @@ test('remitente: direccion simple, nunca el nombre visible', () => {
   assert.equal(remitenteSimple('Cobranza <COBRANZA.cl@straumann.com>'), 'cobranza.cl@straumann.com');
   assert.equal(remitenteSimple('"cobranza.cl@straumann.com" <evil@x.cl>'), 'evil@x.cl');
 });
-test('autenticacion: DMARC pass alineado, o DKIM pass alineado; SPF solo no basta; sin cabecera falla', () => {
-  const H = (v) => ({ 'Authentication-Results': v });
-  assert.equal(autenticacionOk(H('mx.resend.com; dmarc=pass (p=NONE) header.from=straumann.com; spf=pass'), 'a@straumann.com'), true);
-  assert.equal(autenticacionOk(H('mx; dkim=pass header.d=straumann.com; spf=fail'), 'a@straumann.com'), true);
-  assert.equal(autenticacionOk(H('mx; spf=pass smtp.mailfrom=straumann.com'), 'a@straumann.com'), false);
-  assert.equal(autenticacionOk(H('mx; dkim=pass header.d=evil.com'), 'a@straumann.com'), false);
-  assert.equal(autenticacionOk(H('mx; dmarc=pass header.from=evil.com'), 'a@straumann.com'), false);
-  assert.equal(autenticacionOk(H('mx; dmarc=fail header.from=straumann.com'), 'a@straumann.com'), false);
-  assert.equal(autenticacionOk({}, 'a@straumann.com'), false); assert.equal(autenticacionOk(null, 'a@straumann.com'), false);
-  // cabeceras repetidas: solo vale la PRIMERA (la mas reciente); una forjada mas abajo no cuenta
-  assert.equal(autenticacionOk({ 'authentication-results': ['mx; dmarc=fail header.from=straumann.com', 'forjada; dmarc=pass header.from=straumann.com'] }, 'a@straumann.com'), false);
+test('autenticacion (objeto de Resend): solo dmarc=pass verifica; processing_failed reintenta; todo lo demas falla cerrado', () => {
+  const A = autenticacionResend;
+  assert.equal(A({ spf: 'pass', dkim: 'pass', dmarc: 'pass' }), 'verificado');
+  assert.equal(A({ dmarc: 'PASS' }), 'verificado');
+  assert.equal(A({ spf: 'pass', dkim: 'pass', dmarc: 'fail' }), 'no_verificado');
+  assert.equal(A({ spf: 'pass', dkim: 'pass', dmarc: 'gray' }), 'no_verificado');       // dominio sin DMARC publicado: NO se acepta
+  assert.equal(A({ spf: 'pass', dkim: 'pass' }), 'no_verificado');                       // spf/dkim solos no prueban el dominio del From
+  assert.equal(A({ dmarc: 'unknown' }), 'no_verificado');
+  assert.equal(A({ dmarc: 'processing_failed' }), 'reintentar');
+  for (const x of [null, undefined, {}, 'pass', 1, true, { dmarc: ['pass'] }, { dmarc: { v: 'pass' } }, { dmarc: ' pass' }, { dmarc: 'pass ' }]) assert.equal(A(x), 'no_verificado', JSON.stringify(x));
 });
 
 // ---------- firma Svix ----------

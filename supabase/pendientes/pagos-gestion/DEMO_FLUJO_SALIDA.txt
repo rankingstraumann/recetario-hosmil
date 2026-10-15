@@ -6,7 +6,7 @@
     Asunto: Scarlett Salas López - RUT paciente: 16072120-0 - Institución: UDP Santiago
     Para: cobranza.cl@straumann.com, m.cl.customerservicechile@straumann.com
     CC: daniel.jordan@straumann.com, isleinny.rojas@straumann.com
-    Reply-To: reply+<token oculto>@pagos.recetariostra.cl
+    Reply-To: reply+<token oculto>@pedidos.recetariostra.cl
   Customer Service responde con N° SAP -> registrado cotización="Pago informado" | envío=aceptado | SAP=4500123456 | Finanzas=no 
   Finanzas responde "Pago validado" -> pedido_ingresado cotización="Pedido ingresado al sistema" | envío=aceptado | SAP=4500123456 | Finanzas=sí 
 
@@ -17,7 +17,7 @@
     Asunto: Scarlett Salas López - RUT paciente: 16072120-0 - Institución: HOSMIL
     Para: cobranza.cl@straumann.com, m.cl.customerservicechile@straumann.com
     CC: daniel.jordan@straumann.com, gloria.trejos@straumann.com
-    Reply-To: reply+<token oculto>@pagos.recetariostra.cl
+    Reply-To: reply+<token oculto>@pedidos.recetariostra.cl
   Finanzas responde "Pago validado" -> pago_validado cotización="Pago validado" | envío=aceptado | SAP=- | Finanzas=sí 
   Customer Service responde con N° SAP -> pedido_ingresado cotización="Pedido ingresado al sistema" | envío=aceptado | SAP=4500123456 | Finanzas=sí 
 

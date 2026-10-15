@@ -4,6 +4,7 @@ BEGIN;
 SET LOCAL lock_timeout = '5s';
 DROP TRIGGER IF EXISTS trg_pago_gestion_encolar ON public.cotizaciones;
 DROP FUNCTION IF EXISTS public.trg_pago_gestion_encolar();
+DROP FUNCTION IF EXISTS public.pago_sap_visibles();
 DROP FUNCTION IF EXISTS public.pago_gestion_registrar_confirmacion(uuid,text,text,text,text,boolean);
 DROP FUNCTION IF EXISTS public.pago_gestion_registrar_entrega(text,text,text,jsonb);
 DROP FUNCTION IF EXISTS public.pago_gestion_crear(uuid,text);

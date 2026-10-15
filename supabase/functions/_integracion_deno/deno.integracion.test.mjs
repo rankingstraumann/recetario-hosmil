@@ -103,7 +103,7 @@ test('D8 firma invalida => 401; remitente no autorizado / sin autenticacion / am
   const c = await mkCot(); await pagar(c, 100000); await emitir(); const g = await gestion(c);
   assert.equal((await webhook(entrante({ token: g.reply_token, from: CS, text: 'SAP 1111111111', firmaMala: true }))).status, 401);
   await resp(g, { from: 'intruso@gmail.com', text: 'Pago validado y SAP 1111111111' });
-  await resp(g, { from: CS, text: 'SAP 1111111111', headers: {} });
+  await resp(g, { from: CS, text: 'SAP 1111111111', authentication: {} });
   await resp(g, { from: FIN, text: 'No sé si el pago está validado aún' });
   const x = await gestion(c); assert.equal(x.sap_numero, null); assert.equal(x.fin_confirmado_en, null); assert.equal(await estadoCot(c), 'Pago informado');
   assert.ok(await eventos(c, 'respuesta_ambigua') >= 1);

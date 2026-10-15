@@ -124,9 +124,9 @@ test('R11 nombre visible falso: "cobranza.cl@straumann.com" <atacante@evil.cl> =
 
 test('R12 autenticacion fallida / ausente / forjada => no cambia nada (remitente autorizado pero no verificable)', async () => {
   const { c, g } = await preparar();
-  const malos = [{}, { 'Authentication-Results': 'mx; dmarc=fail header.from=straumann.com' }, { 'Authentication-Results': 'mx; spf=pass' },
-    { 'Authentication-Results': ['mx; dmarc=fail header.from=straumann.com', 'forjada; dmarc=pass header.from=straumann.com'] }, null];
-  for (const headers of malos) { const r = await recibirMsg(msg(g, { from: FIN, text: 'Pago validado', headers })); assert.equal(r.body.resultado, 'no_autorizado', JSON.stringify(headers)); }
+  const malos = [{ dmarc: 'fail', spf: 'pass', dkim: 'pass' }, { dmarc: 'gray', spf: 'pass', dkim: 'pass' }, { dmarc: 'unknown' }, { spf: 'pass', dkim: 'pass' }, {}, null,
+    { dmarc: 'PASS ' }, { dmarc: ['pass'] }, { dmarc: true }];
+  for (const authentication of malos) { const r = await recibirMsg(msg(g, { from: FIN, text: 'Pago validado', authentication })); assert.equal(r.body.resultado, 'no_autorizado', JSON.stringify(authentication)); }
   assert.equal((await gestion(c)).fin_confirmado_en, null); assert.equal(await estadoCot(c), 'Pago informado');
   assert.equal(await eventos(c, 'respuesta_no_autorizada'), malos.length);
 });
@@ -142,7 +142,7 @@ test('R14 remitentes INDIVIDUALES: solo si estan autorizados explicitamente (y c
   const { c, g } = await preparar();
   assert.equal((await recibirMsg(msg(g, { from: 'ana.cs@straumann.com', text: 'Pedido SAP 1234567890' }))).body.resultado, 'no_autorizado');
   await sh(`INSERT INTO pago_remitentes_autorizados(email, rol, tipo) VALUES ('ana.cs@straumann.com','customer_service','individual'), ('luis.fin@straumann.com','finanzas','individual')`);
-  assert.equal((await recibirMsg(msg(g, { from: 'ANA.CS@straumann.com', text: 'Pedido SAP 1234567890', headers: { 'Authentication-Results': 'mx; dmarc=pass header.from=straumann.com' } }))).body.resultado, 'registrado');
+  assert.equal((await recibirMsg(msg(g, { from: 'ANA.CS@straumann.com', text: 'Pedido SAP 1234567890', authentication: { dmarc: 'pass' } }))).body.resultado, 'registrado');
   assert.equal((await recibirMsg(msg(g, { from: 'luis.fin@straumann.com', text: 'Pago validado' }))).body.resultado, 'pedido_ingresado');
   await sh(`UPDATE pago_remitentes_autorizados SET activo=false WHERE email='ana.cs@straumann.com'`);
   const d = await preparar(); assert.equal((await recibirMsg(msg(d.g, { from: 'ana.cs@straumann.com', text: 'Pedido SAP 1234567890' }))).body.resultado, 'no_autorizado', 'desactivado');
@@ -207,7 +207,7 @@ test('R21 error transitorio (cuerpo no disponible / BD caida) => 503 para que Re
   const { c, g } = await preparar();
   const m = msg(g, { from: CS, text: 'Pedido SAP 1234567890', sinCuerpo: true });
   assert.equal((await recibirMsg(m)).status, 503);
-  cuerpos.set(m._emailId, { text: 'Pedido SAP 1234567890', html: null, headers: AUTH_OK });
+  cuerpos.set(m._emailId, { text: 'Pedido SAP 1234567890', html: null, headers: {}, authentication: AUTH_OK });
   assert.equal((await recibirMsg(m)).body.resultado, 'registrado');
   let falla = true; const deps = { rpc: async (n, a) => (falla && n === 'pago_gestion_registrar_confirmacion' ? { data: null, error: { code: 'PG' } } : H.rpc(n, a)) };
   const m2 = msg(g, { from: FIN, text: 'Pago validado' });

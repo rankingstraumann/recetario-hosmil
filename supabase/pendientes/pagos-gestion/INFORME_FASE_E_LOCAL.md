@@ -28,8 +28,8 @@ Columna final «N° Pedido SAP» + botón copiar (📋). Carga `pago_gestiones.s
 «Pedido ingresado al sistema» solo con pago validado por Finanzas autorizado Y N° SAP de Customer Service autorizado, en cualquier orden. Remitente no autorizado, sin autenticación, ambigua o duplicada: no cambia estados (queda evento). El rol y la autenticación se re-verifican en la BD (B3).
 
 ## Riesgos / pendientes (requieren decisión o verificación con servicios reales)
-1. Resend inbound: endpoint de lectura (`/emails/receiving/{id}`) y esquema Svix SUPUESTOS; si no entrega Authentication-Results/DKIM/DMARC, toda respuesta cae a revisión manual (falla cerrada).
-2. DNS/MX de `pagos.recetariostra.cl` y dominio Resend sin configurar; Reply-To puede perderse con «Responder a todos» según cliente.
+1. Resend inbound (actualizado 2026-10-15): endpoint de lectura `GET /emails/receiving/{id}` y objeto `authentication {spf,dkim,dmarc}` CONFIRMADOS en la documentación de Resend (no en vivo). El receptor ya usa ese objeto: solo `dmarc=pass` verifica; el resto falla cerrado. Por comprobar en la prueba aislada (PRUEBA_RECEPCION.md): permisos de la API key, valores reales para remitentes Straumann, tolerancia/reintentos del webhook, prefijo `whsec_`.
+2. DNS/MX de `pedidos.recetariostra.cl` y dominio Resend sin configurar; Reply-To puede perderse con «Responder a todos» según cliente.
 3. Frases de Finanzas, formato SAP (10 dígitos), remitentes individuales autorizados y ejecutivo UC: provisionales/sin definir (UC sigue bloqueada).
 4. Sin UI de revisión manual (`incierto`, `error`, ambiguas) ni cron del emisor; «aceptado» ≠ «entregado».
 5. Enlaces firmados caducan a 7 días.

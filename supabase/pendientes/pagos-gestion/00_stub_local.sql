@@ -38,3 +38,8 @@ BEGIN
   IF v_historial IS NULL THEN RETURN; END IF;
   UPDATE public.cotizaciones SET estado = 'Pago informado', historial = historial || jsonb_build_object('estado', 'Pago informado', 'fecha', now()) WHERE token = p_token;
 END; $f$;
+
+-- Permisos del Admin (replica minima de las tablas reales; la policy real de cotizaciones depende de ellas)
+CREATE TABLE public.admin_perfiles (user_id uuid PRIMARY KEY, es_super_admin boolean DEFAULT false, es_observador boolean DEFAULT false, es_vendedor boolean DEFAULT false, es_coordinador boolean DEFAULT false, es_customer_service boolean DEFAULT false, coordinador_id uuid);
+CREATE TABLE public.admin_instituciones_permitidas (user_id uuid NOT NULL, institucion_codigo text NOT NULL);
+REVOKE ALL ON public.admin_perfiles, public.admin_instituciones_permitidas FROM anon;

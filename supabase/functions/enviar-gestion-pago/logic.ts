@@ -40,7 +40,7 @@ const shortId = (id: string) => String(id).slice(0, 8);
 export function readConfig(get: (k: string) => string | undefined): { cfg?: Cfg; error?: string } {
   const secret = get('GESTION_PAGOS_SECRET') ?? '';
   const from = (get('GESTION_PAGOS_FROM') ?? '').trim();
-  const replyDomain = (get('GESTION_PAGOS_REPLY_DOMAIN') ?? 'pagos.recetariostra.cl').trim().toLowerCase();   // PROVISIONAL: sujeto a DNS/Resend
+  const replyDomain = (get('GESTION_PAGOS_REPLY_DOMAIN') ?? 'pedidos.recetariostra.cl').trim().toLowerCase();
   if (secret.length < 24) return { error: 'config_secret' };
   if (!/^[^<>@\s]+@[^<>@\s]+\.[^<>@\s]+$|^[^<>]+<[^<>@\s]+@[^<>@\s]+\.[^<>@\s]+>$/.test(from)) return { error: 'config_from' };
   if (!/^[a-z0-9.-]+\.[a-z]{2,}$/.test(replyDomain)) return { error: 'config_reply_domain' };

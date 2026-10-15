@@ -3,13 +3,14 @@
 //
 // Cadena de confianza (todas deben cumplirse para registrar algo):
 //   firma Svix valida  ->  token de hilo reply+<32hex>@dominio  ->  gestion existente y YA enviada  ->  remitente en la lista autorizada
-//   (direccion simple, nunca nombre visible)  ->  autenticacion del correo (DMARC/DKIM alineado)  ->  rol correcto  ->  contenido inequivoco.
+//   (direccion simple, nunca nombre visible)  ->  autenticacion del correo (authentication.dmarc === 'pass' de Resend)  ->  rol correcto  ->  contenido inequivoco.
 // Cualquier eslabon que falle NO cambia estados: o se descarta (sin gestion) o queda un evento para revision manual.
-import { analizarCS, analizarFinanzas, autenticacionOk, extraerTextoNuevo, remitenteSimple, tokenDeDestinatarios, verificarSvix } from './respuesta.ts';
+import type { AuthResend } from './respuesta.ts';
+import { analizarCS, analizarFinanzas, autenticacionResend, extraerTextoNuevo, remitenteSimple, tokenDeDestinatarios, verificarSvix } from './respuesta.ts';
 
 export interface Cfg { webhookSecret: string; replyDomain: string }
 export interface Res<T> { data: T | null; error: { code?: string } | null }
-export interface Cuerpo { text?: string | null; html?: string | null; headers?: Record<string, unknown> | null }
+export interface Cuerpo { text?: string | null; html?: string | null; headers?: Record<string, unknown> | null; authentication?: AuthResend | null }
 export interface Deps {
   cfg: Cfg;
   rpc(name: string, args?: Record<string, unknown>): Promise<Res<any>>;
@@ -23,7 +24,7 @@ export interface Deps {
 export interface Entrada { rawBody: string; svixId: string | null; svixTimestamp: string | null; svixSignature: string | null }
 export interface Resultado { status: number; body: Record<string, unknown> }
 
-const LOG_OK = new Set(['ev', 'gid', 'resultado', 'rol', 'motivo', 'code', 'auth']);
+const LOG_OK = new Set(['ev', 'gid', 'resultado', 'rol', 'motivo', 'code', 'auth', 'dmarc']);
 export function safeLog(o: Record<string, unknown>): Record<string, unknown> {
   const out: Record<string, unknown> = {};
   for (const [k, v] of Object.entries(o)) {
@@ -82,11 +83,13 @@ export async function handle(e: Entrada, deps: Deps): Promise<Resultado> {
   // 5) Cuerpo y autenticacion del correo
   const cuerpo = await deps.obtenerCuerpo(emailId);
   if (!cuerpo) { log({ ev: 'cuerpo_no_disponible', gid }); return transitorio('cuerpo'); }
-  const auth = autenticacionOk(cuerpo.headers ?? null, from);
-  if (!auth) {
+  const veredicto = autenticacionResend(cuerpo.authentication ?? null);
+  if (veredicto === 'reintentar') { log({ ev: 'autenticacion_no_procesada', gid }); return transitorio('autenticacion'); }
+  if (veredicto !== 'verificado') {
     const r = await deps.rpc('pago_gestion_registrar_confirmacion', { p_gestion_id: g.gestion_id, p_tipo: tipo, p_dedupe: dedupe, p_valor: null, p_remitente: from, p_auth_ok: false });
     if (r.error) return transitorio('registrar');
-    log({ ev: 'autenticacion_fallida', gid, rol, auth: false, resultado: String(r.data) }); return ok(String(r.data));
+    const dm = String(cuerpo.authentication?.dmarc ?? 'ausente').toLowerCase();
+    log({ ev: 'autenticacion_fallida', gid, rol, auth: false, dmarc: /^[a-z_]{1,20}$/.test(dm) ? dm : 'otro', resultado: String(r.data) }); return ok(String(r.data));
   }
 
   // 6) Contenido (solo el texto NUEVO de la respuesta)

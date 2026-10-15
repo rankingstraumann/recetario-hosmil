@@ -71,7 +71,7 @@ let LOGS = [];   // todo lo que el emisor loguea en TODA la corrida
 function mkDeps(mock, over = {}) {
   let n = 0;
   return {
-    cfg: { secret: SECRET, from: 'Recetario Straumann <no-responder@recetariostra.cl>', replyDomain: 'pagos.recetariostra.cl', maxLote: 5, resendTimeoutMs: 2000 },
+    cfg: { secret: SECRET, from: 'Recetario Straumann <no-responder@recetariostra.cl>', replyDomain: 'pedidos.recetariostra.cl', maxLote: 5, resendTimeoutMs: 2000 },
     rpc,
     getCotizacion: (id) => selectJson(`SELECT to_jsonb(c) FROM public.cotizaciones c WHERE c.id='${id}'`),
     getPagos: (id) => selectJson(`SELECT coalesce(jsonb_agg(to_jsonb(p) ORDER BY p.created_at),'[]'::jsonb) FROM public.cotizacion_pagos p WHERE p.cotizacion_id='${id}'`),
@@ -135,7 +135,7 @@ test('I3 modo prueba: UN correo, solo a daniel.jordan, asunto [PRUEBA]+exacto, r
   const q = mock.reqs[0].body; const g = await gestion(c);
   assert.deepEqual(q.to, ['daniel.jordan@straumann.com']); assert.equal(q.cc, undefined); assert.equal(q.bcc, undefined);
   assert.equal(q.subject, '[PRUEBA] Scarlett Salas López - RUT paciente: 16072120-0 - Institución: UDP Santiago');
-  assert.equal(q.reply_to, `reply+${g.reply_token}@pagos.recetariostra.cl`);
+  assert.equal(q.reply_to, `reply+${g.reply_token}@pedidos.recetariostra.cl`);
   assert.match(q.text, /MODO PRUEBA/); assert.match(q.text, /N° Cotización: C-/); assert.match(q.text, /Código \| Descripción \| Cant\. \| Dscto\. \| Subtotal/);
   assert.match(q.html, /<table/);
   assert.equal(g.estado_envio, 'aceptado'); assert.match(g.resend_id, /^re_/); assert.equal(g.intentos, 1); assert.ok(g.enviado_en);

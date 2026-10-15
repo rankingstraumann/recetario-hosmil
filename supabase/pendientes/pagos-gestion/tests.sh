@@ -219,8 +219,24 @@ chk "T11 anon NO ejecuta funciones internas" "3" "$(( $(deny x "SET ROLE anon; S
 chk "T11 authenticated NO ejecuta funciones internas" "2" "$(( $(deny x "SET ROLE authenticated; SELECT * FROM pago_gestion_reclamar(1);") + $(deny x "SET ROLE authenticated; SELECT pago_gestion_registrar_confirmacion(gen_random_uuid(),'sap','z','1234567890','x',true);") ))"
 chk "T11 authenticated NO puede escribir" "1" "$(deny x "SET ROLE authenticated; UPDATE pago_gestiones SET sap_numero='1';")"
 chk "T11 authenticated NO ve reply_token ni resend_id" "1" "$(deny x "SET ROLE authenticated; SELECT reply_token FROM pago_gestiones;")"
-chk "T11 authenticated con sesión SÍ lee columnas SAP (RLS vía cotizaciones)" "1234567890" "$(S "SET request.jwt.claim.sub='$ADM'; SET ROLE authenticated; SELECT sap_numero FROM pago_gestiones WHERE sap_numero IS NOT NULL ORDER BY sap_registrado_en LIMIT 1")"
-chk "T11 authenticated SIN sesión no ve filas (RLS)" "0" "$(S "SET ROLE authenticated; SELECT count(*) FROM pago_gestiones")"
+chk "T11 authenticated NO lee la tabla (ni siquiera sap_numero)" "2" "$(( $(deny x "SET ROLE authenticated; SELECT sap_numero FROM pago_gestiones;") + $(deny x "SET ROLE authenticated; SELECT count(*) FROM pago_gestiones;") ))"
+echo "--- T11b lectura SAP segura (pago_sap_visibles)"
+OBS="22222222-2222-2222-2222-222222222222"; UDPU="33333333-3333-3333-3333-333333333333"; NADA="44444444-4444-4444-4444-444444444444"
+echo "INSERT INTO admin_perfiles(user_id,es_super_admin) VALUES ('$ADM',true); INSERT INTO admin_perfiles(user_id,es_observador) VALUES ('$OBS',true); INSERT INTO admin_perfiles(user_id) VALUES ('$UDPU'),('$NADA'); INSERT INTO admin_instituciones_permitidas VALUES ('$UDPU','UDP');
+UPDATE pago_gestiones SET sap_numero='7000000001' WHERE id=(SELECT g.id FROM pago_gestiones g JOIN cotizaciones c ON c.id=g.cotizacion_id WHERE c.institucion_codigo='UDP' AND g.sap_numero IS NULL LIMIT 1);
+UPDATE pago_gestiones SET sap_numero='7000000002' WHERE id=(SELECT g.id FROM pago_gestiones g JOIN cotizaciones c ON c.id=g.cotizacion_id WHERE c.institucion_codigo='HOSMIL' AND g.sap_numero IS NULL LIMIT 1);" | Q >/dev/null
+TOT=$(S "select count(*) from pago_gestiones where sap_numero is not null"); UDPN=$(S "select count(*) from pago_gestiones g join cotizaciones c on c.id=g.cotizacion_id where g.sap_numero is not null and c.institucion_codigo='UDP'")
+V(){ S "SET request.jwt.claim.sub='$1'; SET ROLE authenticated; SELECT count(*) FROM pago_sap_visibles()"; }
+chk "T11b datos de prueba: hay SAP de varias instituciones" "t" "$(S "select $TOT > $UDPN and $UDPN >= 1")"
+chk "T11b super admin ve todos los SAP" "$TOT" "$(V $ADM)"
+chk "T11b observador ve todos los SAP" "$TOT" "$(V $OBS)"
+chk "T11b usuario con permiso solo UDP ve solo los de UDP" "$UDPN" "$(V $UDPU)"
+chk "T11b autenticado sin perfil ni instituciones ve 0" "0" "$(V $NADA)"
+chk "T11b authenticated SIN sesion (sin uid) ve 0" "0" "$(S "SET ROLE authenticated; SELECT count(*) FROM pago_sap_visibles()")"
+chk "T11b anon NO ejecuta la funcion" "1" "$(deny x "SET ROLE anon; SELECT * FROM pago_sap_visibles();")"
+chk "T11b solo devuelve cotizacion_id y sap_numero" "cotizacion_id,sap_numero" "$(S "select string_agg(a.attname, ',' order by a.attnum) from pg_proc p, unnest(p.proargnames) with ordinality n(attname, i), pg_attribute a where false union all select string_agg(x,',' order by o) from (select unnest(proargnames) x, generate_subscripts(proargnames,1) o from pg_proc where proname='pago_sap_visibles') z" | tail -1)"
+chk "T11b los SAP devueltos son exactamente los de las cotizaciones visibles" "$(S "select string_agg(g.sap_numero,',' order by g.sap_numero) from pago_gestiones g join cotizaciones c on c.id=g.cotizacion_id where g.sap_numero is not null and c.institucion_codigo='UDP'")" "$(S "SET request.jwt.claim.sub='$UDPU'; SET ROLE authenticated; SELECT string_agg(sap_numero,',' ORDER BY sap_numero) FROM pago_sap_visibles()")"
+chk "T11 authenticated SIN sesión no ve filas de la tabla" "1" "$(deny x "SET ROLE authenticated; SELECT count(*) FROM pago_gestiones")"
 chk "T11 service_role sí ejecuta" "t" "$(S "SET ROLE service_role; SELECT count(*)>=0 FROM pago_gestion_reclamar(1)")"
 echo "--- T12 cotizaciones no cambió de forma"
 chk "T12 sin columnas nuevas en cotizaciones (SAP no se filtra por row_to_json)" "0" "$(S "select count(*) from information_schema.columns where table_name='cotizaciones' and column_name ~ 'sap|gestion'")"

@@ -116,24 +116,23 @@ export function tokenDeDestinatarios(dirs: string[], dominio: string): string | 
 /** El remitente se toma como DIRECCION SIMPLE (nunca el nombre visible). */
 export function remitenteSimple(from: string): string { return soloCorreo(String(from || '')); }
 
-function valorHeader(h: Record<string, unknown> | null | undefined, nombre: string): string[] {
-  if (!h) return [];
-  for (const k of Object.keys(h)) if (k.toLowerCase() === nombre) { const v = h[k]; return Array.isArray(v) ? v.map(String) : [String(v)]; }
-  return [];
-}
+/** Objeto `authentication` que Resend devuelve en GET /emails/receiving/{id} (documentado: pass | fail | gray | processing_failed | unknown, o null). */
+export interface AuthResend { spf?: unknown; dkim?: unknown; dmarc?: unknown }
+export type VeredictoAuth = 'verificado' | 'no_verificado' | 'reintentar';
 /**
- * Autenticacion del remitente: usa SOLO el primer Authentication-Results (el mas reciente, agregado por nuestro receptor; los demas
- * pueden venir forjados en el mensaje). Exige DMARC=pass, o DKIM=pass con dominio alineado al del remitente. SPF solo NO basta.
- * Sin cabecera => false (fail-closed). REQUISITO PENDIENTE: confirmar que Resend entrega estas cabeceras.
+ * Autenticacion del remitente con el resultado que entrega Resend. REGLA SEGURA (por defecto y unica implementada):
+ *   - 'verificado'    : dmarc === 'pass' (DMARC exige alineacion del dominio del From con SPF o DKIM; es la unica senal que prueba que el
+ *                       dominio del From es el que dice ser). spf/dkim 'pass' por separado NO bastan: pueden ser de un dominio ajeno.
+ *   - 'reintentar'    : dmarc === 'processing_failed' (fallo de procesamiento de Resend, no del remitente): se responde 503 y Resend reintenta.
+ *   - 'no_verificado' : cualquier otro valor (fail, gray, unknown, ausente, null, tipos raros). La BD registra el evento y NO cambia nada.
+ * Relajar esta regla (p.ej. dominios corporativos sin DMARC, que darian 'gray') solo se decide con evidencia de la prueba aislada real.
  */
-export function autenticacionOk(headers: Record<string, unknown> | null | undefined, fromEmail: string): boolean {
-  const ar = valorHeader(headers, 'authentication-results')[0];
-  if (!ar) return false;
-  const dom = fromEmail.split('@')[1] || '';
-  if (!dom) return false;
-  if (/\bdmarc=pass\b/i.test(ar) && new RegExp(`header\\.from=${dom.replace(/\./g, '\\.')}\\b`, 'i').test(ar)) return true;
-  const dk = ar.match(/\bdkim=pass\b[^;]*?header\.(?:d|i)=@?([A-Za-z0-9.\-]+)/i);
-  return !!dk && (dk[1].toLowerCase() === dom || dk[1].toLowerCase().endsWith('.' + dom) || dom.endsWith('.' + dk[1].toLowerCase()));
+export function autenticacionResend(a: AuthResend | null | undefined): VeredictoAuth {
+  const raw = a && typeof a === 'object' ? (a as AuthResend).dmarc : undefined;
+  const d = typeof raw === 'string' ? raw.toLowerCase() : '';
+  if (d === 'pass') return 'verificado';
+  if (d === 'processing_failed') return 'reintentar';
+  return 'no_verificado';
 }
 
 // ---------------------------------------------------------------------------------------------------------------

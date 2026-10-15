@@ -102,11 +102,19 @@ DO $$ DECLARE t text; BEGIN
     EXECUTE format('REVOKE ALL ON public.%I FROM PUBLIC, anon, authenticated', t);
     EXECUTE format('GRANT ALL ON public.%I TO service_role', t);
   END LOOP; END $$;
--- Lectura mínima para el Admin (columna SAP): solo columnas no sensibles, y solo de cotizaciones que el usuario ya puede ver (reutiliza la RLS de cotizaciones)
-GRANT SELECT (cotizacion_id, estado_envio, entrega_estado, sap_numero, sap_registrado_en, fin_confirmado_en, enviado_en, solicitado_en, institucion_codigo)
-  ON public.pago_gestiones TO authenticated;
-CREATE POLICY pago_gestiones_lectura_admin ON public.pago_gestiones FOR SELECT TO authenticated
-  USING (EXISTS (SELECT 1 FROM public.cotizaciones c WHERE c.id = pago_gestiones.cotizacion_id));
+-- Lectura del N° SAP para el Admin: la tabla pago_gestiones queda PRIVADA (sin GRANT ni policy para anon/authenticated).
+-- El Admin usa esta funcion de solo lectura, que devuelve unicamente (cotizacion_id, sap_numero) y SOLO de las cotizaciones que el usuario
+-- ya puede ver: replica exactamente la policy SELECT de public.cotizaciones ("lectura segun permisos de institucion").
+CREATE FUNCTION public.pago_sap_visibles() RETURNS TABLE (cotizacion_id uuid, sap_numero text)
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public AS $f$
+  SELECT g.cotizacion_id, g.sap_numero
+  FROM public.pago_gestiones g JOIN public.cotizaciones c ON c.id = g.cotizacion_id
+  WHERE g.sap_numero IS NOT NULL AND auth.uid() IS NOT NULL AND (
+    EXISTS (SELECT 1 FROM public.admin_perfiles p WHERE p.user_id = auth.uid() AND (COALESCE(p.es_super_admin,false) OR COALESCE(p.es_observador,false)))
+    OR EXISTS (SELECT 1 FROM public.admin_instituciones_permitidas i WHERE i.user_id = auth.uid() AND i.institucion_codigo = c.institucion_codigo));
+$f$;
+REVOKE ALL ON FUNCTION public.pago_sap_visibles() FROM PUBLIC, anon;
+GRANT EXECUTE ON FUNCTION public.pago_sap_visibles() TO authenticated, service_role;
 
 -- 7. Funciones internas (solo service_role)
 CREATE FUNCTION public.pago_gestion_crear(p_cotizacion_id uuid, p_origen text DEFAULT 'sistema') RETURNS uuid
