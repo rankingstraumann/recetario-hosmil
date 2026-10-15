@@ -5,6 +5,10 @@ SET LOCAL lock_timeout = '5s';
 DROP TRIGGER IF EXISTS trg_pago_gestion_encolar ON public.cotizaciones;
 DROP FUNCTION IF EXISTS public.trg_pago_gestion_encolar();
 DROP FUNCTION IF EXISTS public.pago_sap_visibles();
+DROP FUNCTION IF EXISTS public.pago_gestion_guardia_modo() CASCADE;   -- elimina tambien su trigger sobre pago_gestiones
+DROP FUNCTION IF EXISTS public.pago_gestion_exigir_modificable(uuid);
+DROP FUNCTION IF EXISTS public.pago_gestion_puede_modificar(uuid);
+DROP FUNCTION IF EXISTS public.pago_gestion_modo_real();
 DROP FUNCTION IF EXISTS public.pago_gestion_registrar_confirmacion(uuid,text,text,text,text,boolean);
 DROP FUNCTION IF EXISTS public.pago_gestion_registrar_entrega(text,text,text,jsonb);
 DROP FUNCTION IF EXISTS public.pago_gestion_crear(uuid,text);
@@ -18,5 +22,5 @@ DROP FUNCTION IF EXISTS public.pago_gestion_finalizar_envio(uuid,boolean,text,te
 DROP FUNCTION IF EXISTS public.pago_gestion_marcar_inciertas();
 DROP FUNCTION IF EXISTS public.pago_gestion_reconciliar();
 DROP FUNCTION IF EXISTS public.pago_gestion_liberar_bloqueadas();
-DROP TABLE IF EXISTS public.pago_gestion_eventos, public.pago_gestiones, public.pago_remitentes_autorizados, public.pago_gestion_destinatarios, public.pago_gestion_config;
+DROP TABLE IF EXISTS public.pago_gestion_eventos, public.pago_gestiones, public.pago_remitentes_autorizados, public.pago_gestion_cotizaciones_prueba, public.pago_gestion_destinatarios, public.pago_gestion_config;
 COMMIT;

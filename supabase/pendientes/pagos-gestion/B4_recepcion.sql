@@ -7,9 +7,9 @@ SET LOCAL lock_timeout = '5s';
 
 -- Resuelve el token del hilo (Reply-To) a la gestion. recibe=true solo si el correo interno YA salio (aceptado) o pudo haber salido (incierto).
 CREATE FUNCTION public.pago_gestion_resolver_respuesta(p_token text)
-RETURNS TABLE(gestion_id uuid, cotizacion_id uuid, estado_envio text, institucion_codigo text, recibe boolean)
+RETURNS TABLE(gestion_id uuid, cotizacion_id uuid, estado_envio text, institucion_codigo text, recibe boolean, modificable boolean)
 LANGUAGE sql SECURITY DEFINER STABLE SET search_path = public, pg_temp AS $f$
-  SELECT g.id, g.cotizacion_id, g.estado_envio, g.institucion_codigo, g.estado_envio IN ('aceptado','incierto')
+  SELECT g.id, g.cotizacion_id, g.estado_envio, g.institucion_codigo, g.estado_envio IN ('aceptado','incierto'), public.pago_gestion_puede_modificar(g.cotizacion_id)
   FROM public.pago_gestiones g WHERE length(coalesce(p_token,'')) = 32 AND g.reply_token = p_token $f$;
 
 -- Rol del remitente segun la lista autorizada (null = no autorizado o inactivo). La decision final sigue en pago_gestion_registrar_confirmacion.
@@ -26,6 +26,7 @@ BEGIN
   SELECT * INTO g FROM public.pago_gestiones WHERE id = p_gestion_id;
   IF NOT FOUND THEN RETURN 'gestion_inexistente'; END IF;
   IF g.estado_envio = 'omitido_historico' THEN RETURN 'ignorado_historico'; END IF;
+  IF NOT public.pago_gestion_puede_modificar(g.cotizacion_id) THEN RETURN 'bloqueado_modo_prueba'; END IF;   -- modo prueba: nada se escribe sobre cotizaciones reales
   IF public.pago_remitente_rol(p_remitente) IS NULL THEN RETURN 'no_autorizado'; END IF;
   INSERT INTO public.pago_gestion_eventos(gestion_id, cotizacion_id, tipo, dedupe_key, remitente, detalle)
   VALUES (g.id, g.cotizacion_id, 'respuesta_ambigua', 'amb:'||p_dedupe, left(p_remitente,200),

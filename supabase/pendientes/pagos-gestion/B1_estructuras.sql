@@ -58,6 +58,12 @@ INSERT INTO public.pago_remitentes_autorizados(email, rol, tipo) VALUES
  ('m.cl.customerservicechile@straumann.com','customer_service','grupal'),
  ('cobranza.cl@straumann.com','finanzas','grupal');
 
+-- 3b. Cotizaciones de PRUEBA (lista EXPLICITA y opt-in). Mientras modo<>real, solo las gestiones de estas cotizaciones pueden recibir confirmaciones.
+-- Una cotizacion entra aqui unicamente por una orden manual (service_role / SQL de Daniel); nada la agrega automaticamente ni por patron de nombre.
+CREATE TABLE public.pago_gestion_cotizaciones_prueba (
+  cotizacion_id uuid PRIMARY KEY REFERENCES public.cotizaciones(id) ON DELETE CASCADE,
+  nota text, created_at timestamptz NOT NULL DEFAULT now());
+
 -- 4. Gestión interna: UNA fila por cotización (idempotencia por UNIQUE)
 CREATE TABLE public.pago_gestiones (
   id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -95,9 +101,45 @@ CREATE TABLE public.pago_gestion_eventos (
   created_at timestamptz NOT NULL DEFAULT now());
 CREATE INDEX pago_gestion_eventos_rev_idx ON public.pago_gestion_eventos (created_at) WHERE revisado_en IS NULL AND tipo <> 'entrega_resend';
 
+-- 5b. PROTECCION DEL MODO PRUEBA (defensa en profundidad; sin tocar cotizaciones ni RPC publicas)
+--  - modo_real(): TRUE solo si config.modo es EXACTAMENTE 'real' (fila ausente, vacio o typo => prueba, fail-closed).
+--  - puede_modificar(cotizacion): TRUE si modo real, o si la cotizacion esta en la lista explicita de PRUEBA.
+--  - exigir_modificable(cotizacion): lo mismo pero con EXCEPTION (se invoca justo antes de cada UPDATE de cotizaciones hecho por la gestion).
+--  - trigger: ninguna escritura de SAP / validacion financiera / pedido aplicado sobre pago_gestiones pasa si la cotizacion es real y modo<>real,
+--    venga de la funcion que venga (incluido UPDATE directo con service_role).
+CREATE FUNCTION public.pago_gestion_modo_real() RETURNS boolean
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public, pg_temp AS $f$
+  SELECT coalesce((SELECT valor FROM public.pago_gestion_config WHERE clave='modo'), '') = 'real' $f$;
+CREATE FUNCTION public.pago_gestion_puede_modificar(p_cotizacion_id uuid) RETURNS boolean
+LANGUAGE sql STABLE SECURITY DEFINER SET search_path = public, pg_temp AS $f$
+  SELECT public.pago_gestion_modo_real()
+      OR EXISTS (SELECT 1 FROM public.pago_gestion_cotizaciones_prueba p WHERE p.cotizacion_id = p_cotizacion_id) $f$;
+CREATE FUNCTION public.pago_gestion_exigir_modificable(p_cotizacion_id uuid) RETURNS void
+LANGUAGE plpgsql STABLE SECURITY DEFINER SET search_path = public, pg_temp AS $f$
+BEGIN
+  IF NOT public.pago_gestion_puede_modificar(p_cotizacion_id) THEN
+    RAISE EXCEPTION 'modo_prueba: la gestion de una cotizacion real no puede modificarse' USING ERRCODE = 'P0001';
+  END IF;
+END $f$;
+CREATE FUNCTION public.pago_gestion_guardia_modo() RETURNS trigger
+LANGUAGE plpgsql SECURITY DEFINER SET search_path = public, pg_temp AS $f$
+BEGIN
+  IF TG_OP = 'INSERT' THEN
+    IF (NEW.sap_numero, NEW.sap_registrado_en, NEW.sap_evento_dedupe, NEW.fin_confirmado_en, NEW.fin_evento_dedupe, NEW.pedido_aplicado_en)
+       IS DISTINCT FROM (NULL::text, NULL::timestamptz, NULL::text, NULL::timestamptz, NULL::text, NULL::timestamptz) THEN
+      PERFORM public.pago_gestion_exigir_modificable(NEW.cotizacion_id);
+    END IF;
+  ELSIF (NEW.sap_numero, NEW.sap_registrado_en, NEW.sap_evento_dedupe, NEW.fin_confirmado_en, NEW.fin_evento_dedupe, NEW.pedido_aplicado_en)
+     IS DISTINCT FROM (OLD.sap_numero, OLD.sap_registrado_en, OLD.sap_evento_dedupe, OLD.fin_confirmado_en, OLD.fin_evento_dedupe, OLD.pedido_aplicado_en) THEN
+    PERFORM public.pago_gestion_exigir_modificable(NEW.cotizacion_id);
+  END IF;
+  RETURN NEW;
+END $f$;
+CREATE TRIGGER pago_gestiones_guardia_modo BEFORE INSERT OR UPDATE ON public.pago_gestiones FOR EACH ROW EXECUTE FUNCTION public.pago_gestion_guardia_modo();
+
 -- 6. Privilegios: Supabase concede ALL por defecto a anon/authenticated => se revoca explícitamente
 DO $$ DECLARE t text; BEGIN
-  FOREACH t IN ARRAY ARRAY['pago_gestion_config','pago_gestion_destinatarios','pago_remitentes_autorizados','pago_gestiones','pago_gestion_eventos'] LOOP
+  FOREACH t IN ARRAY ARRAY['pago_gestion_config','pago_gestion_destinatarios','pago_remitentes_autorizados','pago_gestion_cotizaciones_prueba','pago_gestiones','pago_gestion_eventos'] LOOP
     EXECUTE format('ALTER TABLE public.%I ENABLE ROW LEVEL SECURITY', t);
     EXECUTE format('REVOKE ALL ON public.%I FROM PUBLIC, anon, authenticated', t);
     EXECUTE format('GRANT ALL ON public.%I TO service_role', t);
@@ -287,7 +329,7 @@ LANGUAGE sql SECURITY DEFINER SET search_path = public, pg_temp AS $f$
   SELECT count(*)::int FROM u $f$;
 
 DO $$ DECLARE f text; BEGIN
-  FOREACH f IN ARRAY ARRAY['pago_gestion_crear(uuid,text)','pago_gestion_destinatarios_de(text)','pago_gestion_validar_envio(text,text[],text[],text[])','pago_gestion_motivo_no_elegible(uuid)','pago_gestion_soltar(uuid,text)','pago_gestion_revisar_elegibilidad()','pago_gestion_reclamar(int)',
+  FOREACH f IN ARRAY ARRAY['pago_gestion_modo_real()','pago_gestion_puede_modificar(uuid)','pago_gestion_exigir_modificable(uuid)','pago_gestion_guardia_modo()','pago_gestion_crear(uuid,text)','pago_gestion_destinatarios_de(text)','pago_gestion_validar_envio(text,text[],text[],text[])','pago_gestion_motivo_no_elegible(uuid)','pago_gestion_soltar(uuid,text)','pago_gestion_revisar_elegibilidad()','pago_gestion_reclamar(int)',
      'pago_gestion_finalizar_envio(uuid,boolean,text,text,text[],text[],text)','pago_gestion_marcar_inciertas()','pago_gestion_reconciliar()','pago_gestion_liberar_bloqueadas()'] LOOP
     EXECUTE format('REVOKE ALL ON FUNCTION public.%s FROM PUBLIC, anon, authenticated', f);
     EXECUTE format('GRANT EXECUTE ON FUNCTION public.%s TO service_role', f);

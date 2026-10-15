@@ -193,8 +193,10 @@ test('R18 si Nicole/Finanzas ya movieron la cotizacion a mano (p. ej. "Despachad
 test('R19 gestiones historicas (ya procesadas a mano) ignoran respuestas', async () => {
   const hist = JSON.parse(await one(`SELECT to_jsonb(g) FROM pago_gestiones g WHERE estado_envio='omitido_historico' LIMIT 1`));
   await cfgSet('confirmaciones_activo', 'true');
-  const r = await recibirMsg(entrante({ from: CS, token: hist.reply_token, text: 'Pedido SAP 1234567890' }));
-  assert.equal(r.body.resultado, 'gestion_no_enviada');
+  const msgH = () => entrante({ from: CS, token: hist.reply_token, text: 'Pedido SAP 1234567890' });
+  assert.equal((await recibirMsg(msgH())).body.resultado, 'bloqueado_modo_prueba', 'modo prueba: la gestion es de una cotizacion REAL => bloqueada antes de cualquier otra regla');
+  await sh(`UPDATE pago_gestion_config SET valor='real' WHERE clave='modo'`);
+  assert.equal((await recibirMsg(msgH())).body.resultado, 'gestion_no_enviada', 'modo real: sigue ignorada por ser historica');
 });
 
 test('R20 N° SAP con formato fuera de lo configurado (sap_regex) => a revision, no se registra', async () => {

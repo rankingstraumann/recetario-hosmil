@@ -36,3 +36,5 @@ apply_migration, nombre `recetario_pagos_b1_estructuras`, contenido de B1_estruc
 
 ## E. Qué NO cambia con B1
 Sin trigger: ninguna escritura del paciente toca estas tablas. Sin Edge Function ni cron: nada envía ni lee. Interruptores apagados; modo prueba => solo Daniel; guardia `pago_gestion_validar_envio` rechaza CS/Finanzas/ejecutivos/BCC. RPCs del paciente, correos de cotización y recordatorios: intactos.
+
+**Protección del modo prueba (incluida en B1/B3/B4):** B1 crea la tabla `pago_gestion_cotizaciones_prueba` (VACÍA), funciones `pago_gestion_modo_real/puede_modificar/exigir_modificable` y el trigger `pago_gestiones_guardia_modo`. Con `modo<>real` ninguna cotización real recibe confirmaciones, aunque `confirmaciones_activo=true`. ROLLBACK.sql la elimina junto con el resto.

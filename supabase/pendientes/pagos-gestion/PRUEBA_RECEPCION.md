@@ -15,7 +15,7 @@ Ojo: DMARC pass prueba el *dominio* (`straumann.com`), no a la persona: quien de
    - Si responde 401/403: la API key actual (de solo envío) no puede leer correos recibidos → crear una con permiso de lectura.
 
 ## Fase 1 — Webhook + firma (requiere autorización explícita de Daniel)
-1. Desplegar `recepcion-prueba-pago` (sin JWT; desde la raíz del repo, para que incluya `recibir-respuesta-pago/respuesta.ts`): `supabase functions deploy recepcion-prueba-pago --no-verify-jwt`.
+1. Desplegar `recepcion-prueba-pago` (sin JWT). La función es autocontenida (3 archivos propios, sin `npm:` ni imports de otras carpetas): `supabase functions deploy recepcion-prueba-pago --no-verify-jwt`.
 2. Resend → Webhooks → Add Webhook: URL de la función, evento **solo** `email.received`. Copiar el *signing secret*.
 3. Guardar secretos **Daniel, sin pasarlos por chat**: `supabase secrets set RESEND_WEBHOOK_SECRET=... RESEND_API_KEY=...` (la función ignora todo correo que no vaya a `prueba-*@pedidos…` o `reply+<token>@pedidos…`).
 4. Escenarios (todos ficticios; anotar hora de cada envío):

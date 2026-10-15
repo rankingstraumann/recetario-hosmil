@@ -4,7 +4,7 @@
 //   (3) que el Reply-To con token llega en to/received_for.
 // NO usa base de datos, NO cambia estados, NO guarda el cuerpo del correo ni direcciones completas: solo devuelve/loguea un resumen de metadatos.
 // Ambito: ignora todo correo que no vaya dirigido a prueba-<texto>@<dominio de pedidos> (no toca trafico real).
-import { autenticacionResend, remitenteSimple, tokenDeDestinatarios, verificarSvix } from '../recibir-respuesta-pago/respuesta.ts';
+import { autenticacionResend, remitenteSimple, tokenDeDestinatarios, verificarSvix } from './reglas_copia.ts';
 
 export interface LecturaResend { status: number; json: Record<string, unknown> | null }
 export interface Deps {

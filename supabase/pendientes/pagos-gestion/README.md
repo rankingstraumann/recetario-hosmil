@@ -5,3 +5,5 @@ Defectos de seguridad: `envio_activo=false`, `confirmaciones_activo=false`, `mod
 Funciones (no desplegadas): `supabase/functions/enviar-gestion-pago`, `recibir-respuesta-pago`; pruebas Deno en `_integracion_deno`.
 
 Prueba aislada de recepción (función `recepcion-prueba-pago`, NO desplegada; sin BD, solo metadatos): ver PRUEBA_RECEPCION.md. Dominio definitivo de respuestas: `pedidos.recetariostra.cl`.
+
+Protección del modo prueba: mientras `modo<>real`, solo cotizaciones de `pago_gestion_cotizaciones_prueba` (lista explícita, nace vacía) pueden recibir confirmaciones; ver CHECKLIST_AUTORIZACION_PRUEBA.md. Marcar una cotización de prueba: `INSERT INTO pago_gestion_cotizaciones_prueba(cotizacion_id, nota) VALUES ('<id>','ensayo');`

@@ -38,14 +38,17 @@ export async function reset() {
 }
 
 let seq = 100;
-export async function mkCot({ inst = 'UDP', nombreInst, total = 100000, paciente = 'Scarlett Salas López', rut = '16072120-0', estado = 'Enviada al paciente' } = {}) {
+export async function mkCot({ inst = 'UDP', nombreInst, total = 100000, paciente = 'Scarlett Salas López', rut = '16072120-0', estado = 'Enviada al paciente', prueba = true } = {}) {
   const n = ++seq; const id = `00000000-0000-0000-0000-${String(n).padStart(12, '0')}`;
   const nombres = { UDP: 'UDP Santiago', UNAB: 'UNAB Santiago', UMAYOR: 'Universidad Mayor Santiago', UMAYORT: 'Universidad Mayor Temuco', HOSMIL: 'HOSMIL', ARMADA: 'Central Odontológica de la Armada', PDI: 'Policía de Investigaciones', UC: 'Pontificia UC' };
   await sh(`INSERT INTO cotizaciones(id,numero,institucion,institucion_codigo,estado,total,token,paciente,rut,paciente_email,paciente_direccion,paciente_whatsapp,doctor,items)
     VALUES ('${id}','C-${n}',${lit(nombreInst ?? nombres[inst])},'${inst}',${lit(estado)},${total},'tok${n}',${lit(paciente)},${lit(rut)},'pac${n}@correo.cl','Calle ${n}','9${String(n).padStart(8, '0')}','Dr. Pérez',
     '[{"codigo":"104.060","descripcion":"Implante Helix","cantidad":2,"descuento":0.15,"subtotal":${total}}]'::jsonb);`);
+  if (prueba) await marcarPrueba({ id });   // por defecto la cotizacion de ensayo es de PRUEBA (modo prueba); prueba:false => cotizacion REAL
   return { id, n, token: `tok${n}` };
 }
+export const marcarPrueba = (c) => sh(`INSERT INTO pago_gestion_cotizaciones_prueba(cotizacion_id, nota) VALUES ('${c.id}','ensayo local') ON CONFLICT DO NOTHING`);
+export const desmarcarPrueba = (c) => sh(`DELETE FROM pago_gestion_cotizaciones_prueba WHERE cotizacion_id='${c.id}'`);
 export const pagar = async (c, monto, tag = 'a') => one(`SET ROLE anon; SELECT registrar_pago_publico('${c.token}','pagos/${c.n}-${tag}.pdf',${monto},'h${c.n}${tag}');`);
 export const gestion = async (c) => JSON.parse(await one(`SELECT coalesce((SELECT to_jsonb(g) FROM pago_gestiones g WHERE cotizacion_id='${c.id}'),'null'::jsonb);`));
 export const estadoCot = (c) => one(`SELECT estado FROM cotizaciones WHERE id='${c.id}'`);
@@ -100,11 +103,11 @@ export const CS = 'm.cl.customerservicechile@straumann.com', FIN = 'cobranza.cl@
 /** Crea un correo entrante firmado. `cuerpos` es el "almacen" que simula la API de lectura de Resend. */
 export function fabricaEntrantes(cuerpos) {
   let k = 0;
-  return function entrante({ from, token, to, cc = [], text = '', html = null, authentication = AUTH_OK, messageId, svixId, sinCuerpo = false, firmaMala = false, tipo = 'email.received' }) {
+  return function entrante({ from, token, to, cc = [], receivedFor = [], text = '', html = null, authentication = AUTH_OK, messageId, svixId, sinCuerpo = false, firmaMala = false, tipo = 'email.received' }) {
     k++;
     const emailId = 'em_' + String(k).padStart(8, '0') + randomUUID().slice(0, 4).replace(/-/g, '');
     const mid = messageId ?? `<msg-${k}-${randomUUID()}@straumann.com>`;
-    const body = JSON.stringify({ type: tipo, created_at: new Date().toISOString(), data: { email_id: emailId, from, to: to ?? [`reply+${token}@${DOMINIO}`], cc, bcc: [], received_for: [], message_id: mid, subject: 'Re: algo' } });
+    const body = JSON.stringify({ type: tipo, created_at: new Date().toISOString(), data: { email_id: emailId, from, to: to ?? [`reply+${token}@${DOMINIO}`], cc, bcc: [], received_for: receivedFor, message_id: mid, subject: 'Re: algo' } });
     if (!sinCuerpo) cuerpos.set(emailId, { text, html, headers: { 'message-id': mid }, authentication });
     const id = svixId ?? `msg_${randomUUID().replace(/-/g, '')}`, ts = String(Math.floor(Date.now() / 1000));
     const key = Buffer.from(WEBHOOK_SECRET.replace('whsec_', ''), 'base64');

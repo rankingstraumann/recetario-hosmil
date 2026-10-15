@@ -164,6 +164,8 @@ chk "modo vuelve a prueba" "prueba" "$(S "select valor from pago_gestion_config 
 
 echo "update pago_gestion_config set valor='true' where clave='confirmaciones_activo'" | Q >/dev/null
 echo "--- T10 confirmaciones (B3)"
+# Ensayo "etapa 2": modo=prueba, y las cotizaciones usadas estan en la lista EXPLICITA de prueba (si no, la proteccion las bloquearia: ver T17)
+echo "insert into pago_gestion_cotizaciones_prueba(cotizacion_id, nota) select id, 'tests.sh' from cotizaciones where numero in ('P1','P2','P3','P4')" | Q >/dev/null
 G1=$(G P1 "g.id"); C1=$(S "select id from cotizaciones where numero='P1'")
 chk "T10a Finanzas primero → Pago validado" "pago_validado" "$(S "select pago_gestion_registrar_confirmacion('$G1','finanzas','in:f1','', 'cobranza.cl@straumann.com',true)")"
 chk "T10a estado = Pago validado" "Pago validado" "$(S "select estado from cotizaciones where id='$C1'")"
@@ -310,5 +312,36 @@ echo "insert into cotizaciones(id,numero,institucion_codigo,estado,total,token) 
 chk "F3 DELETE físico de cotización SIN gestión => permitido" "0" "$(echo "delete from cotizaciones where numero='SINGEST'; select count(*) from cotizaciones where numero='SINGEST';" | Q 2>&1 | tail -1)"
 chk "F4 borrado LÓGICO (deleted_at) con gestión => permitido y conserva SAP" "1234567890" "$(S "update cotizaciones set deleted_at=now() where numero='P1'; select sap_numero from pago_gestiones where cotizacion_id=(select id from cotizaciones where numero='P1')" | tail -1)"
 chk "F5 eventos sobreviven (sin FK): trazabilidad de SAP/Finanzas" "t" "$(S "select count(*)>0 from pago_gestion_eventos where tipo in ('respuesta_cs','respuesta_finanzas')")"
+
+echo "--- T18 PROTECCION DEL MODO PRUEBA (cotizaciones reales intactas mientras modo<>real)"
+echo "insert into cotizaciones(id,numero,institucion_codigo,estado,total,token) values ('00000000-0000-0000-0000-0000000001b1','PR1','UDP','Pago informado',100000,'tokPR1'),('00000000-0000-0000-0000-0000000001b2','PT1','UDP','Pago informado',100000,'tokPT1')" | Q >/dev/null
+echo "insert into pago_gestiones(cotizacion_id,estado_envio) select id,'aceptado' from cotizaciones where numero in ('PR1','PT1'); insert into pago_gestion_cotizaciones_prueba(cotizacion_id,nota) select id,'tests.sh T18' from cotizaciones where numero='PT1'" | Q >/dev/null
+echo "update pago_gestion_config set valor='prueba' where clave='modo'; update pago_gestion_config set valor='true' where clave='confirmaciones_activo'" | Q >/dev/null
+GR=$(G PR1 "g.id"); GT=$(G PT1 "g.id"); CR=$(S "select id from cotizaciones where numero='PR1'")
+HUE(){ S "select md5(coalesce((select to_jsonb(c)::text from cotizaciones c where id='$CR'),'')||coalesce((select to_jsonb(g)::text from pago_gestiones g where id='$GR'),'')||(select count(*)::text from pago_gestion_eventos where gestion_id='$GR'))"; }
+H0=$(HUE)
+chk "P1 real+modo prueba: SAP válido de CS autorizado => bloqueado" "bloqueado_modo_prueba" "$(S "select pago_gestion_registrar_confirmacion('$GR','sap','p1','1234567890','m.cl.customerservicechile@straumann.com',true)")"
+chk "P2 real+modo prueba: Finanzas autorizada => bloqueado" "bloqueado_modo_prueba" "$(S "select pago_gestion_registrar_confirmacion('$GR','finanzas','p2','','cobranza.cl@straumann.com',true)")"
+chk "P3 real+modo prueba: remitente NO autorizado => bloqueado (ni siquiera evento)" "bloqueado_modo_prueba" "$(S "select pago_gestion_registrar_confirmacion('$GR','sap','p3','1234567890','intruso@gmail.com',false)")"
+chk "P4 real+modo prueba: respuesta ambigua => bloqueado" "bloqueado_modo_prueba" "$(S "select pago_gestion_registrar_ambigua('$GR','p4','m.cl.customerservicechile@straumann.com','m','t')")"
+chk "P5 trigger: UPDATE directo de SAP sobre gestión real => rechazado" "1" "$(echo "update pago_gestiones set sap_numero='1234567890' where id='$GR'" | Q 2>&1 | grep -c 'modo_prueba')"
+chk "P6 trigger: UPDATE directo de validación financiera => rechazado" "1" "$(echo "update pago_gestiones set fin_confirmado_en=now() where id='$GR'" | Q 2>&1 | grep -c 'modo_prueba')"
+chk "P7 cotización real, gestión y eventos: huella IDÉNTICA" "$H0" "$(HUE)"
+chk "P8 estado de la cotización real intacto" "Pago informado" "$(S "select estado from cotizaciones where id='$CR'")"
+chk "P9 cotización de PRUEBA sí procesa (modo prueba)" "registrado" "$(S "select pago_gestion_registrar_confirmacion('$GT','sap','p9','1234567890','m.cl.customerservicechile@straumann.com',true)")"
+chk "P10 y completa el flujo hasta Pedido ingresado" "pedido_ingresado" "$(S "select pago_gestion_registrar_confirmacion('$GT','finanzas','p10','','cobranza.cl@straumann.com',true)")"
+for V in "" "Real" "REAL" " real" "real " "true" "produccion"; do
+  echo "update pago_gestion_config set valor='$V' where clave='modo'" | Q >/dev/null
+  chk "P11 fail-closed modo='$V' => bloqueado" "bloqueado_modo_prueba" "$(S "select pago_gestion_registrar_confirmacion('$GR','sap','p11','1234567890','m.cl.customerservicechile@straumann.com',true)")"
+done
+echo "delete from pago_gestion_config where clave='modo'" | Q >/dev/null
+chk "P11 fila 'modo' AUSENTE => bloqueado" "bloqueado_modo_prueba" "$(S "select pago_gestion_registrar_confirmacion('$GR','sap','p11b','1234567890','m.cl.customerservicechile@straumann.com',true)")"
+chk "P11 huella real sigue idéntica tras todos los modos no reales" "$H0" "$(HUE)"
+echo "insert into pago_gestion_config(clave,valor) values ('modo','real')" | Q >/dev/null
+chk "P12 comportamiento productivo (modo EXACTAMENTE real): la cotización real procesa" "registrado" "$(S "select pago_gestion_registrar_confirmacion('$GR','sap','p12','1234567890','m.cl.customerservicechile@straumann.com',true)")"
+chk "P12 y completa el flujo" "pedido_ingresado" "$(S "select pago_gestion_registrar_confirmacion('$GR','finanzas','p12b','','cobranza.cl@straumann.com',true)")"
+echo "update pago_gestion_config set valor='prueba' where clave='modo'" | Q >/dev/null
+chk "P13 lista de prueba y funciones nuevas: anon/authenticated sin acceso" "6" "$(( $(deny x "SET ROLE anon; SELECT * FROM pago_gestion_cotizaciones_prueba;") + $(deny x "SET ROLE authenticated; SELECT * FROM pago_gestion_cotizaciones_prueba;") + $(deny x "SET ROLE anon; SELECT pago_gestion_puede_modificar('$CR');") + $(deny x "SET ROLE authenticated; SELECT pago_gestion_modo_real();") + $(deny x "SET ROLE anon; SELECT pago_gestion_exigir_modificable('$CR');") + $(deny x "SET ROLE authenticated; INSERT INTO pago_gestion_cotizaciones_prueba(cotizacion_id) VALUES ('$CR');") ))"
+echo "update pago_gestion_config set valor='false' where clave='confirmaciones_activo'" | Q >/dev/null
 
 echo; echo "RESULTADO: PASS=$PASS FAIL=$FAIL"

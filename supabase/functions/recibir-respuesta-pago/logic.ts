@@ -66,6 +66,9 @@ export async function handle(e: Entrada, deps: Deps): Promise<Resultado> {
   const g = Array.isArray(rs.data) ? rs.data[0] : rs.data;
   if (!g) { log({ ev: 'token_desconocido' }); return ok('token_desconocido'); }
   const gid = String(g.gestion_id).slice(0, 8);
+  // Modo prueba: la BD marca modificable=false para gestiones de cotizaciones REALES (la BD ademas lo vuelve a exigir en cada funcion y trigger).
+  // Estricto (=== false): sin leer el cuerpo, sin remitente, sin ninguna escritura.
+  if (g.modificable === false) { log({ ev: 'bloqueado_modo_prueba', gid }); return ok('bloqueado_modo_prueba'); }
   if (!g.recibe) { log({ ev: 'gestion_no_enviada', gid, motivo: String(g.estado_envio) }); return ok('gestion_no_enviada'); }
 
   // 4) Remitente (lista autorizada) -- antes de leer el cuerpo

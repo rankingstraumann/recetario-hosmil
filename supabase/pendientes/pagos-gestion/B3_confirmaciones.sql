@@ -12,6 +12,8 @@ BEGIN
   SELECT * INTO g FROM public.pago_gestiones WHERE id = p_gestion_id FOR UPDATE;
   IF NOT FOUND THEN RETURN 'gestion_inexistente'; END IF;
   IF g.estado_envio = 'omitido_historico' THEN RETURN 'ignorado_historico'; END IF;
+  -- PROTECCION DEL MODO PRUEBA: con modo<>real solo se tocan gestiones de cotizaciones de PRUEBA. Antes de CUALQUIER escritura (ni siquiera eventos).
+  IF NOT public.pago_gestion_puede_modificar(g.cotizacion_id) THEN RETURN 'bloqueado_modo_prueba'; END IF;
   -- IDENTIDAD Y AUTORIZACIÓN: antes de registrar CUALQUIER cosa (SAP o validación financiera)
   v_rem := lower(btrim(coalesce(p_remitente,'')));
   v_rol := (SELECT a.rol FROM public.pago_remitentes_autorizados a WHERE a.activo AND a.email = v_rem);
@@ -58,12 +60,14 @@ BEGIN
   SELECT * INTO g FROM public.pago_gestiones WHERE id = p_gestion_id;
   SELECT id, estado INTO c FROM public.cotizaciones WHERE id = g.cotizacion_id FOR UPDATE;
   IF g.fin_confirmado_en IS NOT NULL AND g.sap_numero IS NOT NULL AND c.estado IN ('Pago informado','Pago validado') THEN
+    PERFORM public.pago_gestion_exigir_modificable(c.id);   -- segunda barrera, justo antes de tocar la cotizacion
     UPDATE public.cotizaciones SET estado='Pedido ingresado al sistema',
        historial = historial || jsonb_build_object('estado','Pedido ingresado al sistema','fecha',now(),'origen','gestion_interna')
     WHERE id = c.id;
     UPDATE public.pago_gestiones SET pedido_aplicado_en=now(), updated_at=now() WHERE id=g.id AND pedido_aplicado_en IS NULL;
     RETURN 'pedido_ingresado';
   ELSIF p_tipo='finanzas' AND c.estado = 'Pago informado' THEN
+    PERFORM public.pago_gestion_exigir_modificable(c.id);
     UPDATE public.cotizaciones SET estado='Pago validado',
        historial = historial || jsonb_build_object('estado','Pago validado','fecha',now(),'origen','gestion_interna') WHERE id = c.id;
     RETURN 'pago_validado';
