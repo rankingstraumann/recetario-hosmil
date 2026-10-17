@@ -38,3 +38,7 @@ Columna final «N° Pedido SAP» + botón copiar (📋). Carga `pago_gestiones.s
 
 ## Demostración
 Ver `DEMO_FLUJO_SALIDA.txt` (script `_integracion_deno/demo_flujo.mjs`): «Pago informado» → correo (Para CS+Cobranza, CC Daniel + ejecutiva de la institución) → CS/Finanzas en ambos órdenes → «Pedido ingresado al sistema»; más caso de respuestas inválidas sin cambios.
+
+
+## Actualización 2026-10-15 (noche) — Fase 0 cerrada
+Prueba real con Resend: `GET /emails/receiving/{id}` → HTTP 200 y `authentication {spf: pass, dkim: pass, dmarc: pass}` para un remitente corporativo de Straumann; la regla del receptor (`dmarc=pass`) lo da por VERIFICADO. Pendiente: remitentes reales de CS/Finanzas, Reply-To en «Responder/Responder a todos», tolerancia/reintentos del webhook (ver PROCEDIMIENTO_PRUEBA_WEBHOOK.md).

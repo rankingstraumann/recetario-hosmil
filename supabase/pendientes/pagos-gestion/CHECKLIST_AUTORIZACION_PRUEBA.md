@@ -3,15 +3,16 @@
 Estado al 2026-10-15. Marcar cada ítem antes de dar la autorización de despliegue.
 
 ## A. Condición de partida (bloqueante)
-- [ ] `authentication` real de un correo de Straumann consultado con `consultar_recepcion.ps1` y compartido (spf/dkim/dmarc). Esperado: `dmarc=pass`.
-- [ ] La API key usada puede leer correos recibidos (el script no dio HTTP 401/403).
-- [ ] Si `dmarc` ≠ `pass`: se detiene y se decide la regla con evidencia (no se relaja por defecto).
+- [x] `authentication` real de un correo de Straumann consultado con `consultar_recepcion.ps1`: spf/dkim/dmarc = pass (2026-10-15, un remitente corporativo).
+- [x] La API key usada (Full access, creada para la prueba) lee correos recibidos: HTTP 200. Pendiente decidir qué clave usará producción (ver PROCEDIMIENTO_PRUEBA_WEBHOOK.md, «Endurecimiento»).
+- [x] `dmarc=pass` para el remitente probado. Si otro remitente real (CS/Finanzas) diera otro valor: se detiene y se decide la regla con evidencia (no se relaja por defecto).
 
 ## B. Qué se desplegaría (solo si A está completo y Daniel lo autoriza por escrito)
+- [ ] Procedimiento PROCEDIMIENTO_PRUEBA_WEBHOOK.md leído y aceptado por Daniel.
 - [ ] Solo `recepcion-prueba-pago` (sin JWT; 3 archivos propios; sin BD, sin service role, sin `npm:`; ver pruebas P1–P9, I2 y paridad).
 - [ ] NO se despliega `recibir-respuesta-pago` ni `enviar-gestion-pago`; NO se aplican B1–B4.
 - [ ] Un único webhook de Resend, evento `email.received`, apuntando a la función de prueba. (Los webhooks de Resend podrían ser de cuenta completa, no por dominio: no está documentado. La función ignora todo lo que no vaya a `prueba-*@` / `reply+<token>@pedidos…`.)
-- [ ] Secretos cargados por Daniel (`RESEND_WEBHOOK_SECRET`, `RESEND_API_KEY`), nunca por chat.
+- [ ] Secretos de la prueba cargados por Daniel con nombres PROPIOS (`PRUEBA_RESEND_WEBHOOK_SECRET`, `PRUEBA_RESEND_API_KEY`, opcional `PRUEBA_DOMINIO`), nunca por chat. NO usar `RESEND_API_KEY`: es la clave de envío de producción y se sobrescribiría.
 - [ ] Plan de Resend con cuota: cada correo recibido cuenta como uno (Free: 100/día, compartidos con cotizaciones y recordatorios). La prueba usa < 10.
 - [ ] Ventana de prueba acordada (hora de inicio y fin) y responsable de borrar webhook, función y secretos al terminar.
 
@@ -45,3 +46,18 @@ Nota: un correo = un rol (clave primaria por `email`). Un ensayo completo SAP+Fi
 - [ ] Borrar webhook, función y secretos de prueba.
 - [ ] Anotar resultados (tolerancia de firma, reintentos, valores de `authentication` por remitente) y ajustar el receptor si hace falta.
 - [ ] Recién entonces: respaldo + restauración verificados → autorización explícita de B1 → siguiente fase.
+
+## F. Checklist final de despliegue — aislamiento de secretos y cotizaciones existentes (para revisión; nada ejecutado)
+**Secretos**
+- [ ] Antes de cargar nada: `supabase secrets list` (solo nombres/hashes) guardado como línea base; `RESEND_API_KEY` presente y SIN cambios de hash al final.
+- [ ] La función de prueba lee únicamente `PRUEBA_RESEND_WEBHOOK_SECRET`, `PRUEBA_RESEND_API_KEY`, `PRUEBA_DOMINIO` (test P10 + revisión de `index.ts`); ninguna referencia a `RESEND_API_KEY`, `SUPABASE_*` ni `SERVICE_ROLE`.
+- [ ] Secretos cargados por panel de Supabase o `--env-file` fuera del repo; nunca en chat, repo ni logs.
+- [ ] Clave Full access de la prueba: se elimina en Resend al terminar; el hash de `RESEND_API_KEY` no cambió.
+- [ ] Receptor productivo: propuesta `RESEND_API_KEY_RECEPCION` documentada (procedimiento §10); sin implementar.
+**Cotizaciones existentes**
+- [ ] La función de prueba no tiene cliente de BD (test estático I2); el webhook de prueba no llega a `recibir-respuesta-pago`.
+- [ ] B1–B4 NO aplicadas: no existen tablas ni funciones de gestión de pago en producción.
+- [ ] Función `enviar-cotizacion` y recordatorios sin redeploy ni cambios; RPC públicas de pacientes y comprobantes sin cambios.
+- [ ] Antes y después: conteo y huella (`count(*)`, `max(updated_at)`) de `cotizaciones` iguales (solo lectura).
+- [ ] Respaldo + restauración de Supabase verificados antes de cualquier B1.
+- [ ] Para fases con BD: `modo` distinto de `real`, `envio_activo=false`, `confirmaciones_activo=false`, lista de prueba vacía salvo cotizaciones de PRUEBA; `auditoria_aislamiento.sql` sin ALERTA.

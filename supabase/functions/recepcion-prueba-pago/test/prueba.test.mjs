@@ -78,3 +78,11 @@ test('P9 email_id raro no se usa en la URL de lectura', async () => {
   const lect = []; const r = await handlePrueba(firmar(evento({ email_id: '../../x?y=1' })), mk({}, [], lect));
   assert.equal(r.body.resumen.lectura, 'email_id_invalido'); assert.equal(lect.length, 0);
 });
+
+test('P10 index.ts usa SOLO secretos PRUEBA_* (jamas RESEND_API_KEY / RESEND_WEBHOOK_SECRET / GESTION_PAGOS_*): no puede pisar ni leer los de produccion', async () => {
+  const { readFileSync } = await import('node:fs');
+  const src = readFileSync(new URL('../index.ts', import.meta.url), 'utf8').replace(/\/\/.*$/gm, '');
+  const nombres = [...src.matchAll(/Deno\.env\.get\('([A-Z0-9_]+)'\)/g)].map((m) => m[1]).sort();
+  assert.deepEqual(nombres, ['PRUEBA_DOMINIO', 'PRUEBA_RESEND_API_KEY', 'PRUEBA_RESEND_WEBHOOK_SECRET']);
+  assert.ok(!/SUPABASE_|SERVICE_ROLE/.test(src));
+});
