@@ -42,3 +42,18 @@ Ver `DEMO_FLUJO_SALIDA.txt` (script `_integracion_deno/demo_flujo.mjs`): «Pago 
 
 ## Actualización 2026-10-15 (noche) — Fase 0 cerrada
 Prueba real con Resend: `GET /emails/receiving/{id}` → HTTP 200 y `authentication {spf: pass, dkim: pass, dmarc: pass}` para un remitente corporativo de Straumann; la regla del receptor (`dmarc=pass`) lo da por VERIFICADO. Pendiente: remitentes reales de CS/Finanzas, Reply-To en «Responder/Responder a todos», tolerancia/reintentos del webhook (ver PROCEDIMIENTO_PRUEBA_WEBHOOK.md).
+
+## Actualización 2026-10-17 (tarde) — pruebas de recepción cerradas; pendientes antes de B1
+Hecho: recepción real en `pedidos.recetariostra.cl`, firma Svix válida, `authentication` SPF/DKIM/DMARC `pass` y Reply-To respetado por Outlook (Responder y Responder a todos); infraestructura temporal eliminada y auditada (ver PROCEDIMIENTO_PRUEBA_WEBHOOK.md §C). Producción sin cambios de código; B1–B4 sin aplicar.
+Pendientes antes de aplicar B1 (cada uno requiere decisión o autorización expresa de Daniel):
+1. **Respaldo de Supabase de producción y prueba de restauración** (prerrequisito de B1; sigue pendiente).
+2. **Clave de lectura del receptor productivo:** decidir `RESEND_API_KEY_RECEPCION` (propuesta en §10 del procedimiento) y comprobar si una clave de solo envío puede leer correos recibidos (en la prueba solo se usó Full access).
+3. **Remitentes reales de Customer Service y Finanzas:** validar `authentication` y Reply-To con sus buzones (incluidos compartidos o listas) y definir la lista de remitentes individuales autorizados con su rol. Un correo = un rol; el ensayo SAP+Finanzas necesita dos direcciones.
+4. **Reglas de contenido sin definir:** frases de confirmación de Finanzas y formato del N.º de pedido SAP.
+5. **Ejecutivo de UC** (copia de la institución): sin definir.
+6. **Disparador del emisor** (`enviar-gestion-pago`): sin definir (tarea programada o llamada interna).
+7. **Resend en producción:** webhook definitivo del receptor; tolerancia de firma y reintentos de Resend no medidos; cobertura por cuenta o por dominio no documentada; cuota del plan (Free: 100/día, 3.000/mes).
+8. **Orden de despliegue (cuando se autorice):** B1 → B3 → B4 con RUNBOOK_B1.md y ROLLBACK.sql; luego funciones, secretos y webhook; arranque con `modo=prueba`, `envio_activo=false` y `confirmaciones_activo=false`.
+9. **Vista del N.º de pedido SAP en el Admin:** pendiente de definir y autorizar.
+10. **Procedimientos:** usar `ezbr_sha256` y `updated_at` (no el número de versión) para comprobar que una función no cambió.
+

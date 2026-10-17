@@ -1,4 +1,4 @@
-# Prueba aislada de recepción — `pedidos.recetariostra.cl` (Fase 0 y pruebas con la función aislada EJECUTADAS el 2026-10-17; infraestructura temporal pendiente de cierre — ver PROCEDIMIENTO_PRUEBA_WEBHOOK.md §C)
+# Prueba aislada de recepción — `pedidos.recetariostra.cl` (Fase 0 y pruebas con la función aislada EJECUTADAS el 2026-10-17; infraestructura temporal CERRADA y auditada — ver PROCEDIMIENTO_PRUEBA_WEBHOOK.md §C)
 
 Objetivo: comprobar con Resend real, **solo con correos ficticios**, (1) que se reciben mensajes en el subdominio, (2) qué devuelve `authentication` para remitentes Straumann, (3) que el webhook llega y su firma valida. No toca BD, estados, pagos, cotizaciones ni correos existentes.
 
@@ -18,14 +18,15 @@ Objetivo: comprobar con Resend real, **solo con correos ficticios**, (1) que se 
 | POST sin firma | HTTP 401 `firma_invalida`. |
 | Webhook real de Resend (evento `email.received` ficticio) | HTTP 200; `firma_valida=true`; `hilo_token_en_destino=true`; `lectura=ok`; `auth_spf/dkim/dmarc=pass`; `veredicto_regla_actual=verificado`. |
 | Reply-To real desde Outlook, **Responder** (prueba «Reply-To 001») | La respuesta llegó a `reply+<token ficticio>@pedidos.recetariostra.cl`; HTTP 200; `firma_valida=true`; `hilo_token_en_destino=true`; `lectura=ok`; SPF/DKIM/DMARC `pass`; `skew_s=0`; cabeceras `In-Reply-To` y `References` presentes. |
+| Reply-To real desde Outlook, **Responder a todos** (2026-10-17) | Outlook respetó Reply-To; el token del hilo fue reconocido (`hilo_token_en_destino=true`); firma válida; SPF/DKIM/DMARC `pass`. |
 
-Conclusión: con el Outlook corporativo probado, **Responder respeta Reply-To** y el token llega íntegro. La firma Svix valida con desfase 0 s y la lectura con la clave de prueba funciona.
+Conclusión: con el Outlook corporativo probado, **Responder y Responder a todos respetan Reply-To** y el token llega íntegro y es reconocido. La firma Svix valida con desfase 0 s y la lectura con la clave de prueba funciona.
 
 **Pendiente (no probado):**
-- **Responder a todos** en Outlook (con un segundo destinatario).
 - Remitentes reales de Customer Service y Finanzas (valor de `authentication`, Reply-To en Responder/Responder a todos, buzones compartidos o listas de distribución).
 - Otros clientes de correo (web, móvil, Gmail).
-- Comparación byte a byte (SHA-256) del código desplegado con el local: no se pudo hacer desde el entorno de Claude; sin efecto práctico una vez eliminada la función.
+- Tolerancia de firma y política de reintentos de Resend: solo se midió desfase 0 s; el límite de 300 s es el del verificador, no una cifra de Resend.
+- Comparación byte a byte (SHA-256) del código desplegado con el local: no se pudo hacer; sin efecto práctico tras eliminar la función.
 
 ## Fase 0 — Sin despliegue ni webhook (Daniel, 10 min)
 1. Resend → Domains → `pedidos.recetariostra.cl`: confirmar **Receiving: Enabled** (MX verificado).

@@ -1,5 +1,5 @@
 # Procedimiento — prueba aislada del webhook `recepcion-prueba-pago`
-**Estado (2026-10-17): pasos 0–7 de §A EJECUTADOS (resultados en PRUEBA_RECEPCION.md); infraestructura temporal ACTIVA, pendiente del cierre de §C.** Nada se despliega ni se crea hasta que Daniel lo autorice por escrito. Fase 0 (recepción + `authentication`) ya está cerrada (ver PRUEBA_RECEPCION.md).
+**Estado (2026-10-17, tarde): pasos 0–8 de §A EJECUTADOS y CERRADOS (resultados en PRUEBA_RECEPCION.md; auditoría final en §C). Infraestructura temporal ELIMINADA.** Nada se despliega ni se crea hasta que Daniel lo autorice por escrito. Fase 0 (recepción + `authentication`) ya está cerrada (ver PRUEBA_RECEPCION.md).
 Proyecto Supabase: `gzimllusbxjorbsbtsse` · URL de la función: `https://gzimllusbxjorbsbtsse.supabase.co/functions/v1/recepcion-prueba-pago` · Dominio de la prueba: `pedidos.recetariostra.cl`.
 
 ## A. Secuencia operativa definitiva (2026-10-17) — prevalece sobre §2–§7 si hay diferencias
@@ -48,6 +48,17 @@ Reversión: ver §7 y §9; no hay migraciones ni DNS que deshacer. Riesgos pendi
 | 8 | Daniel | Confirmar que el siguiente cron de recordatorios (día hábil) corre sin error y que `enviar-cotizacion` sigue enviando. | Sin errores en logs. |
 
 **Condiciones:** si algún paso devuelve algo inesperado (por ejemplo, la función sigue respondiendo tras borrarla, o cambia el digest de `RESEND_API_KEY`), detenerse e informar antes de seguir. Cerrar antes del lunes 19-oct 13:00 UTC (cron de recordatorios). B1–B4 siguen sin aplicarse; el respaldo y la restauración de Supabase siguen pendientes.
+
+### Cierre ejecutado y auditoría final de solo lectura (2026-10-17, tarde)
+Daniel eliminó el webhook temporal, la función `recepcion-prueba-pago`, los secretos `PRUEBA_RESEND_API_KEY` y `PRUEBA_RESEND_WEBHOOK_SECRET` y la clave Full access de la prueba. Responder a todos quedó probado (Outlook respeta Reply-To; token reconocido).
+Auditoría (Supabase, solo lectura):
+- Edge Functions: permanecen exactamente las 7 originales, todas ACTIVE; `ezbr_sha256` y `updated_at` IDÉNTICOS a la línea base de §B. `recepcion-prueba-pago`, `recibir-respuesta-pago` y `enviar-gestion-pago` NO existen.
+- **Diferencia observada:** el número de versión de las 7 funciones subió de forma uniforme (+5) sin cambio de hash ni de `updated_at`. Interpretación (no verificable desde aquí): la plataforma incrementa el contador de versión de todas las funciones cuando cambian los secretos del proyecto (la prueba hizo 3 cargas y al menos 1 borrado). Consecuencia para futuros procedimientos: **no usar el número de versión como criterio de «sin cambios»; usar `ezbr_sha256` y `updated_at`.**
+- Base de datos: no existen tablas `pago_gestion*`/`pago_remitentes*` ni funciones SQL `pago_gestion*` (B1–B4 sin aplicar).
+- Cron de recordatorios: 2 trabajos activos (lun–vie 13:00 y 14:00 UTC), última ejecución 2026-10-16 `succeeded`.
+- Logs (ventana de 24 h): solo hay invocaciones de la función de prueba (1 GET 405, 1 POST 401, 4 POST 200) y ningún error ni nivel de alerta; no hubo invocaciones de las funciones de cotizaciones y recordatorios en esa ventana, por lo que «sin errores» no equivale a «verificadas en uso». El siguiente cron hábil (lun 19-oct 13:00 UTC) es la comprobación pendiente.
+- Secretos: no verificables desde el entorno de Claude (sin lista ni huella). Daniel debe comparar el digest de `RESEND_API_KEY` con el guardado antes de la prueba.
+
 
 ## 0. Reglas de la prueba
 - Solo correos FICTICIOS a `prueba-NNN@pedidos…` o `reply+<32 hex ficticios>@pedidos…`. Nada con datos de pacientes.
