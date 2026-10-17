@@ -1,4 +1,4 @@
-# Prueba aislada de recepción — `pedidos.recetariostra.cl` (NADA de esto está ejecutado ni desplegado)
+# Prueba aislada de recepción — `pedidos.recetariostra.cl` (Fase 0 y pruebas con la función aislada EJECUTADAS el 2026-10-17; infraestructura temporal pendiente de cierre — ver PROCEDIMIENTO_PRUEBA_WEBHOOK.md §C)
 
 Objetivo: comprobar con Resend real, **solo con correos ficticios**, (1) que se reciben mensajes en el subdominio, (2) qué devuelve `authentication` para remitentes Straumann, (3) que el webhook llega y su firma valida. No toca BD, estados, pagos, cotizaciones ni correos existentes.
 
@@ -9,6 +9,23 @@ Objetivo: comprobar con Resend real, **solo con correos ficticios**, (1) que se 
 - Esa consulta se hizo con una clave de permiso *Full access* creada para la prueba (no consta en la documentación de Resend si una clave de solo envío puede leer correos recibidos; ver «Endurecimiento» en PROCEDIMIENTO_PRUEBA_WEBHOOK.md).
 - Alcance de la evidencia: UN remitente corporativo (el de Daniel). Pendiente de comprobar: remitentes reales de Customer Service y Finanzas (escenario C) y el caso «Responder / Responder a todos» con Reply-To (escenario B).
 - DMARC pass prueba el *dominio* (`straumann.com`), no a la persona: quien decide es la lista de remitentes individuales autorizados + rol.
+
+## Evidencia Fases 1–3 con la función aislada (2026-10-17) — sin datos personales ni credenciales
+| Prueba | Resultado |
+|---|---|
+| Despliegue de `recepcion-prueba-pago` (sin JWT) | v1 ACTIVE; las 7 funciones previas conservaron versión y hash. |
+| GET a la función | HTTP 405 `metodo_no_permitido`. |
+| POST sin firma | HTTP 401 `firma_invalida`. |
+| Webhook real de Resend (evento `email.received` ficticio) | HTTP 200; `firma_valida=true`; `hilo_token_en_destino=true`; `lectura=ok`; `auth_spf/dkim/dmarc=pass`; `veredicto_regla_actual=verificado`. |
+| Reply-To real desde Outlook, **Responder** (prueba «Reply-To 001») | La respuesta llegó a `reply+<token ficticio>@pedidos.recetariostra.cl`; HTTP 200; `firma_valida=true`; `hilo_token_en_destino=true`; `lectura=ok`; SPF/DKIM/DMARC `pass`; `skew_s=0`; cabeceras `In-Reply-To` y `References` presentes. |
+
+Conclusión: con el Outlook corporativo probado, **Responder respeta Reply-To** y el token llega íntegro. La firma Svix valida con desfase 0 s y la lectura con la clave de prueba funciona.
+
+**Pendiente (no probado):**
+- **Responder a todos** en Outlook (con un segundo destinatario).
+- Remitentes reales de Customer Service y Finanzas (valor de `authentication`, Reply-To en Responder/Responder a todos, buzones compartidos o listas de distribución).
+- Otros clientes de correo (web, móvil, Gmail).
+- Comparación byte a byte (SHA-256) del código desplegado con el local: no se pudo hacer desde el entorno de Claude; sin efecto práctico una vez eliminada la función.
 
 ## Fase 0 — Sin despliegue ni webhook (Daniel, 10 min)
 1. Resend → Domains → `pedidos.recetariostra.cl`: confirmar **Receiving: Enabled** (MX verificado).

@@ -1,5 +1,5 @@
 # Procedimiento — prueba aislada del webhook `recepcion-prueba-pago`
-**Estado: preparado, NO ejecutado. La secuencia definitiva está en §A.** Nada se despliega ni se crea hasta que Daniel lo autorice por escrito. Fase 0 (recepción + `authentication`) ya está cerrada (ver PRUEBA_RECEPCION.md).
+**Estado (2026-10-17): pasos 0–7 de §A EJECUTADOS (resultados en PRUEBA_RECEPCION.md); infraestructura temporal ACTIVA, pendiente del cierre de §C.** Nada se despliega ni se crea hasta que Daniel lo autorice por escrito. Fase 0 (recepción + `authentication`) ya está cerrada (ver PRUEBA_RECEPCION.md).
 Proyecto Supabase: `gzimllusbxjorbsbtsse` · URL de la función: `https://gzimllusbxjorbsbtsse.supabase.co/functions/v1/recepcion-prueba-pago` · Dominio de la prueba: `pedidos.recetariostra.cl`.
 
 ## A. Secuencia operativa definitiva (2026-10-17) — prevalece sobre §2–§7 si hay diferencias
@@ -29,6 +29,25 @@ Edge Functions desplegadas (7, todas ACTIVE; verify_jwt entre paréntesis): `env
 Cotización y recordatorios: `enviar-cotizacion`, `enviar-recordatorio-pago` y `procesar-recordatorios-pago` ACTIVE. El código de `enviar-cotizacion` y `enviar-recordatorio-pago` lee `RESEND_API_KEY` (además de `RESEND_FROM_EMAIL`, `RESEND_BCC_*`, `RECORDATORIOS_INTERNAL_SECRET`); `procesar-recordatorios-pago` no usa `RESEND_API_KEY` (usa sus propios secretos internos). Cron de recordatorios: dos trabajos activos, lunes a viernes 13:00 y 14:00 UTC, última ejecución 2026-10-16 en estado `succeeded`. Sin invocaciones de Edge Functions en las últimas 24 h.
 Secretos: el MCP de Supabase no permite listar secretos y este entorno no tiene el CLI ni token. La lista de nombres y su huella (`supabase secrets list`, que muestra un digest del valor y no el valor) debe obtenerla Daniel desde su equipo; no se intentó extraer ningún valor. **Limitación:** desde aquí NO hay huella verificable de `RESEND_API_KEY`. Verificaciones posibles sin exponerla: (a) el digest de `supabase secrets list` antes/después (Daniel); (b) que ningún comando use ese nombre (la prueba solo define `PRUEBA_*`; revisar el archivo `--env-file` antes de usarlo); (c) en Resend, la clave de producción sigue activa y con «último uso» posterior a la prueba; (d) tras el cierre, el cron del siguiente día hábil se ejecuta sin error. Recomendación: hacer la prueba un sábado o domingo y cerrarla antes del lunes 13:00 UTC.
 Reversión: ver §7 y §9; no hay migraciones ni DNS que deshacer. Riesgos pendientes: ver §9 y la sección F del checklist de autorización.
+
+## C. Estado de ejecución y cierre seguro de la infraestructura temporal (2026-10-17)
+**Hecho:** función desplegada (v1, sin JWT), GET 405, POST sin firma 401, secretos `PRUEBA_*` cargados, webhook real activo, prueba real con firma válida y lectura OK, prueba Reply-To 001 desde Outlook con **Responder** (OK). **Pendiente:** Responder a todos y remitentes reales de Customer Service y Finanzas. Si se necesita repetir pruebas después del cierre, hay que recrear función, webhook, secretos y clave (≈ 1 h de trabajo).
+
+**Infraestructura temporal a retirar (nada se elimina sin orden expresa de Daniel):** (1) webhook de Resend; (2) función `recepcion-prueba-pago`; (3) secretos `PRUEBA_RESEND_API_KEY`, `PRUEBA_RESEND_WEBHOOK_SECRET` (y `PRUEBA_DOMINIO` si se cargó); (4) clave Full access de Resend de la prueba.
+
+**Cierre mínimo, en orden (cada paso con su verificación):**
+| # | Quién | Acción | Verificación |
+|---|---|---|---|
+| 1 | Daniel | Desactivar el webhook en Resend y comprobar que ya no hay entregas nuevas. | Estado «disabled». |
+| 2 | Daniel | Eliminar el webhook. | La lista de webhooks queda vacía. |
+| 3 | Daniel | `supabase functions delete recepcion-prueba-pago --project-ref gzimllusbxjorbsbtsse` (o panel). | Un GET a la URL ya no responde 405. |
+| 4 | Daniel | `supabase secrets unset PRUEBA_RESEND_API_KEY PRUEBA_RESEND_WEBHOOK_SECRET PRUEBA_DOMINIO --project-ref gzimllusbxjorbsbtsse` (o panel). | `supabase secrets list`: sin `PRUEBA_*`; digest de `RESEND_API_KEY` igual al de antes. |
+| 5 | Daniel | Eliminar la clave Full access en Resend; borrar copias locales. | La clave ya no figura en API Keys. |
+| 6 | Claude (solo lectura, con orden) | Listar Edge Functions. | Las 7 originales con las mismas versiones y `ezbr_sha256` de §B; `recepcion-prueba-pago` ausente. |
+| 7 | Daniel | Limpieza local: correos de prueba en Outlook, correos recibidos en Resend (si el panel lo permite), historial de PowerShell sin claves (`Select-String -Path (Get-PSReadLineOption).HistorySavePath -Pattern 're_[A-Za-z0-9]{10}'`). | Sin coincidencias. |
+| 8 | Daniel | Confirmar que el siguiente cron de recordatorios (día hábil) corre sin error y que `enviar-cotizacion` sigue enviando. | Sin errores en logs. |
+
+**Condiciones:** si algún paso devuelve algo inesperado (por ejemplo, la función sigue respondiendo tras borrarla, o cambia el digest de `RESEND_API_KEY`), detenerse e informar antes de seguir. Cerrar antes del lunes 19-oct 13:00 UTC (cron de recordatorios). B1–B4 siguen sin aplicarse; el respaldo y la restauración de Supabase siguen pendientes.
 
 ## 0. Reglas de la prueba
 - Solo correos FICTICIOS a `prueba-NNN@pedidos…` o `reply+<32 hex ficticios>@pedidos…`. Nada con datos de pacientes.
