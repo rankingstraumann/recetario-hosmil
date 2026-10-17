@@ -1,6 +1,34 @@
 # Procedimiento — prueba aislada del webhook `recepcion-prueba-pago`
-**Estado: preparado, NO ejecutado.** Nada se despliega ni se crea hasta que Daniel lo autorice por escrito. Fase 0 (recepción + `authentication`) ya está cerrada (ver PRUEBA_RECEPCION.md).
+**Estado: preparado, NO ejecutado. La secuencia definitiva está en §A.** Nada se despliega ni se crea hasta que Daniel lo autorice por escrito. Fase 0 (recepción + `authentication`) ya está cerrada (ver PRUEBA_RECEPCION.md).
 Proyecto Supabase: `gzimllusbxjorbsbtsse` · URL de la función: `https://gzimllusbxjorbsbtsse.supabase.co/functions/v1/recepcion-prueba-pago` · Dominio de la prueba: `pedidos.recetariostra.cl`.
+
+## A. Secuencia operativa definitiva (2026-10-17) — prevalece sobre §2–§7 si hay diferencias
+Ajustes de Daniel: (1) la función se despliega y se prueba con secretos ANTES de crear el webhook; (2) un cambio en `cotizaciones` NO es evidencia de incidente (el Recetario sigue operando): la garantía es que la función no tiene acceso ni capacidad de escritura en la base.
+Nota: Resend entrega el secreto de firma al crear el webhook, así que antes de eso se usa un secreto PROVISORIO (generado por Daniel, `whsec_` + texto aleatorio, nunca en el repo ni en el chat) y se reemplaza por el real antes de activar el webhook.
+Cada paso espera confirmación expresa de Daniel.
+
+| # | Quién | Acción | Verificación |
+|---|---|---|---|
+| 0 | Daniel | Crear en Resend la clave Full access de la prueba. Generar el secreto provisorio. | Ninguno pasa por chat ni repo. |
+| 0b | Claude (solo lectura) | Línea base (ver §B). | Registrada. |
+| 1 | Claude, con autorización | Desplegar SOLO `recepcion-prueba-pago` con `--no-verify-jwt`. | GET → 405. `list_edge_functions`: las 7 funciones previas con la misma versión y el mismo `ezbr_sha256`. Código desplegado (`get_edge_function`, solo lectura) = local y sin `SUPABASE`, `createClient` ni `RESEND_API_KEY`. |
+| 2 | Daniel | Cargar `PRUEBA_RESEND_API_KEY` (real) y `PRUEBA_RESEND_WEBHOOK_SECRET` (provisorio) en el panel de Supabase. `PRUEBA_DOMINIO` opcional. | Nombres de secretos = línea base + los 2 nuevos. Ningún `secrets set` con `RESEND_API_KEY`. |
+| 3 | Daniel o Claude | Pruebas SIN webhook, con datos ficticios: firma ausente/mala → 401; firma válida (calculada localmente con el provisorio) + otro tipo de evento → 200 `evento_ignorado`; válida + destino ajeno → 200 `fuera_de_alcance`; válida + `prueba-xxx@` + `email_id` ficticio → lectura 404 o 401/403 (prueba la clave sin correo real). | Logs solo con enumerados/banderas. |
+| 4 | Daniel | Crear el webhook en Resend (solo `email.received`, URL de la función) y DESACTIVARLO de inmediato (`status: disabled`). Copiar el secreto de firma. No enviar correos. | Webhook figura desactivado. |
+| 5 | Daniel | Reemplazar `PRUEBA_RESEND_WEBHOOK_SECRET` por el real. Repetir firma mala (401) y firma válida con el secreto real. | Resultados esperados. |
+| 6 | Daniel | Activar el webhook (`status: enabled`). | Desde aquí pueden llegar eventos. |
+| 7 | Daniel | Correos de prueba, escenarios A–F (§5). | `firma_valida`, `lectura=ok`, `dmarc=pass`; el resto `fuera_de_alcance`. |
+| 8 | Daniel y Claude | Cierre (§7): desactivar webhook → borrar webhook → borrar función → `secrets unset PRUEBA_*` → eliminar la clave Full access. | Funciones y nombres de secretos = línea base; `ezbr_sha256` de las 7 funciones sin cambios. |
+
+**Garantía principal (sin depender de `cotizaciones`):** el código de la función no tiene cliente de base de datos y no lee `SUPABASE_*` ni `SERVICE_ROLE` (test estático I2 + P10); su única conexión externa es `api.resend.com`; el código desplegado se compara con el revisado (paso 1); B1–B4 no están aplicadas. Límite honesto: Supabase inyecta `SUPABASE_URL` y `SUPABASE_SERVICE_ROLE_KEY` en toda función, por lo que la garantía descansa en el código desplegado, no en la plataforma. El conteo o la fecha de `cotizaciones` se registran solo como dato informativo; NO son criterio de detención.
+
+**Detener (ir a §7 de inmediato):** 5xx repetidos de la función; cualquier log con cuerpo de correo, direcciones completas o datos personales; evento válido y en alcance desde origen inesperado; el código desplegado no coincide con el revisado o referencia la base de datos; cambia la versión o el `ezbr_sha256` de cualquier otra función; se ejecuta un `secrets set` con `RESEND_API_KEY`; cuota diaria de Resend > 50 %; un resultado inesperado sin explicación.
+
+## B. Línea base de solo lectura (paso 0b, 2026-10-17)
+Edge Functions desplegadas (7, todas ACTIVE; verify_jwt entre paréntesis): `enviar-cotizacion` v29 (sí), `enviar-recordatorio-pago` v24 (sí), `procesar-recordatorios-pago` v26 (sí), `cotizador-ia-v2` v18 (sí), `whatsapp-webhook` v16 (no), `prospect-import-preview` v6 (sí), `outbound-whatsapp-send` v1 (sí). Huella verificable: `ezbr_sha256` de `list_edge_functions` (la lista completa queda en el informe de la auditoría; comparar antes/después). `recepcion-prueba-pago`, `recibir-respuesta-pago` y `enviar-gestion-pago` NO están desplegadas.
+Cotización y recordatorios: `enviar-cotizacion`, `enviar-recordatorio-pago` y `procesar-recordatorios-pago` ACTIVE. El código de `enviar-cotizacion` y `enviar-recordatorio-pago` lee `RESEND_API_KEY` (además de `RESEND_FROM_EMAIL`, `RESEND_BCC_*`, `RECORDATORIOS_INTERNAL_SECRET`); `procesar-recordatorios-pago` no usa `RESEND_API_KEY` (usa sus propios secretos internos). Cron de recordatorios: dos trabajos activos, lunes a viernes 13:00 y 14:00 UTC, última ejecución 2026-10-16 en estado `succeeded`. Sin invocaciones de Edge Functions en las últimas 24 h.
+Secretos: el MCP de Supabase no permite listar secretos y este entorno no tiene el CLI ni token. La lista de nombres y su huella (`supabase secrets list`, que muestra un digest del valor y no el valor) debe obtenerla Daniel desde su equipo; no se intentó extraer ningún valor. **Limitación:** desde aquí NO hay huella verificable de `RESEND_API_KEY`. Verificaciones posibles sin exponerla: (a) el digest de `supabase secrets list` antes/después (Daniel); (b) que ningún comando use ese nombre (la prueba solo define `PRUEBA_*`; revisar el archivo `--env-file` antes de usarlo); (c) en Resend, la clave de producción sigue activa y con «último uso» posterior a la prueba; (d) tras el cierre, el cron del siguiente día hábil se ejecuta sin error. Recomendación: hacer la prueba un sábado o domingo y cerrarla antes del lunes 13:00 UTC.
+Reversión: ver §7 y §9; no hay migraciones ni DNS que deshacer. Riesgos pendientes: ver §9 y la sección F del checklist de autorización.
 
 ## 0. Reglas de la prueba
 - Solo correos FICTICIOS a `prueba-NNN@pedidos…` o `reply+<32 hex ficticios>@pedidos…`. Nada con datos de pacientes.

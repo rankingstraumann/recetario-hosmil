@@ -58,6 +58,6 @@ Nota: un correo = un rol (clave primaria por `email`). Un ensayo completo SAP+Fi
 - [ ] La función de prueba no tiene cliente de BD (test estático I2); el webhook de prueba no llega a `recibir-respuesta-pago`.
 - [ ] B1–B4 NO aplicadas: no existen tablas ni funciones de gestión de pago en producción.
 - [ ] Función `enviar-cotizacion` y recordatorios sin redeploy ni cambios; RPC públicas de pacientes y comprobantes sin cambios.
-- [ ] Antes y después: conteo y huella (`count(*)`, `max(updated_at)`) de `cotizaciones` iguales (solo lectura).
+- [ ] Indicador INFORMATIVO (no condición de detención): registrar antes y después `count(*)` y `max(updated_at)` de `cotizaciones` (solo lectura). El Recetario sigue operando y puede recibir operaciones legítimas durante la prueba; un cambio no es incidente por sí solo. La garantía principal es estructural: la función no tiene cliente de BD ni capacidad de escritura (código desplegado = revisado; ver procedimiento §A). Solo se investiga si un cambio puede atribuirse a la prueba.
 - [ ] Respaldo + restauración de Supabase verificados antes de cualquier B1.
 - [ ] Para fases con BD: `modo` distinto de `real`, `envio_activo=false`, `confirmaciones_activo=false`, lista de prueba vacía salvo cotizaciones de PRUEBA; `auditoria_aislamiento.sql` sin ALERTA.
