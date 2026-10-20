@@ -161,7 +161,7 @@ const SUPABASE_URL = 'https://gzimllusbxjorbsbtsse.supabase.co';
 const SUPABASE_ANON_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Imd6aW1sbHVzYnhqb3Jic2J0c3NlIiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODE5NDQ4NDcsImV4cCI6MjA5NzUyMDg0N30.DFq-_PY10hyr2QmMUXk-v8VW2LKYz3bAW37VCutwmzY';
 const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
-const ESTADOS = ['Borrador','Cotización generada','Enviada al paciente','Pendiente de pago','Pagado parcialmente','Pago informado','SAP registrado · pendiente de Finanzas','Pago validado','Pedido ingresado al sistema','En preparación logística','Despachado','Cerrado','Anulado'];
+const ESTADOS = ['Borrador','Cotización generada','Enviada al paciente','Pendiente de pago','Pagado parcialmente','Pago informado','Pedido retenido','SAP registrado · pendiente de Finanzas','Pago validado','Pedido ingresado al sistema','En preparación logística','Despachado','Cerrado','Anulado'];
 const ESTADO_COLOR = {
   'Borrador': '#f4f4f5;color:#3f3f46',
   'Cotización generada': '#eff6ff;color:#1d4ed8',
@@ -169,6 +169,7 @@ const ESTADO_COLOR = {
   'Pendiente de pago': '#fffbeb;color:#92400e',
   'Pagado parcialmente': '#fff7ed;color:#c2410c',
   'Pago informado': '#fef3c7;color:#92400e',
+  'Pedido retenido': '#ffedd5;color:#9a3412',
   'SAP registrado · pendiente de Finanzas': '#e0e7ff;color:#3730a3',
   'Pago validado': '#ecfdf5;color:#047857',
   'Pedido ingresado al sistema': '#d1fae5;color:#065f46',
@@ -199,7 +200,7 @@ function fechaPagoInformado(c) {
   }
   return c.created_at; // respaldo si no hay historial con ese estado
 }
-function esPagoInformadoPendiente(c) { return ['Pago informado','SAP registrado · pendiente de Finanzas'].includes(c.estado); }
+function esPagoInformadoPendiente(c) { return ['Pago informado','SAP registrado · pendiente de Finanzas','Pedido retenido'].includes(c.estado); }
 function esUrgente48h(c) {
   if (!esPagoInformadoPendiente(c)) return false;
   var f = fechaPagoInformado(c);
@@ -1506,9 +1507,9 @@ function generarListaCotizaciones() {
       const inst = institucionInfo(c.institucion);
       let estadoOpts = '';
       const estadosFila = ESTADOS.includes(c.estado) ? ESTADOS : [c.estado].concat(ESTADOS);
-      estadosFila.forEach(function (e) { estadoOpts += '<option value="' + esc(e) + '"' + (c.estado === e ? ' selected' : '') + '>' + esc(e) + '</option>'; });
+      estadosFila.forEach(function (e) { estadoOpts += '<option value="' + esc(e) + '"' + (c.estado === e ? ' selected' : '') + (e === 'Pedido retenido' && c.estado !== e ? ' disabled' : '') + '>' + esc(e) + '</option>'; });
 
-      const badgeUrgencia = esUrgente48h(c)
+      const badgeUrgencia = c.estado === 'Pedido retenido' ? '<div style="margin-top:3px;font-size:10px;color:#9a3412;font-weight:700;">RETENIDO · ver motivo en ficha</div>' : esUrgente48h(c)
         ? '<div style="margin-top:3px;"><span style="font-size:9px;font-weight:800;letter-spacing:.03em;background:#fee2e2;color:#991b1b;border-radius:5px;padding:2px 6px;">🔴 URGENTE +48 HRS</span></div>'
         : esPagoInformadoPendiente(c)
           ? '<div style="margin-top:3px;"><span style="font-size:9px;font-weight:800;letter-spacing:.03em;background:#fef3c7;color:#92400e;border-radius:5px;padding:2px 6px;">🟡 PAGO INFORMADO — PENDIENTE</span></div>'
@@ -1524,7 +1525,7 @@ function generarListaCotizaciones() {
         '<td>' + fechaCorta(c.fecha) + '</td>' +
         '<td style="text-align:right;font-weight:600;">' + fmt(c.total) + '</td>' +
         '<td onclick="event.stopPropagation()">' +
-          (esObservador()
+          ((esObservador() || c.estado === 'Pedido retenido')
             ? '<span class="estado-select" style="background:' + colorStyle + ';display:inline-block;" title="Solo lectura">' + esc(c.estado) + '</span>'
             : '<select class="estado-select" style="background:' + colorStyle + '" onchange="cambiarEstado(\'' + c.id + '\', this.value)">' + estadoOpts + '</select>') +
           badgeUrgencia +
@@ -6063,7 +6064,7 @@ async function cargarMisTiempos(id) {
     if(!r){el.textContent='Sin gestión automática medible. Los pedidos históricos están excluidos.';return;}
     el.innerHTML='<div style="display:flex;justify-content:space-between;gap:12px;flex-wrap:wrap;margin-bottom:10px;"><span>Pago completo: <b>'+mtEsc(r.pago_completo_en?mtFecha(r.pago_completo_en):'Sin inicio verificable')+'</b><br>Envío registrado: '+mtEsc(r.enviado_en?mtFecha(r.enviado_en):'Pendiente')+'<br>Corte objetivo: '+mtEsc(r.corte_objetivo?mtFecha(r.corte_objetivo):'Sin dato')+'</span><span>Espera del sistema: <b>'+mtEsc(mtDur(r.sistema_minutos))+'</b><br>Total: <b>'+mtEsc(mtDur(r.total_minutos))+'</b>'+(r.pedido_aplicado_en?'':' · en curso')+'</span></div>'+
       '<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(190px,1fr));gap:12px;"><div style="padding:10px;background:#f4f7f8;border-radius:6px;"><b>Finanzas</b><br>'+mtMedida(r,'finanzas')+'</div><div style="padding:10px;background:#f4f7f8;border-radius:6px;"><b>Customer Service</b><br>'+mtMedida(r,'customer')+'</div></div>'+
-      (r.fuera_flujo?'<p>Fuera del flujo automático: excluido de estadísticas.</p>':'')+
+      (r.retencion_iniciada_en?'<p><b>Espera por retención: '+mtEsc(mtDur(r.retencion_minutos))+'</b>'+(r.retencion_activa?' · activa':' · resuelta')+'. Se mide por separado y se excluye de las comparaciones entre equipos; los tiempos originales se conservan.</p>':(r.fuera_flujo?'<p>Fuera del flujo automático: excluido de estadísticas.</p>':''))+
       '<p style="font-size:11px;color:#64748b;margin-bottom:4px;">Lun-vie 08:30-19:00 · Chile · sin feriados nacionales. Ambos equipos se miden desde el mismo envío hasta la confirmación registrada. No acredita salida del despacho.</p><button class="btn-logout" onclick="cargarMisTiempos(\''+mtEsc(id)+'\')">Actualizar</button>';
   } catch(e) { if(el.isConnected && puedeVerMisTiempos()) el.textContent=e.message; }
 }
@@ -6089,7 +6090,7 @@ async function mtCargarReporte(offset) {
     const th='style="text-align:left;padding:8px;border-bottom:1px solid #d9e5e6;white-space:nowrap;"';
     const td='style="padding:9px 8px;border-bottom:1px solid #e5e7eb;vertical-align:top;"';
     const resumen=d.resumen.map(r=>'<tr><td '+td+'><b>'+mtEsc(r.equipo)+'</b></td><td '+td+'>'+r.respondidos+' / '+r.enviados+'</td><td '+td+'>'+mtEsc(mtDur(r.promedio_minutos))+'</td><td '+td+'>'+mtEsc(mtDur(r.mediana_minutos))+'</td><td '+td+'>'+(r.cortes_evaluables?Math.round(100*r.dentro_corte/r.cortes_evaluables)+'% ('+r.dentro_corte+'/'+r.cortes_evaluables+')':'Sin cortes evaluables')+'</td></tr>').join('');
-    const filas=d.filas.map(r=>'<tr><td '+td+'><b>'+mtEsc(r.numero)+'</b><br>'+mtEsc(r.institucion_codigo)+(r.fuera_flujo?'<br><small>Fuera del flujo · excluido</small>':'')+'</td><td '+td+'>'+mtEsc(r.pago_completo_en?mtFecha(r.pago_completo_en):'Sin inicio verificable')+'<br><small>Espera sistema: '+mtEsc(mtDur(r.sistema_minutos))+'</small></td><td '+td+'>'+mtMedida(r,'finanzas')+'</td><td '+td+'>'+mtMedida(r,'customer')+'</td><td '+td+'>'+mtEsc(r.corte_objetivo?mtFecha(r.corte_objetivo):'Sin dato')+'</td></tr>').join('');
+    const filas=d.filas.map(r=>'<tr><td '+td+'><b>'+mtEsc(r.numero)+'</b><br>'+mtEsc(r.institucion_codigo)+(r.retencion_iniciada_en?'<br><small>Con retención · excluido de comparación</small>':(r.fuera_flujo?'<br><small>Fuera del flujo · excluido</small>':''))+'</td><td '+td+'>'+mtEsc(r.pago_completo_en?mtFecha(r.pago_completo_en):'Sin inicio verificable')+'<br><small>Espera sistema: '+mtEsc(mtDur(r.sistema_minutos))+'</small></td><td '+td+'>'+mtMedida(r,'finanzas')+'</td><td '+td+'>'+mtMedida(r,'customer')+'</td><td '+td+'>'+mtEsc(r.corte_objetivo?mtFecha(r.corte_objetivo):'Sin dato')+'</td></tr>').join('');
     el.innerHTML='<p style="font-size:12px;">'+d.total+' gestiones en el período. Promedio y mediana: respuestas recibidas, en tiempo laboral. Cumplimiento: mismo conjunto de cortes ya vencidos, con gestión enviada antes del corte.</p>'+
       (resumen?'<div style="overflow:auto;"><table style="width:100%;border-collapse:collapse;font-size:12px;"><thead><tr><th '+th+'>Equipo</th><th '+th+'>Respuestas / envíos</th><th '+th+'>Promedio</th><th '+th+'>Mediana</th><th '+th+'>Antes del corte</th></tr></thead><tbody>'+resumen+'</tbody></table></div>':'<p>Todavía no hay gestiones medibles en este período.</p>')+
       '<p style="font-size:11px;color:#64748b;">Envío después del corte: '+d.sin_margen_envio+' · sin inicio verificable de pago: '+d.sin_base_pago+' · fuera del flujo: '+d.fuera_flujo+'. No se atribuyen como incumplimientos de corte a los equipos.</p>'+
@@ -6114,21 +6115,25 @@ sb.auth.onAuthStateChange((event,session)=>{
 })();
 
 function sapBloqueDetalle(id) {
-  // Consulta nueva al abrir: evita conservar el SAP entre sesiones o mostrar datos obsoletos.
-  Promise.resolve().then(function () { cargarNumeroPedidoSap(id); });
-  return '<div><strong>Número de pedido SAP:</strong> <span id="sap-pedido-'+esc(id)+'" aria-live="polite">Consultando…</span></div>';
+ Promise.resolve().then(function(){cargarNumeroPedidoSap(id);});
+ return '<div><strong>Número de pedido SAP:</strong> <span id="sap-pedido-'+esc(id)+'" aria-live="polite">Consultando…</span></div><div id="retencion-pedido-'+esc(id)+'" style="grid-column:1/-1;" aria-live="polite"></div>';
 }
 async function cargarNumeroPedidoSap(id) {
-  const el = document.getElementById('sap-pedido-'+id);
-  if (!el) return;
-  try {
-    const resultado = await sb.rpc('obtener_numero_pedido_sap', {p_cotizacion_id:id});
-    if (document.getElementById('sap-pedido-'+id) !== el) return;
-    if (resultado.error) throw resultado.error;
-    el.textContent = resultado.data || 'Sin número registrado';
-  } catch (_) {
-    if (document.getElementById('sap-pedido-'+id) === el) el.textContent = 'No se pudo consultar. Cierra y vuelve a abrir la ficha.';
+ const el=document.getElementById('sap-pedido-'+id),ret=document.getElementById('retencion-pedido-'+id);
+ if(!el)return;
+ try{
+  const r=await sb.rpc('pago_gestion_detalle_visible',{p_cotizacion_id:id});
+  if(document.getElementById('sap-pedido-'+id)!==el)return;
+  if(r.error)throw r.error;
+  const d=r.data;el.textContent=d?.sap||'Sin número registrado';
+  if(ret&&document.getElementById('retencion-pedido-'+id)===ret){
+   if(d?.retenido){
+    const etiquetas={informacion_pendiente:'Información pendiente',bo:'BO · falta de stock',otro:'Otra incidencia'};
+    const motivos=(d.motivos||[]).map(m=>etiquetas[m]||'Otra incidencia').join(' · ');
+    ret.innerHTML='<div style="background:#fff7ed;border:1px solid #fdba74;border-radius:7px;padding:9px 12px;"><strong>Pedido retenido</strong> · '+esc(motivos)+'<br>'+esc(d.detalle||'Pendiente de resolución')+'<br><small>La ejecutiva gestiona lo pendiente. Solo Customer puede reconfirmar la liberación; SAP y Finanzas se registran por separado.</small></div>';
+   }else ret.textContent=d?.liberado?'Retención resuelta por reconfirmación de Customer.':'';
   }
+ }catch(_){if(document.getElementById('sap-pedido-'+id)===el)el.textContent='No se pudo consultar. Cierra y vuelve a abrir la ficha.';}
 }
 
 </script>
