@@ -451,19 +451,34 @@ function esTokenNumerico(tok) {
 function normalizarCodigoBusqueda(codigo) {
   return (codigo || '').toUpperCase().replace(/\./g, '');
 }
+// Token numerico dentro de medidas pegadas (ej. "3.5" en "3.5X8", "4.0" en "Ø4.0").
+// Un entero solo coincide si no es parte de un numero mayor ("4" no coincide con "14" ni "4.5").
+function coincideTokenNumericoExtendido(haystack, tok) {
+  var t = tok.replace(/\./g, '\\.');
+  var derecha = tok.indexOf('.') !== -1 ? '' : '(?![0-9]|\\.[0-9])';
+  return new RegExp('(^|[^0-9.])' + t + derecha).test(haystack);
+}
+
 function coincideTodosLosTerminos(producto, textoBusquedaOriginal) {
   var qNorm = normalizarTextoBusqueda(textoBusquedaOriginal);
   if (!qNorm) return true;
   var codigoSinPuntos = normalizarCodigoBusqueda(producto.codigo);
   var qCodigoComparable = qNorm.replace(/\s+/g, '').replace(/\./g, '');
   if (codigoSinPuntos === qCodigoComparable) return true;
+  // Codigo completo o parcial (prefijo), tolerando puntos, espacios y guiones: "125-210", "125.2", "115 244".
+  var qc = qNorm.replace(/[\s.\-]/g, '');
+  if (qc.length >= 3 && /^[0-9][0-9A-Z]*$/.test(qc)) {
+    var cn = (producto.codigo || '').toUpperCase().replace(/[\s.\-]/g, '');
+    if (cn.indexOf(qc) === 0) return true;
+  }
   var haystack = normalizarTextoBusqueda((producto.codigo || '') + ' ' + (producto.descripcion || ''));
   var haystackTokens = haystack.split(' ');
   var tokensBusqueda = qNorm.split(' ');
   return tokensBusqueda.every(function (tok) {
     if (esTokenNumerico(tok)) {
       var tokNum = parseFloat(tok);
-      return haystackTokens.some(function (ht) { return esTokenNumerico(ht) && parseFloat(ht) === tokNum; });
+      if (haystackTokens.some(function (ht) { return esTokenNumerico(ht) && parseFloat(ht) === tokNum; })) return true;
+      return coincideTokenNumericoExtendido(haystack, tok);
     }
     return haystack.indexOf(tok) !== -1;
   });
