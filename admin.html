@@ -750,7 +750,7 @@ async function copiarLinkComprobante(path, btn) {
   btn.textContent = 'Generando…';
   btn.disabled = true;
   try {
-    const { data, error } = await sb.storage.from('comprobantes').createSignedUrl(path, 604800); // 7 días — link para compartir por correo, uso diferido
+    const { data, error } = await sb.storage.from('comprobantes').createSignedUrl(path, 2592000); // 30 días — link para compartir por correo, uso diferido
     if (error || !data || !data.signedUrl) throw error || new Error('sin url');
     if (navigator.clipboard) { await navigator.clipboard.writeText(data.signedUrl); }
     btn.textContent = '✓ Link copiado';
@@ -819,7 +819,7 @@ async function copiarGestionCompleta(id, btn) {
     for (const p of pagosDeEsta) {
       let link = null;
       try {
-        const { data, error } = await sb.storage.from('comprobantes').createSignedUrl(p.comprobante_path, 604800);
+        const { data, error } = await sb.storage.from('comprobantes').createSignedUrl(p.comprobante_path, 2592000);
         if (error || !data || !data.signedUrl) throw error || new Error('sin url');
         link = data.signedUrl;
       } catch (e) {
@@ -829,7 +829,7 @@ async function copiarGestionCompleta(id, btn) {
     }
   } else if (c.comprobante_path) {
     try {
-      const { data, error } = await sb.storage.from('comprobantes').createSignedUrl(c.comprobante_path, 604800); // 7 días — link va dentro de correo a Nicole/Customer
+      const { data, error } = await sb.storage.from('comprobantes').createSignedUrl(c.comprobante_path, 2592000); // 30 días — link va dentro de correo a Nicole/Customer
       if (error || !data || !data.signedUrl) throw error || new Error('sin url');
       listaComprobantes.push({ texto: null, link: data.signedUrl });
     } catch (e) {
