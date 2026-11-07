@@ -25,7 +25,7 @@ Deno.serve(async (req: Request) => {
       },
       getPagos: async (id) => (await sb.from('cotizacion_pagos').select('comprobante_path,monto,created_at').eq('cotizacion_id', id).order('created_at', { ascending: true })) as any,
       sign: async (path) => {
-        const { data, error: e } = await sb.storage.from('comprobantes').createSignedUrl(path, 604800);   // 7 dias, igual que el Admin
+        const { data, error: e } = await sb.storage.from('comprobantes').createSignedUrl(path, 2592000);   // 30 dias, igual que el Admin
         return e || !data?.signedUrl ? null : data.signedUrl;
       },
       resend: async (payload, idem, signal) => {
